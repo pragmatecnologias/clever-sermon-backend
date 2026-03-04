@@ -1,0 +1,228 @@
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import axios from 'axios';
+import { LlmRequest } from '../../entities/llm-request.entity';
+import { LlmProvider } from '../../entities/enums/llm-provider.enum';
+
+@Injectable()
+export class LlmService {
+  constructor(
+    private configService: ConfigService,
+    @InjectRepository(LlmRequest)
+    private llmRequestRepository: Repository<LlmRequest>,
+  ) {}
+
+  async generateCompletion(
+    prompt: string,
+    userId: string,
+    options: {
+      provider?: LlmProvider;
+      model?: string;
+      temperature?: number;
+      maxTokens?: number;
+    } = {},
+  ): Promise<string> {
+    const provider = options.provider || LlmProvider.LOCAL;
+    const startTime = Date.now();
+    const shouldLog = this.configService.get('LOG_LLM_REQUESTS') === 'true';
+
+    try {
+      let response: string;
+      let model: string;
+
+      if (provider === LlmProvider.LOCAL) {
+        const result = await this.callLocalLLM(prompt, options);
+        response = result.response;
+        model = result.model;
+      } else if (provider === LlmProvider.OPENAI) {
+        const result = await this.callOpenAI(prompt, options);
+        response = result.response;
+        model = result.model;
+      } else {
+        throw new Error(`Unsupported provider: ${provider}`);
+      }
+
+      const latencyMs = Date.now() - startTime;
+
+      if (shouldLog) {
+        await this.llmRequestRepository.save({
+          userId,
+          provider,
+          model,
+          prompt,
+          response,
+          tokenCount: this.estimateTokens(prompt + response),
+          latencyMs,
+          wasSuccessful: true,
+        });
+      }
+
+      return response;
+    } catch (error) {
+      const latencyMs = Date.now() - startTime;
+
+      if (shouldLog) {
+        await this.llmRequestRepository.save({
+          userId,
+          provider,
+          model: options.model || 'unknown',
+          prompt,
+          response: null,
+          tokenCount: null,
+          latencyMs,
+          wasSuccessful: false,
+          error: error.message,
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  private async callLocalLLM(
+    prompt: string,
+    options: any,
+  ): Promise<{ response: string; model: string }> {
+    const lmStudioUrl = this.configService.get('LM_STUDIO_URL');
+    const model = options.model || this.configService.get('LLM_MODEL_NAME') || 'local-model';
+
+    const response = await axios.post(`${lmStudioUrl}/chat/completions`, {
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: options.temperature || 0.7,
+      max_tokens: options.maxTokens || 2000,
+    });
+
+    return {
+      response: response.data.choices[0].message.content,
+      model,
+    };
+  }
+
+  private async callOpenAI(
+    prompt: string,
+    options: any,
+  ): Promise<{ response: string; model: string }> {
+    const apiKey = this.configService.get('OPENAI_API_KEY');
+    const model = options.model || 'gpt-4';
+
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options.temperature || 0.7,
+        max_tokens: options.maxTokens || 2000,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    return {
+      response: response.data.choices[0].message.content,
+      model,
+    };
+  }
+
+  private estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
+
+  async generateSermonOutline(
+    passage: string,
+    theme: string,
+    style: string,
+    language: string,
+    userId: string,
+  ): Promise<any> {
+    const languageLabel = language === 'es' ? 'Spanish' : 'English';
+    const prompt = `Generate a sermon outline for the following:
+Passage: ${passage}
+Theme: ${theme}
+Style: ${style}
+
+Write in ${languageLabel}.
+
+Please provide a structured outline with:
+1. Introduction
+2. Main Points (3-5 points)
+3. Conclusion
+4. Call to Action
+
+Format the response as JSON.`;
+
+    const response = await this.generateCompletion(prompt, userId);
+    
+    try {
+      return JSON.parse(response);
+    } catch {
+      return { rawResponse: response };
+    }
+  }
+
+  async generateManuscript(
+    outline: any,
+    passage: string,
+    language: string,
+    userId: string,
+  ): Promise<string> {
+    const languageLabel = language === 'es' ? 'Spanish' : 'English';
+    const prompt = `Generate a full sermon manuscript based on this outline:
+${JSON.stringify(outline, null, 2)}
+
+Passage: ${passage}
+
+Write in ${languageLabel}.
+
+Please write a complete sermon manuscript with smooth transitions between points.`;
+
+    return this.generateCompletion(prompt, userId);
+  }
+
+  async generateApplications(
+    passage: string,
+    mainPoints: string[],
+    audienceType: string,
+    language: string,
+    userId: string,
+  ): Promise<string[]> {
+    const languageLabel = language === 'es' ? 'Spanish' : 'English';
+    const prompt = `Generate practical applications for ${audienceType} based on:
+Passage: ${passage}
+Main Points: ${mainPoints.join(', ')}
+
+Write in ${languageLabel}.
+
+Provide 3-5 specific, actionable applications.`;
+
+    const response = await this.generateCompletion(prompt, userId);
+    
+    return response.split('\n').filter(line => line.trim().length > 0);
+  }
+
+  async generateDiscussionQuestions(
+    passage: string,
+    theme: string,
+    language: string,
+    userId: string,
+  ): Promise<string[]> {
+    const languageLabel = language === 'es' ? 'Spanish' : 'English';
+    const prompt = `Generate discussion questions for a small group study on:
+Passage: ${passage}
+Theme: ${theme}
+
+Write in ${languageLabel}.
+
+Provide 5-7 thought-provoking questions that encourage deep reflection and application.`;
+
+    const response = await this.generateCompletion(prompt, userId);
+    
+    return response.split('\n').filter(line => line.trim().length > 0);
+  }
+}

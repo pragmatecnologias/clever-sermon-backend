@@ -1,0 +1,19 @@
+{
+  "name": "egw-scripts",
+  "version": "1.0.0",
+  "description": "Scripts for downloading and processing EGW books",
+  "scripts": {
+    "download-egw": "ts-node download-egw-books.ts",
+    "parse-egw": "ts-node parse-egw-books.ts"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/xml2js": "^0.4.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
