@@ -315,8 +315,11 @@ export class ScriptureController {
   }
 
   @Get('canonical-themes')
-  async getCanonicalThemes(@Query('reference') reference: string) {
-    return this.canonicalThemeTracerService.getThemesForPassage(reference);
+  async getCanonicalThemes(
+    @Query('reference') reference: string,
+    @Query('language') language?: string
+  ) {
+    return this.canonicalThemeTracerService.getThemesForPassage(reference, language);
   }
 
   @Get('sanctuary-connections')

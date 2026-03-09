@@ -111,7 +111,8 @@ export class EGWService {
   async getRelevantQuotes(
     scriptureReference: string,
     topic?: string,
-    limit: number = 5
+    limit: number = 5,
+    language: string = 'en'
   ): Promise<EGWQuote[]> {
     // Parse scripture reference (e.g., "1 Samuel 16:18-23" -> book: "1 Samuel", chapter: 16)
     const refParts = scriptureReference.match(/^(.+?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$/);
@@ -128,7 +129,7 @@ export class EGWService {
       .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
       .where('ref.book = :book', { book })
       .andWhere('ref.chapter = :chapter', { chapter })
-      .andWhere('ref.language = :language', { language: 'en' })
+      .andWhere('ref.language = :language', { language })
       .take(limit)
       .getMany();
 

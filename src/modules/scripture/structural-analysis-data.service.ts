@@ -50,10 +50,13 @@ export class StructuralAnalysisDataService {
 
     // Generate structural analysis using LLM
     try {
+      console.log(`[StructuralAnalysis] Generating for passage: ${passage}, language: ${language || 'en'}`);
       const generated = await this.generateStructuralAnalysis(passage, language || 'en');
+      console.log(`[StructuralAnalysis] Successfully generated for ${passage}`);
       return generated;
     } catch (error) {
-      console.error('Failed to generate structural analysis:', error);
+      console.error(`[StructuralAnalysis] Failed for passage: ${passage}, language: ${language}`, error);
+      console.error('[StructuralAnalysis] Error details:', error.message, error.stack?.substring(0, 500));
       return {
         passage,
         literaryGenre: 'Unknown',
@@ -64,10 +67,11 @@ export class StructuralAnalysisDataService {
   }
 
   private async generateStructuralAnalysis(passage: string, language?: string): Promise<StructuralAnalysis> {
+    const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
     // Fetch the actual passage text to prevent LLM hallucination
     let passageText = '';
     try {
-      const result = await this.scriptureService.getPassage(passage, 'KJV');
+      const result = await this.scriptureService.getPassage(passage, analysisTranslation);
       if (result && result.verses && result.verses.length > 0) {
         passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
       }
@@ -76,9 +80,21 @@ export class StructuralAnalysisDataService {
     }
 
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+    const languageInstruction = language === 'es'
+      ? `CRITICAL INSTRUCTIONS:
+1. You MUST respond ONLY in Spanish. Every single field in the JSON must be in Spanish.
+2. Do NOT use any English words in the JSON fields.
+3. Return ONLY the JSON object - no explanations, no markdown, no extra text.
+
+INSTRUCCIONES CRÍTICAS:
+1. Debes responder ÚNICAMENTE en español. Todos los campos del JSON deben estar en español.
+2. NO uses NINGUNA palabra en inglés en los campos del JSON.
+3. Devuelve SOLAMENTE el objeto JSON - sin explicaciones, sin markdown, sin texto adicional.`
+      : 'Respond in English. Return ONLY the JSON object - no markdown, no extra text.';
     
-    const prompt = `${languageInstruction} You are a biblical scholar analyzing the literary structure of scripture passages.
+    const prompt = `${languageInstruction}
+
+You are a biblical scholar analyzing the literary structure of scripture passages.
 
 Passage Reference: ${passage}
 
@@ -124,19 +140,53 @@ Guidelines:
 - Parallelism is optional - only include if clearly present
 - Return ONLY valid JSON, no markdown or extra text`;
 
+    console.log(`[StructuralAnalysis] Calling LLM for passage: ${passage}`);
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.3,
-      maxTokens: 1200,
+      maxTokens: 1500, // Increased for Spanish responses
     });
 
-    const parsed = JSON.parse(response);
+    console.log(`[StructuralAnalysis] LLM response length: ${response.length} chars`);
+    console.log(`[StructuralAnalysis] Response preview: ${response.substring(0, 200)}...`);
 
+    // Extract JSON from response - handle markdown code blocks or extra text
+    let jsonStr = response.trim();
+    
+    // Try to extract JSON from markdown code block
+    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (codeBlockMatch) {
+      console.log('[StructuralAnalysis] Extracted JSON from markdown code block');
+      jsonStr = codeBlockMatch[1];
+    } else {
+      // Try to find raw JSON object
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        console.log('[StructuralAnalysis] Extracted JSON from raw response');
+        jsonStr = jsonMatch[0];
+      } else {
+        console.error('[StructuralAnalysis] No JSON found in response');
+      }
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonStr);
+      console.log('[StructuralAnalysis] Successfully parsed JSON');
+    } catch (parseError) {
+      console.error('[StructuralAnalysis] Failed to parse JSON:', parseError.message);
+      console.error('[StructuralAnalysis] JSON string length:', jsonStr.length);
+      console.error('[StructuralAnalysis] JSON snippet:', jsonStr.substring(0, 500));
+      console.error('[StructuralAnalysis] Full response:', response);
+      throw new Error(`JSON parse failed: ${parseError.message}`);
+    }
+
+    // Handle Spanish field names
     return {
       passage,
-      literaryGenre: parsed.literaryGenre || 'Unknown',
-      structure: parsed.structure || [],
-      chiasm: parsed.chiasm,
-      parallelism: parsed.parallelism && parsed.parallelism.length > 0 ? parsed.parallelism : undefined,
+      literaryGenre: parsed.literaryGenre || parsed.géneroLiterario || parsed.generoLiterario || 'Unknown',
+      structure: parsed.structure || parsed.estructura || [],
+      chiasm: parsed.chiasm || parsed.quiasmo,
+      parallelism: (parsed.parallelism || parsed.paralelismo) && (parsed.parallelism || parsed.paralelismo).length > 0 ? (parsed.parallelism || parsed.paralelismo) : undefined,
       dataSource: 'llm-generated',
     };
   }

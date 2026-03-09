@@ -126,7 +126,7 @@ async function parseAllBooks() {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
   
-  const metadataPath = path.join(DOWNLOAD_DIR, 'metadata.json');
+  const metadataPath = path.join(DOWNLOAD_DIR, 'metadata-bilingual.json');
   if (!fs.existsSync(metadataPath)) {
     console.error('❌ Metadata file not found. Run download script first.');
     return;

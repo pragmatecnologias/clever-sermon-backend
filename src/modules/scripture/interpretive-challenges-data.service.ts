@@ -53,10 +53,11 @@ export class InterpretiveChallengesDataService {
   }
 
   private async generateInterpretiveChallenge(passage: string, language?: string): Promise<InterpretiveChallenge> {
+    const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
     // Fetch actual passage text to prevent LLM hallucination
     let passageText = '';
     try {
-      const result = await this.scriptureService.getPassage(passage, 'KJV');
+      const result = await this.scriptureService.getPassage(passage, analysisTranslation);
       if (result && result.verses && result.verses.length > 0) {
         passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
       }
@@ -65,7 +66,9 @@ export class InterpretiveChallengesDataService {
     }
 
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+    const languageInstruction = language === 'es'
+      ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
+      : 'Respond in English.';
     
     const prompt = `${languageInstruction} You are a biblical scholar identifying interpretive challenges and different theological perspectives on scripture passages.
 
@@ -106,17 +109,77 @@ Guidelines:
       maxTokens: 1200,
     });
 
-    const parsed = JSON.parse(response);
+    let parsed: any;
+    try {
+      // Extract JSON from response - handle markdown code blocks
+      let jsonStr = response.trim();
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*({[\s\S]*?})\s*```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1];
+      } else {
+        const jsonMatch = jsonStr.match(/{[\s\S]*}/);
+        if (jsonMatch) {
+          jsonStr = jsonMatch[0];
+        }
+      }
 
-    if (!parsed.challenge) {
+      // Sanitize common LLM JSON issues before parsing
+      jsonStr = jsonStr
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+        .replace(/\],\s*\},\s*\{/g, ']},{')
+        .replace(/\],\s*\},\s*"/g, ']},"')
+        .replace(/\},\s*\]/g, '}]')
+        .replace(/,\s*([}\]])/g, '$1')
+        .trim();
+
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (firstParseError) {
+        // Retry with light repairs (quote bare keys, normalize single quotes)
+        const repaired = jsonStr
+          .replace(/([{,]\s*)([A-Za-z_][\w]*)(\s*:)/g, '$1"$2"$3')
+          .replace(/:\s*'([^']*)'/g, ': "$1"')
+          .replace(/\],\s*\},\s*\{/g, ']},{')
+          .replace(/\],\s*\},\s*"/g, ']},"')
+          .replace(/\},\s*\]/g, '}]')
+          .replace(/,\s*([}\]])/g, '$1');
+        parsed = JSON.parse(repaired);
+      }
+    } catch (error) {
+      console.error('Failed to parse interpretive challenge response:', error);
+      console.error('Raw response:', response);
+      throw new Error('Invalid JSON response from LLM');
+    }
+
+    // Handle Spanish field names (desafío, vistas, perspectivaSDA)
+    const challenge = parsed.challenge || parsed.desafío || parsed.desafio;
+    const views = parsed.views || parsed.vistas || [];
+    const sdaPerspective = parsed.sdaPerspective || parsed.perspectivaSDA;
+
+    if (!challenge) {
       return null;
     }
 
+    // Normalize views structure (handle Spanish field names)
+    const normalizedViews = views.map((view: any) => ({
+      viewName: view.viewName || view.nombreVista || view.nombre || '',
+      summary: view.summary || view.resumen || '',
+      proponents: view.proponents || view.proponentes || '',
+      keyArguments: view.keyArguments || view.argumentosClave || view.argumentos || [],
+    }));
+
+    // Normalize SDA perspective (handle Spanish field names)
+    const normalizedSdaPerspective = sdaPerspective ? {
+      position: sdaPerspective.position || sdaPerspective.posición || sdaPerspective.posicion || '',
+      reasoning: sdaPerspective.reasoning || sdaPerspective.razonamiento || '',
+      supportingTexts: sdaPerspective.supportingTexts || sdaPerspective.textosDeApoyo || sdaPerspective.textos || [],
+    } : undefined;
+
     return {
       passage,
-      challenge: parsed.challenge,
-      views: parsed.views || [],
-      sdaPerspective: parsed.sdaPerspective,
+      challenge,
+      views: normalizedViews,
+      sdaPerspective: normalizedSdaPerspective,
       dataSource: 'llm-generated',
     };
   }

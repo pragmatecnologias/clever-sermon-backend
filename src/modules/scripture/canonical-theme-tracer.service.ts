@@ -34,12 +34,13 @@ export class CanonicalThemeTracerService {
     private scriptureService: ScriptureService
   ) {}
 
-  async getThemesForPassage(reference: string, userId?: string): Promise<CanonicalThemesResponse> {
+  async getThemesForPassage(reference: string, language?: string, userId?: string): Promise<CanonicalThemesResponse> {
     try {
       // Fetch actual passage text to prevent LLM hallucination
+      const translationCode = language === 'es' ? 'RVR1960' : 'KJV';
       let passageText = '';
       try {
-        const result = await this.scriptureService.getPassage(reference, 'KJV');
+        const result = await this.scriptureService.getPassage(reference, translationCode);
         if (result && result.verses && result.verses.length > 0) {
           passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
         }
@@ -47,7 +48,7 @@ export class CanonicalThemeTracerService {
         console.error('Failed to fetch passage text for canonical themes:', error);
       }
 
-      const prompt = this.buildPrompt(reference, passageText);
+      const prompt = this.buildPrompt(reference, passageText, language);
       const response = await this.llmService.generateCompletion(
         prompt,
         userId || 'system',
@@ -69,8 +70,22 @@ export class CanonicalThemeTracerService {
     }
   }
 
-  private buildPrompt(reference: string, passageText: string): string {
-    return `You are a biblical scholar identifying canonical themes that trace through Scripture.
+  private buildPrompt(reference: string, passageText: string, language?: string): string {
+    const languageInstruction = language === 'es'
+      ? `CRITICAL INSTRUCTIONS:
+1. You MUST respond ONLY in Spanish. Every field in the JSON must be in Spanish.
+2. Do NOT use any English words in theme names, descriptions, explanations, or snippets.
+3. Return ONLY the JSON object - no explanations, no markdown code blocks, no extra text.
+
+INSTRUCCIONES CRÍTICAS:
+1. Debes responder ÚNICAMENTE en español. Todos los campos del JSON deben estar en español.
+2. NO uses NINGUNA palabra en inglés en nombres de temas, descripciones, explicaciones o fragmentos.
+3. Devuelve SOLAMENTE el objeto JSON - sin explicaciones, sin bloques de código markdown, sin texto adicional.
+
+`
+      : 'Return ONLY the JSON object - no markdown, no extra text.\n\n';
+
+    return `${languageInstruction}You are a biblical scholar identifying canonical themes that trace through Scripture.
 
 Passage Reference: ${reference}
 
@@ -190,27 +205,30 @@ Be theologically rigorous and show real canonical development.`;
         parsed = JSON.parse(jsonStr);
       }
 
-      if (!parsed.themes || !Array.isArray(parsed.themes)) {
+      // Handle Spanish field names (temas instead of themes)
+      const themesArray = parsed.themes || parsed.temas;
+      
+      if (!themesArray || !Array.isArray(themesArray)) {
         throw new Error('Invalid themes structure - missing or invalid themes array');
       }
 
       // Mark first theme as primary and validate structure
-      const themes: ThemeThread[] = parsed.themes
+      const themes: ThemeThread[] = themesArray
         .filter((theme: any) => theme && typeof theme === 'object')
         .map((theme: any, index: number) => ({
-          theme: String(theme.theme || '').substring(0, 200),
-          description: String(theme.description || '').substring(0, 500),
-          explanation: String(theme.explanation || '').substring(0, 1000),
-          canonicalMovement: String(theme.canonicalMovement || '').substring(0, 1000),
-          verses: Array.isArray(theme.verses) 
-            ? theme.verses.slice(0, 10).map((v: any) => ({
-                reference: String(v.reference || '').substring(0, 100),
-                snippet: String(v.snippet || '').substring(0, 200),
+          theme: String(theme.theme || theme.tema || '').substring(0, 200),
+          description: String(theme.description || theme.descripción || theme.descripcion || '').substring(0, 500),
+          explanation: String(theme.explanation || theme.explicación || theme.explicacion || '').substring(0, 1000),
+          canonicalMovement: String(theme.canonicalMovement || theme.movimientoCanónico || theme.movimientoCanonico || '').substring(0, 1000),
+          verses: Array.isArray(theme.verses || theme.versículos || theme.versiculos) 
+            ? (theme.verses || theme.versículos || theme.versiculos).slice(0, 10).map((v: any) => ({
+                reference: String(v.reference || v.referencia || '').substring(0, 100),
+                snippet: String(v.snippet || v.fragmento || '').substring(0, 200),
                 era: String(v.era || '').substring(0, 100),
               }))
             : [],
-          category: ['gospel', 'sanctuary', 'prophecy', 'covenant', 'law', 'salvation'].includes(theme.category)
-            ? theme.category
+          category: ['gospel', 'sanctuary', 'prophecy', 'covenant', 'law', 'salvation', 'gracia', 'grace'].includes(theme.category || theme.categoría || theme.categoria)
+            ? (theme.category || theme.categoría || theme.categoria)
             : 'gospel',
           isPrimary: index === 0,
         }))

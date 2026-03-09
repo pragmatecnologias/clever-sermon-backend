@@ -26,6 +26,22 @@ export interface EGWPanelData {
 
 @Injectable()
 export class EGWPassageIntegrationService {
+  private spanishBookKeyMap = new Map<string, string>([
+    ['genesis', 'genesis'], ['exodo', 'exodus'], ['levitico', 'leviticus'], ['numeros', 'numbers'], ['deuteronomio', 'deuteronomy'],
+    ['josue', 'joshua'], ['jueces', 'judges'], ['rut', 'ruth'], ['1samuel', '1samuel'], ['2samuel', '2samuel'],
+    ['1reyes', '1kings'], ['2reyes', '2kings'], ['1cronicas', '1chronicles'], ['2cronicas', '2chronicles'], ['esdras', 'ezra'],
+    ['nehemias', 'nehemiah'], ['ester', 'esther'], ['job', 'job'], ['salmos', 'psalms'], ['proverbios', 'proverbs'],
+    ['eclesiastes', 'ecclesiastes'], ['cantares', 'songofsolomon'], ['isaias', 'isaiah'], ['jeremias', 'jeremiah'], ['lamentaciones', 'lamentations'],
+    ['ezequiel', 'ezekiel'], ['daniel', 'daniel'], ['oseas', 'hosea'], ['joel', 'joel'], ['amos', 'amos'],
+    ['abdias', 'obadiah'], ['jonas', 'jonah'], ['miqueas', 'micah'], ['nahum', 'nahum'], ['habacuc', 'habakkuk'],
+    ['sofonias', 'zephaniah'], ['hageo', 'haggai'], ['zacarias', 'zechariah'], ['malaquias', 'malachi'], ['mateo', 'matthew'],
+    ['marcos', 'mark'], ['lucas', 'luke'], ['juan', 'john'], ['hechos', 'acts'], ['romanos', 'romans'],
+    ['1corintios', '1corinthians'], ['2corintios', '2corinthians'], ['galatas', 'galatians'], ['efesios', 'ephesians'], ['filipenses', 'philippians'],
+    ['colosenses', 'colossians'], ['1tesalonicenses', '1thessalonians'], ['2tesalonicenses', '2thessalonians'], ['1timoteo', '1timothy'], ['2timoteo', '2timothy'],
+    ['tito', 'titus'], ['filemon', 'philemon'], ['hebreos', 'hebrews'], ['santiago', 'james'], ['1pedro', '1peter'],
+    ['2pedro', '2peter'], ['1juan', '1john'], ['2juan', '2john'], ['3juan', '3john'], ['judas', 'jude'], ['apocalipsis', 'revelation'],
+  ]);
+
   constructor(
     @InjectRepository(EGWParagraph)
     private paragraphRepository: Repository<EGWParagraph>,
@@ -42,31 +58,43 @@ export class EGWPassageIntegrationService {
     chapter: number,
     verseStart?: number,
     verseEnd?: number,
+    language: string = 'en',
     limit: number = 5
   ): Promise<EGWPanelData> {
     const passage = this.formatPassageReference(book, chapter, verseStart, verseEnd);
-    
-    // Priority 1: Exact verse citations
-    const exactMatches = await this.findExactVerseCitations(book, chapter, verseStart, verseEnd);
-    
-    // Priority 2: Same chapter citations
-    const chapterMatches = await this.findChapterCitations(book, chapter);
-    
-    // Priority 3: Thematic matches (keyword alignment)
-    const thematicMatches = await this.findThematicMatches(book, chapter);
-    
-    // Combine and rank
-    const allInsights = [
-      ...this.rankInsights(exactMatches, 'exact_verse', 100),
-      ...this.rankInsights(chapterMatches, 'same_chapter', 75),
-      ...this.rankInsights(thematicMatches, 'thematic', 50)
-    ];
+    const collectRankedInsights = async (lang: string): Promise<PassageEGWInsight[]> => {
+      const exactMatches = await this.findExactVerseCitations(book, chapter, verseStart, verseEnd, lang);
+      const chapterMatches = await this.findChapterCitations(book, chapter, lang);
+      const thematicMatches = await this.findThematicMatches(book, chapter, lang);
 
-    // Deduplicate by paragraph ID
-    const uniqueInsights = this.deduplicateByParagraph(allInsights);
-    
-    // Sort by ranking score
-    const sortedInsights = uniqueInsights.sort((a, b) => b.rankingScore - a.rankingScore);
+      const allInsights = [
+        ...this.rankInsights(exactMatches, 'exact_verse', 100),
+        ...this.rankInsights(chapterMatches, 'same_chapter', 75),
+        ...this.rankInsights(thematicMatches, 'thematic', 50),
+      ];
+
+      return this.deduplicateByParagraph(allInsights).sort((a, b) => b.rankingScore - a.rankingScore);
+    };
+
+    let sortedInsights = await collectRankedInsights(language);
+
+    if (sortedInsights.length === 0) {
+      const bookLevelMatches = await this.findBookCitations(book, language);
+      sortedInsights = this
+        .deduplicateByParagraph(this.rankInsights(bookLevelMatches, 'thematic', 40))
+        .sort((a, b) => b.rankingScore - a.rankingScore);
+    }
+
+    // Fallback 2: retry in English if locale dataset is sparse
+    if (sortedInsights.length === 0 && language !== 'en') {
+      sortedInsights = await collectRankedInsights('en');
+      if (sortedInsights.length === 0) {
+        const bookLevelEnglish = await this.findBookCitations(book, 'en');
+        sortedInsights = this
+          .deduplicateByParagraph(this.rankInsights(bookLevelEnglish, 'thematic', 40))
+          .sort((a, b) => b.rankingScore - a.rankingScore);
+      }
+    }
     
     return {
       passage,
@@ -76,6 +104,85 @@ export class EGWPassageIntegrationService {
     };
   }
 
+  private normalizeBookKey(book: string): string {
+    return (book || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  private resolveBookAliases(book: string): string[] {
+    const raw = (book || '').trim().toLowerCase();
+    const key = this.normalizeBookKey(book);
+    const canonical = this.spanishBookKeyMap.get(key) || key;
+    const variants = new Set<string>([raw, key, canonical]);
+
+    const addSpacingVariant = (value: string) => {
+      if (/^[123][a-z]/.test(value)) {
+        variants.add(`${value[0]} ${value.slice(1)}`);
+      }
+    };
+
+    addSpacingVariant(key);
+    addSpacingVariant(canonical);
+
+    if (canonical === 'songofsolomon') {
+      variants.add('song of solomon');
+      variants.add('song of songs');
+    }
+
+    return Array.from(variants).filter(Boolean);
+  }
+
+  private async findBookCitations(
+    book: string,
+    language: string = 'en',
+  ): Promise<EGWScriptureReference[]> {
+    const bookAliases = this.resolveBookAliases(book);
+    return this.scriptureRefRepository
+      .createQueryBuilder('ref')
+      .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
+      .where('LOWER(ref.book) IN (:...bookAliases)', { bookAliases })
+      .andWhere('ref.language = :language', { language })
+      .orderBy('ref.chapter', 'ASC')
+      .addOrderBy('ref.verseStart', 'ASC')
+      .take(25)
+      .getMany();
+  }
+
+  private async findGeneralFallbackInsights(
+    language: string,
+    limit: number,
+  ): Promise<PassageEGWInsight[]> {
+    let paragraphs = await this.paragraphRepository
+      .createQueryBuilder('p')
+      .where('p.language = :language', { language })
+      .take(limit)
+      .getMany();
+
+    if (!paragraphs.length && language !== 'en') {
+      paragraphs = await this.paragraphRepository
+        .createQueryBuilder('p')
+        .where('p.language = :language', { language: 'en' })
+        .take(limit)
+        .getMany();
+    }
+
+    return paragraphs.map((p, index) => ({
+      paragraphId: p.id,
+      bookCode: p.bookCode,
+      bookTitle: p.bookTitle,
+      chapterTitle: p.chapterTitle,
+      reference: p.reference,
+      content: p.content,
+      preview: this.createPreview(p.content),
+      scriptureReference: 'General EGW insight',
+      rankingScore: 20 - index,
+      rankingReason: 'doctrinal',
+    }));
+  }
+
   /**
    * Find exact verse citations (Priority 1)
    */
@@ -83,13 +190,16 @@ export class EGWPassageIntegrationService {
     book: string,
     chapter: number,
     verseStart?: number,
-    verseEnd?: number
+    verseEnd?: number,
+    language: string = 'en'
   ): Promise<EGWScriptureReference[]> {
+    const bookAliases = this.resolveBookAliases(book);
     const query = this.scriptureRefRepository
       .createQueryBuilder('ref')
       .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
-      .where('LOWER(ref.book) = LOWER(:book)', { book })
-      .andWhere('ref.chapter = :chapter', { chapter });
+      .where('LOWER(ref.book) IN (:...bookAliases)', { bookAliases })
+      .andWhere('ref.chapter = :chapter', { chapter })
+      .andWhere('ref.language = :language', { language });
 
     if (verseStart !== undefined) {
       // Find references that overlap with the requested verse range
@@ -111,13 +221,16 @@ export class EGWPassageIntegrationService {
    */
   private async findChapterCitations(
     book: string,
-    chapter: number
+    chapter: number,
+    language: string = 'en'
   ): Promise<EGWScriptureReference[]> {
+    const bookAliases = this.resolveBookAliases(book);
     return this.scriptureRefRepository
       .createQueryBuilder('ref')
       .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
-      .where('LOWER(ref.book) = LOWER(:book)', { book })
+      .where('LOWER(ref.book) IN (:...bookAliases)', { bookAliases })
       .andWhere('ref.chapter = :chapter', { chapter })
+      .andWhere('ref.language = :language', { language })
       .orderBy('ref.verseStart', 'ASC')
       .take(15)
       .getMany();
@@ -129,14 +242,17 @@ export class EGWPassageIntegrationService {
    */
   private async findThematicMatches(
     book: string,
-    chapter: number
+    chapter: number,
+    language: string = 'en'
   ): Promise<EGWScriptureReference[]> {
+    const bookAliases = this.resolveBookAliases(book);
     // Search for paragraphs mentioning the book name
     const paragraphs = await this.paragraphRepository
       .createQueryBuilder('p')
       .where('LOWER(p.content) LIKE LOWER(:bookPattern)', { 
         bookPattern: `%${book}%` 
       })
+      .andWhere('p.language = :language', { language })
       .take(10)
       .getMany();
 
@@ -149,6 +265,8 @@ export class EGWPassageIntegrationService {
       .createQueryBuilder('ref')
       .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
       .where('ref.egwParagraphId IN (:...ids)', { ids: paragraphIds })
+      .andWhere('LOWER(ref.book) IN (:...bookAliases)', { bookAliases })
+      .andWhere('ref.language = :language', { language })
       .take(10)
       .getMany();
   }

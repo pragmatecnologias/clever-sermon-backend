@@ -69,10 +69,11 @@ export class PerVerseContextService {
   }
 
   private async generateContextWithLLM(reference: string, language?: string): Promise<PerVerseContext> {
+    const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
     // Fetch actual passage text to prevent LLM hallucination
     let passageText = '';
     try {
-      const result = await this.scriptureService.getPassage(reference, 'KJV');
+      const result = await this.scriptureService.getPassage(reference, analysisTranslation);
       if (result && result.verses && result.verses.length > 0) {
         passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
       }
@@ -81,7 +82,9 @@ export class PerVerseContextService {
     }
 
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+    const languageInstruction = language === 'es'
+      ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
+      : 'Respond in English.';
     
     const prompt = `${languageInstruction} You are a biblical scholar providing historical, cultural, and geographical context for scripture passages.
 
@@ -138,14 +141,34 @@ Guidelines:
       maxTokens: 1500,
     });
 
-    const parsed = JSON.parse(response);
+    let parsed: any;
+    try {
+      // Extract JSON from response - handle markdown code blocks
+      let jsonStr = response.trim();
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*({[\s\S]*?})\s*```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1];
+      } else {
+        const jsonMatch = jsonStr.match(/{[\s\S]*}/);
+        if (jsonMatch) {
+          jsonStr = jsonMatch[0];
+        }
+      }
+      
+      parsed = JSON.parse(jsonStr);
+    } catch (error) {
+      console.error('Failed to parse per-verse context response:', error);
+      console.error('Raw response:', response);
+      throw new Error('Invalid JSON response from LLM');
+    }
 
+    // Handle Spanish field names
     return {
       reference,
-      historical: parsed.historical || [],
+      historical: parsed.historical || parsed.histórico || parsed.historico || [],
       cultural: parsed.cultural || [],
-      geographical: parsed.geographical || [],
-      timeline: parsed.timeline || [],
+      geographical: parsed.geographical || parsed.geográfico || parsed.geografico || [],
+      timeline: parsed.timeline || parsed.línea || parsed.linea || [],
       dataSource: 'llm-generated',
     };
   }

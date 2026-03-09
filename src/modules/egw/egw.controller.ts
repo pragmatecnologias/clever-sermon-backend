@@ -139,11 +139,13 @@ export class EGWController {
     @Query('chapter') chapter: string,
     @Query('verseStart') verseStart?: string,
     @Query('verseEnd') verseEnd?: string,
+    @Query('language') language?: string,
     @Query('limit') limit?: string
   ) {
     const chapterNum = parseInt(chapter);
     const verseStartNum = verseStart ? parseInt(verseStart) : undefined;
     const verseEndNum = verseEnd ? parseInt(verseEnd) : undefined;
+    const lang = language || 'en';
     const limitNum = limit ? parseInt(limit) : 5;
 
     const { EGWPassageIntegrationService } = require('./egw-passage-integration.service');
@@ -157,6 +159,7 @@ export class EGWController {
       chapterNum,
       verseStartNum,
       verseEndNum,
+      lang,
       limitNum
     );
   }

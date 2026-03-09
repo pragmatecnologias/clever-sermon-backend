@@ -20,10 +20,11 @@ export class PassageSummaryService {
 
   async getPassageSummary(reference: string, userId?: string, language?: string): Promise<PassageSummaryData> {
     try {
+      const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
       // Fetch actual passage text to prevent LLM hallucination
       let passageText = '';
       try {
-        const result = await this.scriptureService.getPassage(reference, 'KJV');
+        const result = await this.scriptureService.getPassage(reference, analysisTranslation);
         if (result && result.verses && result.verses.length > 0) {
           passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
         }
@@ -58,7 +59,9 @@ export class PassageSummaryService {
 
   private buildPrompt(reference: string, passageText: string, language?: string): string {
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+    const languageInstruction = language === 'es'
+      ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
+      : 'Respond in English.';
     
     return `${languageInstruction} You are a biblical scholar providing interpretive guidance for pastors studying Scripture.
 
@@ -127,13 +130,14 @@ Be concise, theologically precise, and pastor-focused.`;
         parsed = JSON.parse(jsonStr);
       }
 
+      // Handle Spanish field names
       return {
         passage: reference,
-        summary: String(parsed.summary || '').substring(0, 500),
-        interpretiveCenter: String(parsed.interpretiveCenter || '').substring(0, 500),
-        mainTension: String(parsed.mainTension || '').substring(0, 500),
-        movement: Array.isArray(parsed.movement) 
-          ? parsed.movement.slice(0, 10).map((m: any) => String(m).substring(0, 200))
+        summary: String(parsed.summary || parsed.resumen || '').substring(0, 500),
+        interpretiveCenter: String(parsed.interpretiveCenter || parsed.centroInterpretativo || '').substring(0, 500),
+        mainTension: String(parsed.mainTension || parsed.tensiónPrincipal || parsed.tensionPrincipal || '').substring(0, 500),
+        movement: Array.isArray(parsed.movement || parsed.movimiento) 
+          ? (parsed.movement || parsed.movimiento).slice(0, 10).map((m: any) => String(m).substring(0, 200))
           : [],
         dataSource: 'llm-generated',
       };

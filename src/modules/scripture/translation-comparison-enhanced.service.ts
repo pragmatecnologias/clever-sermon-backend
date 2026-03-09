@@ -13,6 +13,7 @@ export interface TranslationText {
   code: string;
   name: string;
   text: string;
+  verses?: Array<{ number: string; text: string; reference?: string }>;
   type: 'formal' | 'dynamic' | 'paraphrase';
 }
 
@@ -54,10 +55,22 @@ export class TranslationComparisonEnhancedService {
           const result = await this.scriptureService.getPassage(reference, code);
           if (result && result.verses && result.verses.length > 0) {
             const text = result.verses.map((v: any) => v.text).join(' ');
+            const verses = result.verses.map((v: any, index: number) => {
+              const ref = String(v?.reference || '');
+              const verseMatch = ref.match(/:(\d+)\b/);
+
+              return {
+                number: verseMatch?.[1] || String(index + 1),
+                text: String(v?.text || '').trim(),
+                reference: ref || undefined,
+              };
+            });
+
             translations.push({
               code,
               name: this.getTranslationName(code),
               text,
+              verses,
               type: this.getTranslationType(code)
             });
           }
@@ -133,14 +146,47 @@ export class TranslationComparisonEnhancedService {
   ): Promise<{ keyDifferences: KeyDifference[]; analysis: ComparisonAnalysis }> {
     try {
       const translationTexts = translations.map(t => `**${t.code} (${t.name})**:\n${t.text}`).join('\n\n');
-      
-      const languageInstruction = language === 'es' || language === 'spanish'
-        ? 'Respond in Spanish. Analyze these Spanish Bible translations.'
-        : 'Respond in English. Analyze these English Bible translations.';
+      const isSpanish = language === 'es' || language === 'spanish';
 
-      const prompt = `You are a biblical scholar analyzing translation differences for pastors.
+      const prompt = isSpanish
+        ? `Responde ÚNICAMENTE en español. No uses inglés en ningún campo de texto (difference, explanation, analysis, overallAssessment, etc.).
+Eres un erudito bíblico que analiza diferencias de traducción para pastores.
 
-${languageInstruction}
+**Pasaje**: ${reference}
+
+**Traducciones**:
+${translationTexts}
+
+Analiza las diferencias clave entre estas traducciones y entrega:
+
+1. **Diferencias clave**: 3-5 diferencias significativas (términos teológicos, verbos, adiciones/omisiones, literal vs dinámico)
+2. **Análisis**:
+   - Diferencias verbales
+   - Diferencias de términos teológicos
+   - Enfoque literal vs dinámico
+   - Evaluación general
+
+Formato JSON:
+{
+  "keyDifferences": [
+    {
+      "category": "theological_term" | "verb_difference" | "literal_vs_dynamic" | "addition_omission",
+      "translations": ["RVR1960: texto", "NBLA: texto"],
+      "difference": "Descripción breve en español",
+      "explanation": "Explicación detallada en español",
+      "significance": "high" | "medium" | "low"
+    }
+  ],
+  "analysis": {
+    "verbDifferences": ["diferencia 1"],
+    "theologicalTermDifferences": ["diferencia 1"],
+    "literalVsDynamic": ["observación 1"],
+    "overallAssessment": "Resumen general en español"
+  }
+}
+
+Sé conciso, práctico y pastoral. Devuelve SOLO JSON válido.`
+        : `Respond in English. You are a biblical scholar analyzing translation differences for pastors.
 
 **Passage**: ${reference}
 
@@ -150,7 +196,7 @@ ${translationTexts}
 Analyze the key differences between these translations and provide:
 
 1. **Key Differences**: 3-5 significant differences (theological terms, verb choices, additions/omissions, literal vs dynamic)
-2. **Analysis**: 
+2. **Analysis**:
    - Verb differences
    - Theological term differences
    - Literal vs dynamic translation approaches
@@ -194,7 +240,7 @@ Be concise, practical, and pastor-focused. Highlight differences that affect int
 
       const parsed = JSON.parse(jsonMatch[0]);
 
-      return {
+      const result = {
         keyDifferences: Array.isArray(parsed.keyDifferences) 
           ? parsed.keyDifferences.slice(0, 5).map((diff: any) => ({
               category: diff.category || 'theological_term',
@@ -217,6 +263,12 @@ Be concise, practical, and pastor-focused. Highlight differences that affect int
           overallAssessment: String(parsed.analysis?.overallAssessment || '').substring(0, 500)
         }
       };
+
+      if (isSpanish) {
+        return this.ensureSpanishResult(result, userId);
+      }
+
+      return result;
     } catch (error) {
       console.error('Error analyzing translation differences:', error);
       // Return empty analysis on error
@@ -226,9 +278,77 @@ Be concise, practical, and pastor-focused. Highlight differences that affect int
           verbDifferences: [],
           theologicalTermDifferences: [],
           literalVsDynamic: [],
-          overallAssessment: 'Unable to analyze differences at this time.'
+          overallAssessment:
+            language === 'es' || language === 'spanish'
+              ? 'No fue posible analizar las diferencias en este momento.'
+              : 'Unable to analyze differences at this time.'
         }
       };
+    }
+  }
+
+  private async ensureSpanishResult(
+    result: { keyDifferences: KeyDifference[]; analysis: ComparisonAnalysis },
+    userId?: string,
+  ): Promise<{ keyDifferences: KeyDifference[]; analysis: ComparisonAnalysis }> {
+    const containsEnglish = (value: string) =>
+      /\b(the|and|with|while|this|that|both|difference|explanation|overall|assessment|active|passive)\b/i.test(value || '');
+
+    const hasEnglish =
+      result.keyDifferences.some((diff) => containsEnglish(diff.difference) || containsEnglish(diff.explanation)) ||
+      result.analysis.verbDifferences.some((item) => containsEnglish(item)) ||
+      result.analysis.theologicalTermDifferences.some((item) => containsEnglish(item)) ||
+      result.analysis.literalVsDynamic.some((item) => containsEnglish(item)) ||
+      containsEnglish(result.analysis.overallAssessment);
+
+    if (!hasEnglish) {
+      return result;
+    }
+
+    try {
+      const prompt = `Traduce al español TODOS los valores de texto del siguiente JSON.
+No cambies claves, estructura, categorías ni niveles de significancia.
+Devuelve SOLO JSON válido.
+
+JSON:
+${JSON.stringify(result)}`;
+
+      const response = await this.llmService.generateCompletion(prompt, userId || 'system', {
+        temperature: 0.1,
+        maxTokens: 1500,
+      });
+
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return result;
+      }
+
+      const translated = JSON.parse(jsonMatch[0]);
+      return {
+        keyDifferences: Array.isArray(translated?.keyDifferences)
+          ? translated.keyDifferences.slice(0, 5).map((diff: any) => ({
+              category: diff.category || 'theological_term',
+              translations: Array.isArray(diff.translations) ? diff.translations : [],
+              difference: String(diff.difference || '').substring(0, 200),
+              explanation: String(diff.explanation || '').substring(0, 500),
+              significance: ['high', 'medium', 'low'].includes(diff.significance) ? diff.significance : 'medium',
+            }))
+          : result.keyDifferences,
+        analysis: {
+          verbDifferences: Array.isArray(translated?.analysis?.verbDifferences)
+            ? translated.analysis.verbDifferences.slice(0, 5)
+            : result.analysis.verbDifferences,
+          theologicalTermDifferences: Array.isArray(translated?.analysis?.theologicalTermDifferences)
+            ? translated.analysis.theologicalTermDifferences.slice(0, 5)
+            : result.analysis.theologicalTermDifferences,
+          literalVsDynamic: Array.isArray(translated?.analysis?.literalVsDynamic)
+            ? translated.analysis.literalVsDynamic.slice(0, 5)
+            : result.analysis.literalVsDynamic,
+          overallAssessment: String(translated?.analysis?.overallAssessment || result.analysis.overallAssessment).substring(0, 500),
+        },
+      };
+    } catch {
+      return result;
     }
   }
 }

@@ -20,10 +20,11 @@ export class StudySynthesisService {
 
   async getStudySynthesis(reference: string, userId?: string, language?: string): Promise<StudySynthesisData> {
     try {
+      const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
       // Fetch actual passage text to prevent LLM hallucination
       let passageText = '';
       try {
-        const result = await this.scriptureService.getPassage(reference, 'KJV');
+        const result = await this.scriptureService.getPassage(reference, analysisTranslation);
         if (result && result.verses && result.verses.length > 0) {
           passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
         }
@@ -58,7 +59,9 @@ export class StudySynthesisService {
 
   private buildPrompt(reference: string, passageText: string, language?: string): string {
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+    const languageInstruction = language === 'es'
+      ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
+      : 'Respond in English.';
     
     return `${languageInstruction} You are a biblical theologian synthesizing study insights for pastors preparing sermons.
 

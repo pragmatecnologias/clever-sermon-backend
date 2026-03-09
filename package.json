@@ -24,7 +24,8 @@
     "migration:revert": "npm run typeorm -- migration:revert -d src/config/typeorm.config.ts",
     "schema:drop": "ts-node src/seed/drop-tables.ts",
     "schema:create": "ts-node src/seed/create-schema.ts",
-    "seed": "ts-node src/seed/seed.ts"
+    "seed": "ts-node src/seed/seed.ts",
+    "seed:egw": "ts-node scripts/seed-egw-all.ts"
   },
   "dependencies": {
     "@nestjs/bull": "^10.0.1",

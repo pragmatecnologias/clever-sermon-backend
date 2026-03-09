@@ -67,6 +67,7 @@ export class EGWSermonBuilderIntegrationService {
       parsed.chapter,
       parsed.verseStart,
       parsed.verseEnd,
+      'en',
       10
     );
 

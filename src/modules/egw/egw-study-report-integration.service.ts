@@ -42,6 +42,7 @@ export class EGWStudyReportIntegrationService {
       chapter,
       verseStart,
       verseEnd,
+      'en',
       8 // Get more for categorization
     );
 

@@ -24,10 +24,11 @@ export class VerseCommentaryService {
   async getCommentary(verseReference: string, userId?: string, force?: boolean, language?: string): Promise<VerseCommentary> {
     try {
       const notes: CommentaryNote[] = [];
+      const requestedLanguage = language || 'en';
 
       // 1. Get EGW quotes for this passage
       // Note: Force refresh is handled at the controller level by not caching the response
-      const egwQuotes = await this.egwService.getRelevantQuotes(verseReference, undefined, 5);
+      const egwQuotes = await this.egwService.getRelevantQuotes(verseReference, undefined, 5, requestedLanguage);
       
       for (const quote of egwQuotes) {
         notes.push({
@@ -39,7 +40,7 @@ export class VerseCommentaryService {
 
       // 2. If we have EGW quotes, generate contextual commentary using LLM
       if (notes.length > 0) {
-        const contextualNote = await this.generateContextualCommentary(verseReference, userId, language || 'en');
+        const contextualNote = await this.generateContextualCommentary(verseReference, userId, requestedLanguage);
         if (contextualNote) {
           notes.unshift(contextualNote); // Add at beginning
         }
@@ -47,7 +48,7 @@ export class VerseCommentaryService {
 
       // 3. If no EGW quotes found, generate full LLM commentary
       if (notes.length === 0) {
-        const llmNotes = await this.generateLLMCommentary(verseReference, userId, language || 'en');
+        const llmNotes = await this.generateLLMCommentary(verseReference, userId, requestedLanguage);
         notes.push(...llmNotes);
       }
 
