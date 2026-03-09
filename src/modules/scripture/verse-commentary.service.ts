@@ -1,204 +1,149 @@
 import { Injectable } from '@nestjs/common';
+import { EGWService } from '../egw/egw.service';
+import { LlmService } from '../llm/llm.service';
 
 export interface VerseCommentary {
   verseReference: string;
   notes: CommentaryNote[];
+  dataSource: 'egw' | 'llm-generated' | 'unavailable';
 }
 
 export interface CommentaryNote {
-  type: 'context' | 'word' | 'historical' | 'theological' | 'interpretive';
+  type: 'context' | 'word' | 'historical' | 'theological' | 'egw';
   content: string;
-  source?: string;
+  source: string;
 }
 
 @Injectable()
 export class VerseCommentaryService {
-  private commentaryIndex: Map<string, CommentaryNote[]> = new Map();
+  constructor(
+    private egwService: EGWService,
+    private llmService: LlmService
+  ) {}
 
-  constructor() {
-    this.initializeCommentaryData();
+  async getCommentary(verseReference: string, userId?: string, force?: boolean, language?: string): Promise<VerseCommentary> {
+    try {
+      const notes: CommentaryNote[] = [];
+
+      // 1. Get EGW quotes for this passage
+      // Note: Force refresh is handled at the controller level by not caching the response
+      const egwQuotes = await this.egwService.getRelevantQuotes(verseReference, undefined, 5);
+      
+      for (const quote of egwQuotes) {
+        notes.push({
+          type: 'egw',
+          content: quote.text,
+          source: `${quote.bookTitle} - ${quote.reference}`
+        });
+      }
+
+      // 2. If we have EGW quotes, generate contextual commentary using LLM
+      if (notes.length > 0) {
+        const contextualNote = await this.generateContextualCommentary(verseReference, userId, language || 'en');
+        if (contextualNote) {
+          notes.unshift(contextualNote); // Add at beginning
+        }
+      }
+
+      // 3. If no EGW quotes found, generate full LLM commentary
+      if (notes.length === 0) {
+        const llmNotes = await this.generateLLMCommentary(verseReference, userId, language || 'en');
+        notes.push(...llmNotes);
+      }
+
+      return {
+        verseReference,
+        notes,
+        dataSource: egwQuotes.length > 0 ? 'egw' : (notes.length > 0 ? 'llm-generated' : 'unavailable')
+      };
+    } catch (error) {
+      console.error('Error generating verse commentary:', error);
+      return {
+        verseReference,
+        notes: [],
+        dataSource: 'unavailable'
+      };
+    }
   }
 
-  getCommentary(verseReference: string): VerseCommentary {
-    const normalized = this.normalizeReference(verseReference);
-    const notes = this.commentaryIndex.get(normalized) || [];
-    
-    return {
-      verseReference,
-      notes
-    };
+  private async generateContextualCommentary(reference: string, userId?: string, language?: string): Promise<CommentaryNote | null> {
+    try {
+      const languageLabel = language === 'es' ? 'Spanish' : 'English';
+      const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+      
+      const prompt = `${languageInstruction} Provide a brief 2-3 sentence contextual overview of ${reference}. Include:
+- What is happening in this passage
+- Where it fits in the book/narrative
+- Key theological significance
+
+Be concise and pastor-focused. Language: ${languageLabel}`;
+
+      const response = await this.llmService.generateCompletion(
+        prompt,
+        userId || 'system',
+        {
+          temperature: 0.3,
+          maxTokens: 200,
+        }
+      );
+
+      return {
+        type: 'context',
+        content: response.trim(),
+        source: 'Contextual Analysis'
+      };
+    } catch (error) {
+      console.error('Error generating contextual commentary:', error);
+      return null;
+    }
   }
 
-  getCommentaryForPassage(startRef: string, endRef?: string): VerseCommentary[] {
-    // For now, return single verse commentary
-    // Future: expand to passage range
-    return [this.getCommentary(startRef)];
-  }
+  private async generateLLMCommentary(reference: string, userId?: string, language?: string): Promise<CommentaryNote[]> {
+    try {
+      const languageLabel = language === 'es' ? 'Spanish' : 'English';
+      const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+      
+      const prompt = `${languageInstruction} You are a biblical scholar providing verse commentary for pastors.
 
-  private normalizeReference(ref: string): string {
-    return ref.trim().replace(/\s+/g, ' ');
-  }
+Analyze ${reference} and provide 3-4 concise commentary notes covering:
 
-  private initializeCommentaryData() {
-    // Sample curated commentary data
-    // In production, this would load from a database or JSON file
-    
-    this.commentaryIndex.set('John 3:16', [
-      {
-        type: 'context',
-        content: 'Part of Jesus\' conversation with Nicodemus, a Pharisee who came to Jesus at night.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'word',
-        content: 'The Greek word "agape" (loved) emphasizes God\'s unconditional, sacrificial love.',
-        source: 'Lexical Study'
-      },
-      {
-        type: 'theological',
-        content: 'Central verse expressing the gospel: God\'s love, Christ\'s sacrifice, and salvation by faith.',
-        source: 'Theological Framework'
+1. **Context**: What's happening in this passage? Where does it fit in the book?
+2. **Key Words**: Any significant Greek/Hebrew words or phrases worth noting?
+3. **Historical/Cultural**: Relevant historical or cultural background
+4. **Theological**: Main theological significance or application
+
+Format as JSON:
+{
+  "notes": [
+    {
+      "type": "context" | "word" | "historical" | "theological",
+      "content": "...",
+      "source": "..."
+    }
+  ]
+}
+
+Keep each note to 2-3 sentences. Be practical and pastor-focused. Language: ${languageLabel}`;
+
+      const response = await this.llmService.generateCompletion(
+        prompt,
+        userId || 'system',
+        {
+          temperature: 0.3,
+          maxTokens: 800,
+        }
+      );
+
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return [];
       }
-    ]);
 
-    this.commentaryIndex.set('Romans 3:23', [
-      {
-        type: 'context',
-        content: 'Part of Paul\'s argument that all humanity is under sin, both Jews and Gentiles.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'word',
-        content: '"Fall short" (Greek: husterountai) means to lack or be deficient in reaching the standard.',
-        source: 'Lexical Study'
-      }
-    ]);
-
-    this.commentaryIndex.set('Hebrews 8:1-2', [
-      {
-        type: 'context',
-        content: 'Summary statement of the high priestly ministry of Christ in the heavenly sanctuary.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'theological',
-        content: 'Establishes the reality of the heavenly sanctuary where Christ ministers as High Priest.',
-        source: 'SDA Theological Framework'
-      },
-      {
-        type: 'historical',
-        content: 'Contrasts the earthly tabernacle (Exodus 25) with the true tabernacle in heaven.',
-        source: 'Biblical Typology'
-      }
-    ]);
-
-    this.commentaryIndex.set('Daniel 8:14', [
-      {
-        type: 'context',
-        content: 'Part of Daniel\'s vision of the ram, goat, and little horn. The 2300 days prophecy.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'word',
-        content: '"Cleansed" (Hebrew: tsadaq) can also mean "vindicated" or "restored to righteousness."',
-        source: 'Lexical Study'
-      },
-      {
-        type: 'theological',
-        content: 'Central to SDA understanding of the investigative judgment beginning in 1844.',
-        source: 'SDA Prophetic Interpretation'
-      },
-      {
-        type: 'interpretive',
-        content: 'Day-year principle applied: 2300 prophetic days = 2300 literal years (457 BC to AD 1844).',
-        source: 'Historicist Interpretation'
-      }
-    ]);
-
-    this.commentaryIndex.set('Revelation 14:6-7', [
-      {
-        type: 'context',
-        content: 'First of three angels\' messages, proclaiming the everlasting gospel.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'theological',
-        content: 'Call to worship the Creator, emphasizing Sabbath truth and judgment hour message.',
-        source: 'SDA End-Time Theology'
-      },
-      {
-        type: 'historical',
-        content: 'Parallels the Sabbath commandment in Exodus 20:11.',
-        source: 'Canonical Connection'
-      }
-    ]);
-
-    this.commentaryIndex.set('Matthew 24:14', [
-      {
-        type: 'context',
-        content: 'Part of the Olivet Discourse on signs of the end times.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'theological',
-        content: 'Gospel commission must be fulfilled before Christ\'s return.',
-        source: 'Eschatological Framework'
-      }
-    ]);
-
-    this.commentaryIndex.set('Exodus 20:8-11', [
-      {
-        type: 'context',
-        content: 'Fourth commandment of the Decalogue given at Mount Sinai.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'word',
-        content: '"Remember" (Hebrew: zakar) implies ongoing observance of an established institution.',
-        source: 'Lexical Study'
-      },
-      {
-        type: 'theological',
-        content: 'Sabbath as memorial of Creation and sign of sanctification.',
-        source: 'SDA Sabbath Theology'
-      },
-      {
-        type: 'historical',
-        content: 'Sabbath instituted at Creation (Genesis 2:2-3), reaffirmed in the law.',
-        source: 'Biblical Timeline'
-      }
-    ]);
-
-    this.commentaryIndex.set('Leviticus 16:29-30', [
-      {
-        type: 'context',
-        content: 'Instructions for the Day of Atonement, Israel\'s annual cleansing ceremony.',
-        source: 'Contextual Analysis'
-      },
-      {
-        type: 'theological',
-        content: 'Type of the final atonement and investigative judgment in the heavenly sanctuary.',
-        source: 'SDA Sanctuary Doctrine'
-      },
-      {
-        type: 'word',
-        content: '"Afflict your souls" (Hebrew: anah nephesh) means to humble oneself, often through fasting.',
-        source: 'Lexical Study'
-      }
-    ]);
-  }
-
-  addCommentary(verseReference: string, note: CommentaryNote): void {
-    const normalized = this.normalizeReference(verseReference);
-    const existing = this.commentaryIndex.get(normalized) || [];
-    existing.push(note);
-    this.commentaryIndex.set(normalized, existing);
-  }
-
-  bulkLoadCommentary(data: Array<{ verse: string; notes: CommentaryNote[] }>): void {
-    for (const entry of data) {
-      const normalized = this.normalizeReference(entry.verse);
-      this.commentaryIndex.set(normalized, entry.notes);
+      const parsed = JSON.parse(jsonMatch[0]);
+      return Array.isArray(parsed.notes) ? parsed.notes : [];
+    } catch (error) {
+      console.error('Error generating LLM commentary:', error);
+      return [];
     }
   }
 }

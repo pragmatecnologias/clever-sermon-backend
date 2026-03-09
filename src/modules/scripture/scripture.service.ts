@@ -281,13 +281,23 @@ export class ScriptureService {
   async getPassage(reference: string, translationCode: string = 'KJV'): Promise<any> {
     const apiKey = this.configService.get('BIBLE_API_KEY');
     const apiUrl = this.configService.get('BIBLE_API_URL');
-    const normalizedReference = this.normalizeReferenceForApi(reference);
+    const rawReference = (reference || '').trim();
+    const normalizedReference = this.normalizeReferenceForApi(rawReference);
+    const requestedTranslation = (translationCode || 'KJV').trim().toUpperCase();
+    const requiresApiBible = ['RVR1960', 'RVR60', 'NBLA', 'NVI'].includes(requestedTranslation);
+
+    if ((!apiKey || !apiUrl) && requiresApiBible) {
+      return {
+        reference: rawReference || normalizedReference,
+        translation: requestedTranslation,
+        verses: [],
+        error: `Translation ${requestedTranslation} requires API.Bible. Configure BIBLE_API_KEY to fetch Spanish passages without fallback.`,
+      };
+    }
 
     if (apiKey && apiUrl) {
       try {
-        const translation = await this.translationRepository.findOne({
-          where: { code: translationCode },
-        });
+        const translation = await this.resolveTranslationForApi(requestedTranslation);
 
         if (translation?.apiId) {
           // Use API.Bible passages endpoint
@@ -295,7 +305,7 @@ export class ScriptureService {
           
           // Check cache first
           const cached = await this.cacheService.getPassage(translation.apiId, passageId);
-          if (cached) {
+          if (cached && Array.isArray(cached?.verses) && cached.verses.length > 0) {
             return cached;
           }
           
@@ -312,20 +322,22 @@ export class ScriptureService {
           );
 
           // Format response to match expected structure
-          const formatted = formatApiBibleResponse(response.data, reference, translationCode);
+          const formatted = formatApiBibleResponse(response.data, reference, requestedTranslation);
           
-          // Cache the result
-          await this.cacheService.setPassage(translation.apiId, passageId, formatted);
+          // Cache only non-empty results to avoid stale empty payloads being reused.
+          if (Array.isArray(formatted?.verses) && formatted.verses.length > 0) {
+            await this.cacheService.setPassage(translation.apiId, passageId, formatted);
+          }
           
           return formatted;
         }
       } catch (error) {
         console.error('[Scripture] API.Bible error:', error.response?.data || error.message);
-        return this.fetchBibleApiPassage(normalizedReference, translationCode);
+        return this.fetchBibleApiPassage(rawReference, requestedTranslation, normalizedReference);
       }
     }
 
-    return this.fetchBibleApiPassage(normalizedReference, translationCode);
+    return this.fetchBibleApiPassage(rawReference, requestedTranslation, normalizedReference);
   }
 
   async getStructuralAnalysis(reference: string, translationCode: string = 'KJV') {
@@ -616,27 +628,66 @@ Rules:
     return index?.[normalized] || null;
   }
 
-  private async fetchBibleApiPassage(reference: string, translationCode: string): Promise<any> {
-    try {
-      const response = await axios.get(`https://bible-api.com/${encodeURIComponent(reference)}`, {
-        params: { translation: translationCode.toLowerCase() },
-      });
-      const data = response.data;
-      return {
-        reference: data.reference || reference,
-        translation: data.translation_id || translationCode,
-        verses: (data.verses || []).map((verse: any) => ({
-          reference: verse.reference,
-          text: verse.text,
-        })),
-      };
-    } catch {
-      return {
-        reference,
-        translation: translationCode,
-        verses: [],
-      };
+  private async fetchBibleApiPassage(reference: string, translationCode: string, alternateReference?: string): Promise<any> {
+    const fallbackCodes = this.getFallbackTranslationCodes(translationCode);
+    const references = Array.from(
+      new Set(
+        [reference, alternateReference]
+          .filter((item): item is string => Boolean(item && item.trim()))
+          .map((item) => item.trim()),
+      ),
+    );
+
+    for (const ref of references) {
+      for (const code of fallbackCodes) {
+        try {
+          const response = await axios.get(`https://bible-api.com/${encodeURIComponent(ref)}`, {
+            params: { translation: code },
+          });
+          const data = response.data;
+          const verses = (data.verses || []).map((verse: any) => ({
+            reference: verse.reference || `${verse.book_name} ${verse.chapter}:${verse.verse}`,
+            text: verse.text,
+          }));
+
+          if (verses.length > 0) {
+            return {
+              reference: data.reference || ref,
+              translation: data.translation_id || translationCode,
+              verses,
+            };
+          }
+        } catch {
+          // Try the next translation/reference combination.
+        }
+      }
     }
+
+    return {
+      reference,
+      translation: translationCode,
+      verses: [],
+      error: `No verses found for ${translationCode}. Fallback provider could not resolve this translation for the requested reference.`,
+    };
+  }
+
+  private async resolveTranslationForApi(requestedCode: string): Promise<BibleTranslation | null> {
+    const translation = await this.translationRepository.findOne({ where: { code: requestedCode } });
+    if (translation?.apiId) {
+      return translation;
+    }
+    return null;
+  }
+
+  private getFallbackTranslationCodes(translationCode: string): string[] {
+    const code = (translationCode || 'KJV').trim().toUpperCase();
+    const map: Record<string, string[]> = {
+      RVR1960: ['rvr1960', 'rvr'],
+      RVR60: ['rvr1960', 'rvr'],
+      NBLA: ['nbla'],
+      NVI: ['nvi'],
+    };
+    return map[code] || [code.toLowerCase()];
   }
 
   private async loadCrossReferences(): Promise<Map<string, string[]>> {

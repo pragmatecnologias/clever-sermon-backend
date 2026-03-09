@@ -93,6 +93,8 @@ CREATE TABLE IF NOT EXISTS sermon_workspaces (
   status workspace_status NOT NULL DEFAULT 'draft',
   language text NOT NULL DEFAULT 'en',
   metadata jsonb DEFAULT '{}',
+  "scriptureCache" jsonb,
+  "references" jsonb DEFAULT '[]',
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
@@ -317,3 +319,128 @@ CREATE INDEX IF NOT EXISTS idx_ai_conversations_workspace ON ai_conversations("w
 CREATE INDEX IF NOT EXISTS idx_llm_requests_user ON llm_requests("userId");
 CREATE INDEX IF NOT EXISTS idx_llm_requests_provider ON llm_requests(provider);
 CREATE INDEX IF NOT EXISTS idx_sermon_dna_workspace ON sermon_dna_analyses("workspaceId");
+
+-- New Analysis Tables for Product Improvements
+
+DO $$ BEGIN
+  CREATE TYPE preaching_genre AS ENUM ('expository', 'narrative', 'prophetic', 'apologetic', 'revivalist', 'teaching', 'pastoral', 'evangelistic');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE emotional_arc AS ENUM ('conviction_to_hope', 'crisis_to_resolution', 'question_to_discovery', 'comfort_to_challenge', 'lament_to_praise');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE doctrinal_category AS ENUM ('grace', 'sanctification', 'sabbath', 'state_of_dead', 'sanctuary', 'second_coming', 'covenant', 'law_and_gospel');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS theological_center_analyses (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "workspaceId" uuid NOT NULL REFERENCES sermon_workspaces(id) ON DELETE CASCADE,
+  "dominantCenter" text NOT NULL,
+  "textualWarrant" text NOT NULL,
+  "alignmentScore" float NOT NULL,
+  deviations jsonb,
+  "secondaryThemes" text[],
+  "suppressionSuggestions" jsonb,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tension_analyses (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "workspaceId" uuid NOT NULL REFERENCES sermon_workspaces(id) ON DELETE CASCADE,
+  tensions jsonb NOT NULL,
+  "sermonTensionHandling" jsonb,
+  "tensionPreservationScore" float NOT NULL,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS doctrinal_precision_checks (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "workspaceId" uuid NOT NULL REFERENCES sermon_workspaces(id) ON DELETE CASCADE,
+  checks jsonb NOT NULL,
+  "overallConsistencyScore" float NOT NULL,
+  summary text,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS blind_spot_analyses (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "workspaceId" uuid NOT NULL REFERENCES sermon_workspaces(id) ON DELETE CASCADE,
+  "themesNotAddressed" text[] NOT NULL,
+  "hardVersesAvoided" text[] NOT NULL,
+  "doctrinalTensionsMinimized" jsonb,
+  "applicationImbalance" jsonb,
+  "overallAssessment" text,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS preaching_strategies (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "workspaceId" uuid NOT NULL REFERENCES sermon_workspaces(id) ON DELETE CASCADE,
+  "recommendedGenre" preaching_genre NOT NULL,
+  "genreRationale" text NOT NULL,
+  "emotionalArc" emotional_arc NOT NULL,
+  tone varchar(50) NOT NULL,
+  "targetLengthMinutes" integer NOT NULL,
+  "tensionLevel" float NOT NULL,
+  "applicationDensity" float NOT NULL,
+  "invitationDriven" boolean NOT NULL DEFAULT false,
+  "structuralGuidance" jsonb,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS historical_contexts_enhanced (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "workspaceId" uuid NOT NULL REFERENCES sermon_workspaces(id) ON DELETE CASCADE,
+  passage text NOT NULL,
+  "socialRealities" jsonb NOT NULL,
+  "powerStructures" jsonb,
+  "economicContext" jsonb,
+  "religiousClimate" jsonb,
+  "audiencePressures" jsonb,
+  "synthesisStatement" text,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS sermon_pattern_trackers (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "userId" uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  "totalSermons" integer NOT NULL DEFAULT 0,
+  "styleFrequency" jsonb NOT NULL DEFAULT '{}',
+  "themeFrequency" jsonb NOT NULL DEFAULT '{}',
+  "applicationCategoryBalance" jsonb NOT NULL DEFAULT '{"personal": 0, "communal": 0, "missional": 0, "doctrinal": 0}',
+  "avgChristCentrality" float,
+  "avgApplicationDepth" float,
+  "avoidedTexts" text[],
+  "overusedIllustrations" text[],
+  "growthInsights" jsonb,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS cross_reference_narratives (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "sourceVerse" text NOT NULL,
+  "narrativeTitle" text NOT NULL,
+  "narrativeDescription" text NOT NULL,
+  chain jsonb NOT NULL,
+  "thematicThread" text NOT NULL,
+  "redemptiveMovement" text,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_theological_center_workspace ON theological_center_analyses("workspaceId");
+CREATE INDEX IF NOT EXISTS idx_tension_analyses_workspace ON tension_analyses("workspaceId");
+CREATE INDEX IF NOT EXISTS idx_doctrinal_checks_workspace ON doctrinal_precision_checks("workspaceId");
+CREATE INDEX IF NOT EXISTS idx_blind_spot_analyses_workspace ON blind_spot_analyses("workspaceId");
+CREATE INDEX IF NOT EXISTS idx_preaching_strategies_workspace ON preaching_strategies("workspaceId");
+CREATE INDEX IF NOT EXISTS idx_historical_contexts_workspace ON historical_contexts_enhanced("workspaceId");
+CREATE INDEX IF NOT EXISTS idx_sermon_pattern_trackers_user ON sermon_pattern_trackers("userId");
+CREATE INDEX IF NOT EXISTS idx_cross_reference_narratives_source ON cross_reference_narratives("sourceVerse");

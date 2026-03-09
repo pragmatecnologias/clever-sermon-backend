@@ -23,14 +23,18 @@ import { WordStudyEnhancedService } from './word-study-enhanced.service';
 import { PerVerseContextService } from './per-verse-context.service';
 import { SDADoctrinalGuardrailsService } from './sda-doctrinal-guardrails.service';
 import { TranslationComparisonEnhancedService } from './translation-comparison-enhanced.service';
+import { PassageSummaryService } from './passage-summary.service';
+import { StudySynthesisService } from './study-synthesis.service';
 import { BibleTranslation } from '../../entities/bible-translation.entity';
 import { LlmModule } from '../llm/llm.module';
+import { EGWModule } from '../egw/egw.module';
 
 @Module({
   imports: [
     ConfigModule,
     TypeOrmModule.forFeature([BibleTranslation]),
     LlmModule,
+    EGWModule,
   ],
   providers: [
     ScriptureService,
@@ -53,7 +57,9 @@ import { LlmModule } from '../llm/llm.module';
     WordStudyEnhancedService,
     PerVerseContextService,
     SDADoctrinalGuardrailsService,
-    TranslationComparisonEnhancedService
+    TranslationComparisonEnhancedService,
+    PassageSummaryService,
+    StudySynthesisService
   ],
   controllers: [ScriptureController],
   exports: [ScriptureService, CitationValidatorService, SDADoctrinalGuardrailsService],

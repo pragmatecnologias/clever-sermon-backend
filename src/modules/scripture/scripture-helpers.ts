@@ -143,12 +143,32 @@ export function formatApiBibleResponse(apiResponse: any, originalReference: stri
 
   // If no verses found with brackets, try to parse the whole content
   if (verses.length === 0 && content) {
-    const cleanContent = content.replace(/\s+/g, ' ').trim();
-    if (cleanContent) {
-      verses.push({
-        reference: data.reference || originalReference,
-        text: cleanContent
-      });
+    // Get book and chapter from the API response reference
+    const refMatch = (data.reference || originalReference).match(/^(.*?)\s+(\d+)/);
+    const bookChapter = refMatch ? `${refMatch[1]} ${refMatch[2]}` : (data.reference || originalReference);
+    
+    // Split content into individual verses (each separated by newline)
+    const verseTexts = content.split(/\n+/).filter(line => line.trim());
+    
+    verseTexts.forEach((text, index) => {
+      const cleanText = text.replace(/\s+/g, ' ').trim();
+      if (cleanText) {
+        verses.push({
+          reference: `${bookChapter}:${index + 1}`,
+          text: cleanText
+        });
+      }
+    });
+    
+    // Fallback: if still no verses after splitting, add the whole content as one verse
+    if (verses.length === 0) {
+      const cleanContent = content.replace(/\s+/g, ' ').trim();
+      if (cleanContent) {
+        verses.push({
+          reference: data.reference || originalReference,
+          text: cleanContent
+        });
+      }
     }
   }
 

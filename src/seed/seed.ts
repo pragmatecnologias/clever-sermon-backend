@@ -99,6 +99,7 @@ async function seed() {
     { code: 'ESV', name: 'English Standard Version', language: 'en', apiId: null, isPublicDomain: false },
     { code: 'NKJV', name: 'New King James Version', language: 'en', apiId: '63097d2a0a2f7db3-01', isPublicDomain: false },
     { code: 'NLT', name: 'New Living Translation', language: 'en', apiId: null, isPublicDomain: false },
+    { code: 'RVR1960', name: 'Reina-Valera 1960', language: 'es', apiId: '592420522e16049f-01', isPublicDomain: false },
     { code: 'NBLA', name: 'Nueva Biblia de las Américas', language: 'es', apiId: 'ce11b813f9a27e20-01', isPublicDomain: false },
   ];
 
@@ -107,6 +108,9 @@ async function seed() {
     if (!existing) {
       await translationRepository.save(translationRepository.create(trans));
       console.log(`✅ Created translation: ${trans.name}`);
+    } else {
+      await translationRepository.update({ code: trans.code }, trans);
+      console.log(`✅ Updated translation: ${trans.name}`);
     }
   }
 
@@ -123,6 +127,13 @@ async function seed() {
       seriesTitle: 'Hope in the Wilderness',
       mainPassage: 'Daniel 3:16-28',
       additionalPassages: ['Isaiah 43:1-3', '1 Peter 1:6-7'],
+      references: [
+        {
+          reference: 'Daniel 3:25',
+          context: 'Seeded reference for sermon exploration',
+          addedAt: new Date().toISOString(),
+        },
+      ],
       theme: 'God meets us in adversity with presence and power.',
       audienceProfile: 'Sunday morning congregation, multi-generational.',
       sermonGoals: 'Call the church to courage, prayer, and public faith.',
@@ -146,6 +157,13 @@ async function seed() {
       seriesTitle: 'Viviendo en Cristo',
       mainPassage: 'Efesios 2:1-10',
       additionalPassages: ['Romanos 5:8', 'Tito 3:4-7'],
+      references: [
+        {
+          reference: 'Romanos 5:8',
+          context: 'Referencia inicial para el estudio',
+          addedAt: new Date().toISOString(),
+        },
+      ],
       theme: 'La gracia de Dios nos transforma de muerte a vida.',
       audienceProfile: 'Congregación hispana, familias y jóvenes.',
       sermonGoals: 'Inspirar gratitud por la gracia de Dios y motivar a vivir en santidad.',

@@ -25,6 +25,13 @@ async function seedApiBibleTranslations() {
       isPublicDomain: false,
     },
     {
+      code: 'RVR1960',
+      name: 'Reina-Valera 1960',
+      language: 'es',
+      apiId: '592420522e16049f-01',
+      isPublicDomain: false,
+    },
+    {
       code: 'NBLA',
       name: 'Nueva Biblia de las Américas',
       language: 'es',

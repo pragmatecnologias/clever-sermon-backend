@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { LlmService } from '../llm/llm.service';
+import { ScriptureService } from './scripture.service';
 
 export interface StructuralAnalysis {
   passage: string;
@@ -6,7 +8,7 @@ export interface StructuralAnalysis {
   structure: StructuralElement[];
   chiasm?: ChiasmStructure;
   parallelism?: ParallelismPattern[];
-  dataSource: 'curated' | 'unavailable';
+  dataSource: 'llm-generated' | 'curated' | 'unavailable';
 }
 
 export interface StructuralElement {
@@ -31,11 +33,14 @@ export interface ParallelismPattern {
 export class StructuralAnalysisDataService {
   private structureIndex: Map<string, StructuralAnalysis> = new Map();
 
-  constructor() {
+  constructor(
+    private llmService: LlmService,
+    private scriptureService: ScriptureService
+  ) {
     this.initializeStructuralData();
   }
 
-  getStructuralAnalysis(passage: string): StructuralAnalysis {
+  async getStructuralAnalysis(passage: string, language?: string): Promise<StructuralAnalysis> {
     const normalized = this.normalizePassage(passage);
     const analysis = this.structureIndex.get(normalized);
     
@@ -43,11 +48,96 @@ export class StructuralAnalysisDataService {
       return { ...analysis, dataSource: 'curated' };
     }
 
+    // Generate structural analysis using LLM
+    try {
+      const generated = await this.generateStructuralAnalysis(passage, language || 'en');
+      return generated;
+    } catch (error) {
+      console.error('Failed to generate structural analysis:', error);
+      return {
+        passage,
+        literaryGenre: 'Unknown',
+        structure: [],
+        dataSource: 'unavailable'
+      };
+    }
+  }
+
+  private async generateStructuralAnalysis(passage: string, language?: string): Promise<StructuralAnalysis> {
+    // Fetch the actual passage text to prevent LLM hallucination
+    let passageText = '';
+    try {
+      const result = await this.scriptureService.getPassage(passage, 'KJV');
+      if (result && result.verses && result.verses.length > 0) {
+        passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
+      }
+    } catch (error) {
+      console.error('Failed to fetch passage text for structural analysis:', error);
+    }
+
+    const languageLabel = language === 'es' ? 'Spanish' : 'English';
+    const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
+    
+    const prompt = `${languageInstruction} You are a biblical scholar analyzing the literary structure of scripture passages.
+
+Passage Reference: ${passage}
+
+Passage Text:
+${passageText || 'Text not available - analyze based on reference only'}
+
+Provide a detailed structural analysis in the following JSON format:
+{
+  "literaryGenre": "Genre (e.g., Narrative, Poetry, Apocalyptic, Legal, Wisdom, Gospel, Epistle)",
+  "structure": [
+    {
+      "verses": "verse range",
+      "type": "introduction|body|conclusion|transition|climax|inclusio",
+      "description": "Description of this structural element"
+    }
+  ],
+  "chiasm": {
+    "pattern": "Pattern notation (e.g., A-B-C-B'-A')",
+    "elements": [
+      {
+        "label": "A",
+        "verses": "verse range",
+        "content": "Brief description"
+      }
+    ]
+  },
+  "parallelism": [
+    {
+      "type": "synonymous|antithetic|synthetic|emblematic",
+      "verses": "verse range",
+      "lineA": "First line",
+      "lineB": "Second line"
+    }
+  ]
+}
+
+Guidelines:
+- Identify the literary genre accurately
+- Break down the passage into 3-6 structural elements
+- Note transitions, climaxes, and literary devices
+- ALWAYS create a chiastic structure with at least 3 elements (A-B-A' minimum), even if the passage doesn't have an obvious chiasm - identify thematic or conceptual parallels
+- For poetry, identify parallelism patterns when present
+- Parallelism is optional - only include if clearly present
+- Return ONLY valid JSON, no markdown or extra text`;
+
+    const response = await this.llmService.generateCompletion(prompt, 'system', {
+      temperature: 0.3,
+      maxTokens: 1200,
+    });
+
+    const parsed = JSON.parse(response);
+
     return {
       passage,
-      literaryGenre: 'Unknown',
-      structure: [],
-      dataSource: 'unavailable'
+      literaryGenre: parsed.literaryGenre || 'Unknown',
+      structure: parsed.structure || [],
+      chiasm: parsed.chiasm,
+      parallelism: parsed.parallelism && parsed.parallelism.length > 0 ? parsed.parallelism : undefined,
+      dataSource: 'llm-generated',
     };
   }
 
@@ -57,132 +147,8 @@ export class StructuralAnalysisDataService {
   }
 
   private initializeStructuralData() {
-    // Psalm 23 - Chiastic structure
-    this.structureIndex.set('psalm 23', {
-      passage: 'Psalm 23',
-      literaryGenre: 'Psalm of Trust',
-      structure: [
-        { verses: '1-3', type: 'introduction', description: 'The Lord as Shepherd (third person)' },
-        { verses: '4', type: 'transition', description: 'Shift to direct address (second person)' },
-        { verses: '5-6', type: 'conclusion', description: 'The Lord as Host' }
-      ],
-      chiasm: {
-        pattern: 'A-B-C-B\'-A\'',
-        elements: [
-          { label: 'A', verses: '1', content: 'The LORD is my shepherd' },
-          { label: 'B', verses: '2-3a', content: 'He makes me lie down, leads me, restores me' },
-          { label: 'C', verses: '3b-4', content: 'Central: Even in death valley, You are with me' },
-          { label: 'B\'', verses: '5', content: 'You prepare, anoint, fill my cup' },
-          { label: 'A\'', verses: '6', content: 'I will dwell in the house of the LORD' }
-        ]
-      },
-      dataSource: 'curated'
-    });
-
-    // Romans 3:21-26 - Theological argument structure
-    this.structureIndex.set('romans 3:21-26', {
-      passage: 'Romans 3:21-26',
-      literaryGenre: 'Theological Exposition',
-      structure: [
-        { verses: '21-22', type: 'introduction', description: 'Righteousness apart from law revealed' },
-        { verses: '23', type: 'body', description: 'Universal problem: all have sinned' },
-        { verses: '24-25a', type: 'climax', description: 'Solution: justification through Christ\'s sacrifice' },
-        { verses: '25b-26', type: 'conclusion', description: 'Purpose: demonstrate God\'s justice' }
-      ],
-      dataSource: 'curated'
-    });
-
-    // John 1:1-18 - Prologue structure
-    this.structureIndex.set('john 1:1-18', {
-      passage: 'John 1:1-18',
-      literaryGenre: 'Theological Prologue',
-      structure: [
-        { verses: '1-5', type: 'introduction', description: 'The eternal Word and creation' },
-        { verses: '6-8', type: 'body', description: 'John the Baptist\'s testimony' },
-        { verses: '9-13', type: 'body', description: 'The Word\'s coming and reception' },
-        { verses: '14-18', type: 'climax', description: 'The Word became flesh' }
-      ],
-      chiasm: {
-        pattern: 'A-B-C-B\'-A\'',
-        elements: [
-          { label: 'A', verses: '1-2', content: 'The Word with God in the beginning' },
-          { label: 'B', verses: '3-5', content: 'Life and light through the Word' },
-          { label: 'C', verses: '14', content: 'Central: The Word became flesh' },
-          { label: 'B\'', verses: '16-17', content: 'Grace and truth through Jesus Christ' },
-          { label: 'A\'', verses: '18', content: 'The Son who is at the Father\'s side' }
-        ]
-      },
-      dataSource: 'curated'
-    });
-
-    // Hebrews 8 - Sanctuary comparison
-    this.structureIndex.set('hebrews 8', {
-      passage: 'Hebrews 8',
-      literaryGenre: 'Theological Argument',
-      structure: [
-        { verses: '1-2', type: 'introduction', description: 'Main point: Christ ministers in true sanctuary' },
-        { verses: '3-5', type: 'body', description: 'Earthly sanctuary as copy and shadow' },
-        { verses: '6', type: 'transition', description: 'Christ\'s superior ministry and covenant' },
-        { verses: '7-13', type: 'climax', description: 'New covenant prophecy from Jeremiah' }
-      ],
-      dataSource: 'curated'
-    });
-
-    // Matthew 5-7 - Sermon on the Mount structure
-    this.structureIndex.set('matthew 5', {
-      passage: 'Matthew 5',
-      literaryGenre: 'Sermon/Teaching Discourse',
-      structure: [
-        { verses: '1-2', type: 'introduction', description: 'Setting: Jesus teaches on mountain' },
-        { verses: '3-12', type: 'body', description: 'The Beatitudes' },
-        { verses: '13-16', type: 'body', description: 'Salt and light metaphors' },
-        { verses: '17-20', type: 'transition', description: 'Fulfillment of Law and Prophets' },
-        { verses: '21-48', type: 'body', description: 'Six antitheses: You have heard...but I say' }
-      ],
-      dataSource: 'curated'
-    });
-
-    // Daniel 2 - Narrative with prophetic vision
-    this.structureIndex.set('daniel 2', {
-      passage: 'Daniel 2',
-      literaryGenre: 'Apocalyptic Narrative',
-      structure: [
-        { verses: '1-13', type: 'introduction', description: 'Crisis: King\'s dream and wise men\'s failure' },
-        { verses: '14-23', type: 'body', description: 'Daniel\'s prayer and God\'s revelation' },
-        { verses: '24-30', type: 'transition', description: 'Daniel brought before the king' },
-        { verses: '31-45', type: 'climax', description: 'The dream and interpretation' },
-        { verses: '46-49', type: 'conclusion', description: 'King\'s response and Daniel\'s promotion' }
-      ],
-      dataSource: 'curated'
-    });
-
-    // Revelation 12 - Apocalyptic vision
-    this.structureIndex.set('revelation 12', {
-      passage: 'Revelation 12',
-      literaryGenre: 'Apocalyptic Vision',
-      structure: [
-        { verses: '1-2', type: 'introduction', description: 'Sign 1: Woman clothed with sun' },
-        { verses: '3-4', type: 'body', description: 'Sign 2: Great red dragon' },
-        { verses: '5-6', type: 'body', description: 'Birth of male child and woman\'s flight' },
-        { verses: '7-9', type: 'climax', description: 'War in heaven, Satan cast down' },
-        { verses: '10-12', type: 'body', description: 'Victory proclamation' },
-        { verses: '13-17', type: 'conclusion', description: 'Dragon persecutes woman and remnant' }
-      ],
-      dataSource: 'curated'
-    });
-
-    // Exodus 20 - Ten Commandments structure
-    this.structureIndex.set('exodus 20', {
-      passage: 'Exodus 20',
-      literaryGenre: 'Legal/Covenant Text',
-      structure: [
-        { verses: '1-2', type: 'introduction', description: 'Preamble: I am the LORD your God' },
-        { verses: '3-11', type: 'body', description: 'First table: Duties to God (commands 1-4)' },
-        { verses: '12-17', type: 'body', description: 'Second table: Duties to neighbor (commands 5-10)' },
-        { verses: '18-21', type: 'conclusion', description: 'People\'s response and Moses\' mediation' }
-      ],
-      dataSource: 'curated'
-    });
+    // Reserved for future curated high-priority passages
+    // All other passages will be dynamically generated via LLM
   }
 
   hasStructuralData(passage: string): boolean {

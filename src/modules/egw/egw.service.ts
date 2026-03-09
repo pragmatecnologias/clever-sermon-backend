@@ -113,16 +113,34 @@ export class EGWService {
     topic?: string,
     limit: number = 5
   ): Promise<EGWQuote[]> {
-    // Search for quotes related to scripture reference or topic
-    const searchTerm = topic || scriptureReference;
-    const results = await this.searchContent(searchTerm, limit);
+    // Parse scripture reference (e.g., "1 Samuel 16:18-23" -> book: "1 Samuel", chapter: 16)
+    const refParts = scriptureReference.match(/^(.+?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$/);
+    if (!refParts) {
+      return [];
+    }
 
-    return results.map(r => ({
-      reference: r.reference,
-      text: r.content,
-      bookTitle: r.bookTitle,
-      context: `${r.chapterTitle}`
-    }));
+    const [, book, chapterStr] = refParts;
+    const chapter = parseInt(chapterStr);
+
+    // Find scripture references matching this passage
+    const scriptureRefs = await this.scriptureRefRepository
+      .createQueryBuilder('ref')
+      .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
+      .where('ref.book = :book', { book })
+      .andWhere('ref.chapter = :chapter', { chapter })
+      .andWhere('ref.language = :language', { language: 'en' })
+      .take(limit)
+      .getMany();
+
+    // Map to EGWQuote format
+    return scriptureRefs
+      .filter(ref => ref.egwParagraph)
+      .map(ref => ({
+        reference: ref.egwParagraph.reference,
+        text: ref.egwParagraph.content,
+        bookTitle: ref.egwParagraph.bookTitle,
+        context: ref.egwParagraph.chapterTitle
+      }));
   }
 
   async getSuggestedReading(topic: string): Promise<{

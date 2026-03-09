@@ -41,6 +41,21 @@ export class WorkspacesController {
     return this.workspacesService.update(id, req.user.userId, updateDto);
   }
 
+  @Patch(':id/scripture-cache')
+  updateScriptureCache(@Request() req, @Param('id') id: string, @Body() cacheData: any) {
+    return this.workspacesService.updateScriptureCache(id, req.user.userId, cacheData);
+  }
+
+  @Post(':id/references')
+  async addReference(@Request() req, @Param('id') id: string, @Body() body: { reference: string, context?: string }) {
+    return this.workspacesService.addReference(id, req.user.userId, body.reference, body.context);
+  }
+
+  @Get(':id/scripture-cache')
+  getScriptureCache(@Request() req, @Param('id') id: string) {
+    return this.workspacesService.getScriptureCache(id, req.user.userId);
+  }
+
   @Delete(':id')
   remove(@Request() req, @Param('id') id: string) {
     return this.workspacesService.remove(id, req.user.userId);

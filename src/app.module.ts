@@ -17,6 +17,7 @@ import { SermonDnaModule } from './modules/sermon-dna/sermon-dna.module';
 import { SearchModule } from './modules/search/search.module';
 import { VisualizationModule } from './modules/visualization/visualization.module';
 import { EGWModule } from './modules/egw/egw.module';
+import { AnalysisModule } from './modules/analysis/analysis.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { EGWModule } from './modules/egw/egw.module';
     SearchModule,
     VisualizationModule,
     EGWModule,
+    AnalysisModule,
   ],
 })
 export class AppModule {}

@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { ScriptureService } from './scripture.service';
+import { LlmService } from '../llm/llm.service';
 
 export interface EnhancedTranslationComparison {
   reference: string;
@@ -15,7 +17,7 @@ export interface TranslationText {
 }
 
 export interface KeyDifference {
-  category: 'verb' | 'theological_term' | 'literal_vs_dynamic' | 'textual_variant';
+  category: 'theological_term' | 'verb_difference' | 'literal_vs_dynamic' | 'addition_omission';
   translations: string[];
   difference: string;
   explanation: string;
@@ -31,216 +33,202 @@ export interface ComparisonAnalysis {
 
 @Injectable()
 export class TranslationComparisonEnhancedService {
-  private comparisonIndex: Map<string, EnhancedTranslationComparison> = new Map();
+  constructor(
+    private scriptureService: ScriptureService,
+    private llmService: LlmService
+  ) {}
 
-  constructor() {
-    this.initializeComparisonData();
-  }
-
-  getEnhancedComparison(reference: string): EnhancedTranslationComparison | null {
-    const normalized = this.normalizeReference(reference);
-    return this.comparisonIndex.get(normalized) || null;
-  }
-
-  private normalizeReference(ref: string): string {
-    return ref.toLowerCase().replace(/\s+/g, ' ').trim();
-  }
-
-  private initializeComparisonData() {
-    // John 3:16 - Famous verse with key differences
-    this.comparisonIndex.set('john 3:16', {
-      reference: 'John 3:16',
-      translations: [
-        {
-          code: 'KJV',
-          name: 'King James Version',
-          text: 'For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.',
-          type: 'formal'
-        },
-        {
-          code: 'NIV',
-          name: 'New International Version',
-          text: 'For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.',
-          type: 'dynamic'
-        },
-        {
-          code: 'NASB',
-          name: 'New American Standard Bible',
-          text: 'For God so loved the world, that He gave His only begotten Son, that whoever believes in Him shall not perish, but have eternal life.',
-          type: 'formal'
-        }
-      ],
-      keyDifferences: [
-        {
-          category: 'theological_term',
-          translations: ['KJV: only begotten', 'NIV: one and only', 'NASB: only begotten'],
-          difference: 'Greek "monogenēs" translated differently',
-          explanation: 'KJV/NASB use "only begotten" emphasizing unique generation; NIV uses "one and only" emphasizing uniqueness without generation language',
-          significance: 'medium'
-        },
-        {
-          category: 'verb',
-          translations: ['KJV: should not perish', 'NIV/NASB: shall not perish'],
-          difference: 'Modal verb choice',
-          explanation: 'KJV "should" is older English; modern "shall" expresses certainty',
-          significance: 'low'
-        }
-      ],
-      analysis: {
-        verbDifferences: ['believeth vs. believes (archaic vs. modern)'],
-        theologicalTermDifferences: ['only begotten vs. one and only (monogenēs)'],
-        literalVsDynamic: ['KJV/NASB more literal; NIV more dynamic in phrasing'],
-        overallAssessment: 'Core meaning preserved across translations; main difference is "only begotten" vs "one and only"'
+  async getEnhancedComparison(reference: string, language: string = 'en', userId?: string): Promise<EnhancedTranslationComparison | null> {
+    try {
+      // Select translations based on language
+      const translationCodes = this.getTranslationsForLanguage(language);
+      
+      if (translationCodes.length < 2) {
+        return null; // Need at least 2 translations to compare
       }
-    });
 
-    // Romans 3:23 - Sin and glory
-    this.comparisonIndex.set('romans 3:23', {
-      reference: 'Romans 3:23',
-      translations: [
-        {
-          code: 'KJV',
-          name: 'King James Version',
-          text: 'For all have sinned, and come short of the glory of God',
-          type: 'formal'
-        },
-        {
-          code: 'NIV',
-          name: 'New International Version',
-          text: 'for all have sinned and fall short of the glory of God',
-          type: 'dynamic'
-        },
-        {
-          code: 'ESV',
-          name: 'English Standard Version',
-          text: 'for all have sinned and fall short of the glory of God',
-          type: 'formal'
+      // Fetch passage text from multiple translations
+      const translations: TranslationText[] = [];
+      for (const code of translationCodes) {
+        try {
+          const result = await this.scriptureService.getPassage(reference, code);
+          if (result && result.verses && result.verses.length > 0) {
+            const text = result.verses.map((v: any) => v.text).join(' ');
+            translations.push({
+              code,
+              name: this.getTranslationName(code),
+              text,
+              type: this.getTranslationType(code)
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to fetch ${code} for ${reference}:`, error);
         }
-      ],
-      keyDifferences: [
-        {
-          category: 'verb',
-          translations: ['KJV: come short', 'NIV/ESV: fall short'],
-          difference: 'Verb tense and phrasing',
-          explanation: 'Greek "husterountai" (present tense) - KJV uses older "come short"; modern versions use "fall short" maintaining present tense',
-          significance: 'low'
-        }
-      ],
-      analysis: {
-        verbDifferences: ['come short vs. fall short (same meaning, modern phrasing)'],
-        theologicalTermDifferences: [],
-        literalVsDynamic: ['Minimal difference; all fairly literal'],
-        overallAssessment: 'Virtually identical meaning; only stylistic differences'
       }
-    });
 
-    // Hebrews 4:9 - Sabbath rest
-    this.comparisonIndex.set('hebrews 4:9', {
-      reference: 'Hebrews 4:9',
-      translations: [
-        {
-          code: 'KJV',
-          name: 'King James Version',
-          text: 'There remaineth therefore a rest to the people of God.',
-          type: 'formal'
-        },
-        {
-          code: 'NIV',
-          name: 'New International Version',
-          text: 'There remains, then, a Sabbath-rest for the people of God',
-          type: 'dynamic'
-        },
-        {
-          code: 'NASB',
-          name: 'New American Standard Bible',
-          text: 'So there remains a Sabbath rest for the people of God.',
-          type: 'formal'
-        }
-      ],
-      keyDifferences: [
-        {
-          category: 'theological_term',
-          translations: ['KJV: rest', 'NIV: Sabbath-rest', 'NASB: Sabbath rest'],
-          difference: 'Greek "sabbatismos" (Sabbath-keeping) vs. generic "rest"',
-          explanation: 'KJV obscures the specific Greek word for Sabbath-keeping; NIV/NASB preserve the Sabbath connection',
-          significance: 'high'
-        }
-      ],
-      analysis: {
-        verbDifferences: [],
-        theologicalTermDifferences: ['sabbatismos: KJV "rest" vs. NIV/NASB "Sabbath rest" - significant theological difference'],
-        literalVsDynamic: ['NIV/NASB more literal to Greek; KJV less specific'],
-        overallAssessment: 'Significant difference: KJV loses Sabbath connection; NIV/NASB preserve it'
+      if (translations.length < 2) {
+        return null; // Not enough translations fetched successfully
       }
-    });
 
-    // Daniel 8:14 - Sanctuary cleansing
-    this.comparisonIndex.set('daniel 8:14', {
-      reference: 'Daniel 8:14',
-      translations: [
-        {
-          code: 'KJV',
-          name: 'King James Version',
-          text: 'And he said unto me, Unto two thousand and three hundred days; then shall the sanctuary be cleansed.',
-          type: 'formal'
-        },
-        {
-          code: 'NIV',
-          name: 'New International Version',
-          text: 'He said to me, "It will take 2,300 evenings and mornings; then the sanctuary will be reconsecrated."',
-          type: 'dynamic'
-        },
-        {
-          code: 'NASB',
-          name: 'New American Standard Bible',
-          text: 'He said to me, "For 2,300 evenings and mornings; then the holy place will be properly restored."',
-          type: 'formal'
-        }
-      ],
-      keyDifferences: [
-        {
-          category: 'theological_term',
-          translations: ['KJV: cleansed', 'NIV: reconsecrated', 'NASB: properly restored'],
-          difference: 'Hebrew "tsadaq" (Niphal) translated differently',
-          explanation: 'KJV "cleansed" connects to Day of Atonement; NIV "reconsecrated" emphasizes restoration; NASB "properly restored" emphasizes vindication',
-          significance: 'high'
-        },
-        {
-          category: 'literal_vs_dynamic',
-          translations: ['KJV: days', 'NIV/NASB: evenings and mornings'],
-          difference: 'Hebrew "erev boqer" (evening morning)',
-          explanation: 'NIV/NASB more literal to Hebrew; KJV interprets as "days"',
-          significance: 'medium'
-        }
-      ],
-      analysis: {
-        verbDifferences: [],
-        theologicalTermDifferences: [
-          'tsadaq: cleansed vs. reconsecrated vs. restored - affects interpretation',
-          'erev boqer: days vs. evenings and mornings - affects prophetic calculation'
-        ],
-        literalVsDynamic: ['NIV/NASB more literal to Hebrew text; KJV more interpretive'],
-        overallAssessment: 'Significant differences affecting prophetic interpretation; KJV favored by SDA for "cleansed" and Day of Atonement connection'
-      }
-    });
-  }
+      // Use LLM to analyze differences
+      const analysis = await this.analyzeDifferences(reference, translations, language, userId);
 
-  highlightDifferences(text1: string, text2: string): { text1Highlights: string[]; text2Highlights: string[] } {
-    const words1 = text1.toLowerCase().split(/\s+/);
-    const words2 = text2.toLowerCase().split(/\s+/);
-    
-    const text1Highlights: string[] = [];
-    const text2Highlights: string[] = [];
-
-    // Simple word-by-word comparison
-    const maxLength = Math.max(words1.length, words2.length);
-    for (let i = 0; i < maxLength; i++) {
-      if (words1[i] !== words2[i]) {
-        if (words1[i]) text1Highlights.push(words1[i]);
-        if (words2[i]) text2Highlights.push(words2[i]);
-      }
+      return {
+        reference,
+        translations,
+        keyDifferences: analysis.keyDifferences,
+        analysis: analysis.analysis
+      };
+    } catch (error) {
+      console.error('Error generating translation comparison:', error);
+      return null;
     }
+  }
 
-    return { text1Highlights, text2Highlights };
+  private getTranslationsForLanguage(language: string): string[] {
+    if (language === 'es' || language === 'spanish') {
+      // Spanish translations
+      return ['NBLA', 'RVR1960', 'NVI'];
+    } else {
+      // English translations (default)
+      return ['KJV', 'NIV', 'ESV', 'NASB'];
+    }
+  }
+
+  private getTranslationName(code: string): string {
+    const names: Record<string, string> = {
+      'KJV': 'King James Version',
+      'NIV': 'New International Version',
+      'ESV': 'English Standard Version',
+      'NASB': 'New American Standard Bible',
+      'NLT': 'New Living Translation',
+      'NKJV': 'New King James Version',
+      'NBLA': 'Nueva Biblia de las Américas',
+      'RVR1960': 'Reina-Valera 1960',
+      'NVI': 'Nueva Versión Internacional'
+    };
+    return names[code] || code;
+  }
+
+  private getTranslationType(code: string): 'formal' | 'dynamic' | 'paraphrase' {
+    const types: Record<string, 'formal' | 'dynamic' | 'paraphrase'> = {
+      'KJV': 'formal',
+      'NASB': 'formal',
+      'ESV': 'formal',
+      'NKJV': 'formal',
+      'NIV': 'dynamic',
+      'NLT': 'paraphrase',
+      'NBLA': 'formal',
+      'RVR1960': 'formal',
+      'NVI': 'dynamic'
+    };
+    return types[code] || 'formal';
+  }
+
+  private async analyzeDifferences(
+    reference: string,
+    translations: TranslationText[],
+    language: string,
+    userId?: string
+  ): Promise<{ keyDifferences: KeyDifference[]; analysis: ComparisonAnalysis }> {
+    try {
+      const translationTexts = translations.map(t => `**${t.code} (${t.name})**:\n${t.text}`).join('\n\n');
+      
+      const languageInstruction = language === 'es' || language === 'spanish'
+        ? 'Respond in Spanish. Analyze these Spanish Bible translations.'
+        : 'Respond in English. Analyze these English Bible translations.';
+
+      const prompt = `You are a biblical scholar analyzing translation differences for pastors.
+
+${languageInstruction}
+
+**Passage**: ${reference}
+
+**Translations**:
+${translationTexts}
+
+Analyze the key differences between these translations and provide:
+
+1. **Key Differences**: 3-5 significant differences (theological terms, verb choices, additions/omissions, literal vs dynamic)
+2. **Analysis**: 
+   - Verb differences
+   - Theological term differences
+   - Literal vs dynamic translation approaches
+   - Overall assessment
+
+Format as JSON:
+{
+  "keyDifferences": [
+    {
+      "category": "theological_term" | "verb_difference" | "literal_vs_dynamic" | "addition_omission",
+      "translations": ["KJV: text", "NIV: text"],
+      "difference": "Brief description",
+      "explanation": "Detailed explanation",
+      "significance": "high" | "medium" | "low"
+    }
+  ],
+  "analysis": {
+    "verbDifferences": ["difference 1", "difference 2"],
+    "theologicalTermDifferences": ["difference 1"],
+    "literalVsDynamic": ["observation 1"],
+    "overallAssessment": "Summary of main differences and their significance"
+  }
+}
+
+Be concise, practical, and pastor-focused. Highlight differences that affect interpretation or application.`;
+
+      const response = await this.llmService.generateCompletion(
+        prompt,
+        userId || 'system',
+        {
+          temperature: 0.3,
+          maxTokens: 1500,
+        }
+      );
+
+      // Parse JSON response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No JSON found in LLM response');
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      return {
+        keyDifferences: Array.isArray(parsed.keyDifferences) 
+          ? parsed.keyDifferences.slice(0, 5).map((diff: any) => ({
+              category: diff.category || 'theological_term',
+              translations: Array.isArray(diff.translations) ? diff.translations : [],
+              difference: String(diff.difference || '').substring(0, 200),
+              explanation: String(diff.explanation || '').substring(0, 500),
+              significance: ['high', 'medium', 'low'].includes(diff.significance) ? diff.significance : 'medium'
+            }))
+          : [],
+        analysis: {
+          verbDifferences: Array.isArray(parsed.analysis?.verbDifferences) 
+            ? parsed.analysis.verbDifferences.slice(0, 5) 
+            : [],
+          theologicalTermDifferences: Array.isArray(parsed.analysis?.theologicalTermDifferences)
+            ? parsed.analysis.theologicalTermDifferences.slice(0, 5)
+            : [],
+          literalVsDynamic: Array.isArray(parsed.analysis?.literalVsDynamic)
+            ? parsed.analysis.literalVsDynamic.slice(0, 5)
+            : [],
+          overallAssessment: String(parsed.analysis?.overallAssessment || '').substring(0, 500)
+        }
+      };
+    } catch (error) {
+      console.error('Error analyzing translation differences:', error);
+      // Return empty analysis on error
+      return {
+        keyDifferences: [],
+        analysis: {
+          verbDifferences: [],
+          theologicalTermDifferences: [],
+          literalVsDynamic: [],
+          overallAssessment: 'Unable to analyze differences at this time.'
+        }
+      };
+    }
   }
 }

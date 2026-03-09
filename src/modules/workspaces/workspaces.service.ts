@@ -69,6 +69,32 @@ export class WorkspacesService {
     return this.workspaceRepository.save(workspace);
   }
 
+  async addReference(workspaceId: string, userId: string, reference: string, context?: string): Promise<SermonWorkspace> {
+    const workspace = await this.findOne(workspaceId, userId);
+    
+    // Initialize references array if it doesn't exist
+    if (!workspace.references) {
+      workspace.references = [];
+    }
+    
+    // Add reference if not already present
+    const refExists = workspace.references.some((ref: any) => 
+      typeof ref === 'string' ? ref === reference : ref.reference === reference
+    );
+    
+    if (!refExists) {
+      workspace.references.push({
+        reference,
+        context: context || 'Added from 3D exploration',
+        addedAt: new Date().toISOString()
+      });
+      
+      await this.workspaceRepository.save(workspace);
+    }
+    
+    return workspace;
+  }
+
   buildIllustrationsPrompt(workspace: SermonWorkspace, mainPoints: string[]) {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     return `Generate 3-5 sermon illustrations based on:
@@ -636,6 +662,36 @@ Return as JSON with these section keys.`;
       where: { userId },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async updateScriptureCache(id: string, userId: string, cacheData: any): Promise<SermonWorkspace> {
+    const workspace = await this.workspaceRepository.findOne({
+      where: { id, userId },
+    });
+
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    workspace.scriptureCache = {
+      ...cacheData,
+      cachedAt: new Date(),
+    };
+
+    return this.workspaceRepository.save(workspace);
+  }
+
+  async getScriptureCache(id: string, userId: string): Promise<any> {
+    const workspace = await this.workspaceRepository.findOne({
+      where: { id, userId },
+      select: ['id', 'scriptureCache'],
+    });
+
+    if (!workspace) {
+      throw new Error('Workspace not found');
+    }
+
+    return workspace.scriptureCache || null;
   }
 
   async findOne(id: string, userId: string): Promise<SermonWorkspace> {

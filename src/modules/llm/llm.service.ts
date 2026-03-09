@@ -14,6 +14,40 @@ export class LlmService {
     private llmRequestRepository: Repository<LlmRequest>,
   ) {}
 
+  private logLlmPayload(
+    stage: 'request' | 'response' | 'error',
+    data: {
+      provider: LlmProvider;
+      model: string;
+      prompt: string;
+      response?: string | null;
+      latencyMs?: number;
+      error?: string;
+    },
+  ) {
+    const truncate = (value?: string | null, limit: number = 2000) => {
+      if (!value) return value;
+      return value.length > limit ? `${value.slice(0, limit)}...<truncated>` : value;
+    };
+
+    const payload = {
+      provider: data.provider,
+      model: data.model,
+      latencyMs: data.latencyMs,
+      prompt: truncate(data.prompt, 2000),
+      response: truncate(data.response ?? undefined, 4000),
+      error: data.error,
+    };
+
+    if (stage === 'request') {
+      console.log('[LLM][request]', payload);
+    } else if (stage === 'response') {
+      console.log('[LLM][response]', payload);
+    } else {
+      console.warn('[LLM][error]', payload);
+    }
+  }
+
   async generateCompletion(
     prompt: string,
     userId: string,
@@ -32,6 +66,14 @@ export class LlmService {
       let response: string;
       let model: string;
 
+      if (shouldLog) {
+        this.logLlmPayload('request', {
+          provider,
+          model: options.model || 'unknown',
+          prompt,
+        });
+      }
+
       if (provider === LlmProvider.LOCAL) {
         const result = await this.callLocalLLM(prompt, options);
         response = result.response;
@@ -47,6 +89,13 @@ export class LlmService {
       const latencyMs = Date.now() - startTime;
 
       if (shouldLog) {
+        this.logLlmPayload('response', {
+          provider,
+          model,
+          prompt,
+          response,
+          latencyMs,
+        });
         await this.llmRequestRepository.save({
           userId,
           provider,
@@ -64,6 +113,13 @@ export class LlmService {
       const latencyMs = Date.now() - startTime;
 
       if (shouldLog) {
+        this.logLlmPayload('error', {
+          provider,
+          model: options.model || 'unknown',
+          prompt,
+          latencyMs,
+          error: error.message,
+        });
         await this.llmRequestRepository.save({
           userId,
           provider,

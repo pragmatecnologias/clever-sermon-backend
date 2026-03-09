@@ -1,171 +1,248 @@
 import { Injectable } from '@nestjs/common';
+import { LlmService } from '../llm/llm.service';
+import { ScriptureService } from './scripture.service';
 
 export interface ThemeThread {
   theme: string;
   description: string;
+  explanation: string;
+  canonicalMovement: string;
   verses: ThemeVerse[];
-  category: 'covenant' | 'sanctuary' | 'kingdom' | 'sacrifice' | 'sabbath' | 'remnant' | 'prophecy' | 'gospel';
+  category: string;
+  isPrimary?: boolean;
 }
 
 export interface ThemeVerse {
   reference: string;
   snippet: string;
-  role: 'foundation' | 'development' | 'fulfillment' | 'application';
+  explanation: string;
+  stage: 'foundation' | 'expansion' | 'echo' | 'fulfillment';
+  testament: 'OT' | 'NT';
+  era: 'Torah' | 'History' | 'Wisdom' | 'Prophets' | 'Gospels' | 'Acts' | 'Epistles' | 'Revelation';
+}
+
+export interface CanonicalThemesResponse {
+  passage: string;
+  themes: ThemeThread[];
+  dataSource: 'llm-generated' | 'unavailable';
 }
 
 @Injectable()
 export class CanonicalThemeTracerService {
-  private themeIndex: Map<string, ThemeThread> = new Map();
+  constructor(
+    private llmService: LlmService,
+    private scriptureService: ScriptureService
+  ) {}
 
-  constructor() {
-    this.initializeThemeData();
-  }
-
-  getThemesForPassage(reference: string): ThemeThread[] {
-    const results: ThemeThread[] = [];
-    
-    for (const thread of this.themeIndex.values()) {
-      if (thread.verses.some(v => this.referencesMatch(v.reference, reference))) {
-        results.push(thread);
+  async getThemesForPassage(reference: string, userId?: string): Promise<CanonicalThemesResponse> {
+    try {
+      // Fetch actual passage text to prevent LLM hallucination
+      let passageText = '';
+      try {
+        const result = await this.scriptureService.getPassage(reference, 'KJV');
+        if (result && result.verses && result.verses.length > 0) {
+          passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
+        }
+      } catch (error) {
+        console.error('Failed to fetch passage text for canonical themes:', error);
       }
+
+      const prompt = this.buildPrompt(reference, passageText);
+      const response = await this.llmService.generateCompletion(
+        prompt,
+        userId || 'system',
+        {
+          temperature: 0.4,
+          maxTokens: 2500,
+        }
+      );
+
+      const parsed = this.parseResponse(response, reference);
+      return parsed;
+    } catch (error) {
+      console.error('Error generating canonical themes:', error);
+      return {
+        passage: reference,
+        themes: [],
+        dataSource: 'unavailable',
+      };
     }
-    
-    return results;
   }
 
-  getThemeByName(themeName: string): ThemeThread | null {
-    return this.themeIndex.get(themeName.toLowerCase()) || null;
+  private buildPrompt(reference: string, passageText: string): string {
+    return `You are a biblical scholar identifying canonical themes that trace through Scripture.
+
+Passage Reference: ${reference}
+
+Passage Text:
+${passageText || 'Text not available'}
+
+Analyze this passage and identify 3-6 major theological themes that appear in this passage and trace their development across the Bible.
+
+For each theme, provide:
+
+1. **Theme Name** (e.g., "Divine Kingship", "Covenant Faithfulness", "Spirit Empowerment")
+2. **Description** (1 sentence: what this theme is about)
+3. **Explanation** (2-3 sentences: how this theme develops across Scripture)
+4. **Canonical Movement** (e.g., "Genesis → Prophets → Gospels → Revelation")
+5. **Category** (one of: covenant, sanctuary, kingdom, sacrifice, sabbath, remnant, prophecy, gospel, spirit, election, kingship, redemption, judgment, worship, faith, grace)
+6. **Verses** (4-8 key passages showing the theme's development):
+   - **reference**: Bible reference
+   - **snippet**: Brief description of what happens
+   - **explanation**: How this verse contributes to the theme
+   - **stage**: foundation | expansion | echo | fulfillment
+   - **testament**: OT | NT
+   - **era**: Torah | History | Wisdom | Prophets | Gospels | Acts | Epistles | Revelation
+
+**CRITICAL REQUIREMENTS:**
+- Themes must be **theologically meaningful** (not generic like "Faith" or "God")
+- Themes must show **canonical progression** (how the idea develops from OT to NT)
+- Include the **current passage** in the verse list with "YOU ARE HERE" marker
+- Verses should show **clear theological development**, not random associations
+- Stage labels: foundation (earliest appearance), expansion (development), echo (later reaffirmation), fulfillment (NT realization)
+
+Format your response as JSON:
+{
+  "themes": [
+    {
+      "theme": "...",
+      "description": "...",
+      "explanation": "...",
+      "canonicalMovement": "...",
+      "category": "...",
+      "verses": [
+        {
+          "reference": "...",
+          "snippet": "...",
+          "explanation": "...",
+          "stage": "...",
+          "testament": "...",
+          "era": "..."
+        }
+      ]
+    }
+  ]
+}
+
+Be theologically rigorous and show real canonical development.`;
   }
 
-  getAllThemes(): ThemeThread[] {
-    return Array.from(this.themeIndex.values());
+  private parseResponse(response: string, reference: string): CanonicalThemesResponse {
+    try {
+      // Extract JSON from response - try multiple patterns
+      let jsonStr = '';
+      
+      // Try to find JSON block with code fence
+      const codeBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1];
+      } else {
+        // Try to find raw JSON object - be greedy to catch truncated responses
+        const jsonMatch = response.match(/\{[\s\S]*$/);
+        if (jsonMatch) {
+          jsonStr = jsonMatch[0];
+        } else {
+          throw new Error('No JSON found in response');
+        }
+      }
+
+      // Repair truncated JSON by closing unclosed structures
+      const openBraces = (jsonStr.match(/\{/g) || []).length;
+      const closeBraces = (jsonStr.match(/\}/g) || []).length;
+      const openBrackets = (jsonStr.match(/\[/g) || []).length;
+      const closeBrackets = (jsonStr.match(/\]/g) || []).length;
+      
+      // Close unclosed strings first
+      const quoteCount = (jsonStr.match(/(?<!\\)"/g) || []).length;
+      if (quoteCount % 2 !== 0) {
+        jsonStr += '"';
+      }
+      
+      // Close unclosed arrays
+      for (let i = 0; i < openBrackets - closeBrackets; i++) {
+        jsonStr += ']';
+      }
+      
+      // Close unclosed objects
+      for (let i = 0; i < openBraces - closeBraces; i++) {
+        jsonStr += '}';
+      }
+
+      // Clean up common JSON issues from LLM responses
+      jsonStr = jsonStr
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
+        .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+        .replace(/,\s*$/, '') // Remove trailing comma at end
+        .trim();
+
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (parseError) {
+        console.error('First parse attempt failed:', parseError.message);
+        console.error('JSON string:', jsonStr.substring(0, 500));
+        
+        // Try to fix common issues and parse again
+        jsonStr = jsonStr
+          .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3') // Quote unquoted keys
+          .replace(/:\s*'([^']*)'/g, ': "$1"'); // Replace single quotes with double quotes
+        
+        parsed = JSON.parse(jsonStr);
+      }
+
+      if (!parsed.themes || !Array.isArray(parsed.themes)) {
+        throw new Error('Invalid themes structure - missing or invalid themes array');
+      }
+
+      // Mark first theme as primary and validate structure
+      const themes: ThemeThread[] = parsed.themes
+        .filter((theme: any) => theme && typeof theme === 'object')
+        .map((theme: any, index: number) => ({
+          theme: String(theme.theme || '').substring(0, 200),
+          description: String(theme.description || '').substring(0, 500),
+          explanation: String(theme.explanation || '').substring(0, 1000),
+          canonicalMovement: String(theme.canonicalMovement || '').substring(0, 1000),
+          verses: Array.isArray(theme.verses) 
+            ? theme.verses.slice(0, 10).map((v: any) => ({
+                reference: String(v.reference || '').substring(0, 100),
+                snippet: String(v.snippet || '').substring(0, 200),
+                era: String(v.era || '').substring(0, 100),
+              }))
+            : [],
+          category: ['gospel', 'sanctuary', 'prophecy', 'covenant', 'law', 'salvation'].includes(theme.category)
+            ? theme.category
+            : 'gospel',
+          isPrimary: index === 0,
+        }))
+        .filter(theme => theme.theme && theme.description); // Only keep themes with required fields
+
+      if (themes.length === 0) {
+        throw new Error('No valid themes extracted from response');
+      }
+
+      return {
+        passage: reference,
+        themes: themes.slice(0, 6), // Limit to 6 themes
+        dataSource: 'llm-generated',
+      };
+    } catch (error) {
+      console.error('Error parsing canonical themes response:', error);
+      console.error('Raw response:', response.substring(0, 500));
+      return {
+        passage: reference,
+        themes: [],
+        dataSource: 'unavailable',
+      };
+    }
   }
 
-  getThemesByCategory(category: ThemeThread['category']): ThemeThread[] {
-    return Array.from(this.themeIndex.values()).filter(t => t.category === category);
+  async getThemeByName(themeName: string): Promise<ThemeThread | null> {
+    // This method is no longer supported with LLM approach
+    return null;
   }
 
-  private referencesMatch(ref1: string, ref2: string): boolean {
-    // Simple book-chapter match for now
-    const book1 = ref1.split(/\s+\d/)[0];
-    const book2 = ref2.split(/\s+\d/)[0];
-    return book1.toLowerCase() === book2.toLowerCase();
-  }
-
-  private initializeThemeData() {
-    // Covenant Theme
-    this.themeIndex.set('covenant', {
-      theme: 'Covenant',
-      description: 'God\'s covenant relationship with His people throughout Scripture',
-      category: 'covenant',
-      verses: [
-        { reference: 'Genesis 12:1-3', snippet: 'Abrahamic covenant', role: 'foundation' },
-        { reference: 'Exodus 19:5-6', snippet: 'Sinai covenant', role: 'development' },
-        { reference: 'Jeremiah 31:31-34', snippet: 'New covenant promise', role: 'development' },
-        { reference: 'Hebrews 8:6-13', snippet: 'New covenant fulfillment', role: 'fulfillment' },
-        { reference: 'Revelation 21:3', snippet: 'Eternal covenant consummation', role: 'fulfillment' }
-      ]
-    });
-
-    // Sanctuary Theme
-    this.themeIndex.set('sanctuary', {
-      theme: 'Sanctuary',
-      description: 'The sanctuary system revealing God\'s plan of salvation',
-      category: 'sanctuary',
-      verses: [
-        { reference: 'Exodus 25:8-9', snippet: 'Earthly sanctuary commanded', role: 'foundation' },
-        { reference: 'Leviticus 16:29-34', snippet: 'Day of Atonement ritual', role: 'development' },
-        { reference: 'Hebrews 8:1-2', snippet: 'Christ in heavenly sanctuary', role: 'fulfillment' },
-        { reference: 'Hebrews 9:11-12', snippet: 'Christ\'s superior ministry', role: 'fulfillment' },
-        { reference: 'Daniel 8:14', snippet: 'Cleansing of sanctuary', role: 'development' },
-        { reference: 'Revelation 11:19', snippet: 'Heavenly temple opened', role: 'fulfillment' }
-      ]
-    });
-
-    // Sabbath Theme
-    this.themeIndex.set('sabbath', {
-      theme: 'Sabbath',
-      description: 'The seventh-day Sabbath as memorial of Creation and sign of sanctification',
-      category: 'sabbath',
-      verses: [
-        { reference: 'Genesis 2:2-3', snippet: 'Sabbath instituted at Creation', role: 'foundation' },
-        { reference: 'Exodus 20:8-11', snippet: 'Sabbath commandment', role: 'development' },
-        { reference: 'Isaiah 58:13-14', snippet: 'Sabbath delight', role: 'development' },
-        { reference: 'Ezekiel 20:12', snippet: 'Sabbath as sign', role: 'development' },
-        { reference: 'Mark 2:27-28', snippet: 'Jesus as Lord of Sabbath', role: 'fulfillment' },
-        { reference: 'Hebrews 4:9-10', snippet: 'Sabbath rest remains', role: 'application' }
-      ]
-    });
-
-    // Prophecy - 2300 Days
-    this.themeIndex.set('2300-days', {
-      theme: '2300 Days Prophecy',
-      description: 'The prophetic timeline pointing to the investigative judgment',
-      category: 'prophecy',
-      verses: [
-        { reference: 'Daniel 8:14', snippet: '2300 days prophecy', role: 'foundation' },
-        { reference: 'Daniel 9:24-27', snippet: '70 weeks prophecy (starting point)', role: 'development' },
-        { reference: 'Leviticus 16:29-30', snippet: 'Day of Atonement type', role: 'foundation' },
-        { reference: 'Hebrews 9:23-24', snippet: 'Heavenly things cleansed', role: 'fulfillment' },
-        { reference: 'Revelation 14:6-7', snippet: 'Judgment hour message', role: 'application' }
-      ]
-    });
-
-    // Remnant Theme
-    this.themeIndex.set('remnant', {
-      theme: 'Remnant',
-      description: 'God\'s faithful remnant people in the last days',
-      category: 'remnant',
-      verses: [
-        { reference: '1 Kings 19:18', snippet: '7000 who have not bowed to Baal', role: 'foundation' },
-        { reference: 'Isaiah 10:20-22', snippet: 'Remnant will return', role: 'development' },
-        { reference: 'Romans 11:5', snippet: 'Remnant according to grace', role: 'development' },
-        { reference: 'Revelation 12:17', snippet: 'Remnant keeps commandments', role: 'fulfillment' },
-        { reference: 'Revelation 14:12', snippet: 'Patience of the saints', role: 'application' }
-      ]
-    });
-
-    // Gospel Theme
-    this.themeIndex.set('gospel', {
-      theme: 'Gospel',
-      description: 'The good news of salvation through Jesus Christ',
-      category: 'gospel',
-      verses: [
-        { reference: 'Genesis 3:15', snippet: 'First gospel promise', role: 'foundation' },
-        { reference: 'Isaiah 53:5-6', snippet: 'Suffering servant prophecy', role: 'development' },
-        { reference: 'John 3:16', snippet: 'God\'s love and gift', role: 'fulfillment' },
-        { reference: 'Romans 1:16-17', snippet: 'Power of the gospel', role: 'application' },
-        { reference: 'Revelation 14:6', snippet: 'Everlasting gospel', role: 'application' }
-      ]
-    });
-
-    // Kingdom Theme
-    this.themeIndex.set('kingdom', {
-      theme: 'Kingdom of God',
-      description: 'God\'s eternal kingdom and its establishment',
-      category: 'kingdom',
-      verses: [
-        { reference: 'Daniel 2:44', snippet: 'Kingdom that shall never be destroyed', role: 'foundation' },
-        { reference: 'Daniel 7:13-14', snippet: 'Son of Man receives kingdom', role: 'development' },
-        { reference: 'Matthew 6:33', snippet: 'Seek first the kingdom', role: 'application' },
-        { reference: 'Luke 17:20-21', snippet: 'Kingdom within you', role: 'development' },
-        { reference: 'Revelation 11:15', snippet: 'Kingdoms become Christ\'s', role: 'fulfillment' }
-      ]
-    });
-
-    // Sacrifice Theme
-    this.themeIndex.set('sacrifice', {
-      theme: 'Sacrifice',
-      description: 'The sacrificial system pointing to Christ\'s atonement',
-      category: 'sacrifice',
-      verses: [
-        { reference: 'Genesis 22:8', snippet: 'God will provide the lamb', role: 'foundation' },
-        { reference: 'Exodus 12:5-7', snippet: 'Passover lamb', role: 'development' },
-        { reference: 'Leviticus 17:11', snippet: 'Blood makes atonement', role: 'development' },
-        { reference: 'Isaiah 53:7', snippet: 'Led as lamb to slaughter', role: 'development' },
-        { reference: 'John 1:29', snippet: 'Lamb of God', role: 'fulfillment' },
-        { reference: 'Hebrews 9:26', snippet: 'Once for all sacrifice', role: 'fulfillment' }
-      ]
-    });
+  async getAllThemes(): Promise<ThemeThread[]> {
+    // This method is no longer supported with LLM approach
+    return [];
   }
 }

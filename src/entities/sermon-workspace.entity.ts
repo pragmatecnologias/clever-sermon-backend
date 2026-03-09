@@ -10,6 +10,12 @@ import { Note } from './note.entity';
 import { AiConversation } from './ai-conversation.entity';
 import { SermonDnaAnalysis } from './sermon-dna-analysis.entity';
 import { SermonStudyReport } from './sermon-study-report.entity';
+import { TheologicalCenterAnalysis } from './theological-center-analysis.entity';
+import { TensionAnalysis } from './tension-analysis.entity';
+import { DoctrinalPrecisionCheck } from './doctrinal-precision-check.entity';
+import { BlindSpotAnalysis } from './blind-spot-analysis.entity';
+import { PreachingStrategy } from './preaching-strategy.entity';
+import { HistoricalContextEnhanced } from './historical-context-enhanced.entity';
 
 export enum SermonStyle {
   EXPOSITORY = 'expository',
@@ -84,6 +90,26 @@ export class SermonWorkspace {
   @Column({ type: 'jsonb', default: {} })
   metadata: Record<string, any>;
 
+  @Column({ type: 'jsonb', nullable: true })
+  scriptureCache: {
+    scriptureResult?: any;
+    scriptureLastLookup?: string;
+    scriptureQuery?: string;
+    scriptureTranslation?: string;
+    scriptureContextRange?: number;
+    parallelTranslations?: string;
+    parallelResults?: any[];
+    contextData?: any;
+    cachedAt?: Date;
+  };
+
+  @Column({ type: 'jsonb', nullable: true, default: [] })
+  references: Array<{
+    reference: string;
+    context?: string;
+    addedAt?: string;
+  }>;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
@@ -119,4 +145,22 @@ export class SermonWorkspace {
 
   @OneToMany(() => SermonStudyReport, report => report.workspace)
   studyReports: SermonStudyReport[];
+
+  @OneToMany(() => TheologicalCenterAnalysis, analysis => analysis.workspace)
+  theologicalCenterAnalyses: TheologicalCenterAnalysis[];
+
+  @OneToMany(() => TensionAnalysis, analysis => analysis.workspace)
+  tensionAnalyses: TensionAnalysis[];
+
+  @OneToMany(() => DoctrinalPrecisionCheck, check => check.workspace)
+  doctrinalChecks: DoctrinalPrecisionCheck[];
+
+  @OneToMany(() => BlindSpotAnalysis, analysis => analysis.workspace)
+  blindSpotAnalyses: BlindSpotAnalysis[];
+
+  @OneToMany(() => PreachingStrategy, strategy => strategy.workspace)
+  preachingStrategies: PreachingStrategy[];
+
+  @OneToMany(() => HistoricalContextEnhanced, context => context.workspace)
+  historicalContexts: HistoricalContextEnhanced[];
 }

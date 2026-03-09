@@ -74,8 +74,18 @@ export class ScriptureCacheService {
       const cached = await this.redis.get(key);
       
       if (cached) {
+        const parsed = JSON.parse(cached);
+        const hasVerses = Array.isArray(parsed?.verses) && parsed.verses.length > 0;
+
+        if (!hasVerses) {
+          // Remove poisoned cache entries so future lookups force a fresh API fetch.
+          await this.redis.del(key);
+          console.warn(`[Cache] EVICT EMPTY PASSAGE: ${key}`);
+          return null;
+        }
+
         console.log(`[Cache] HIT: ${key}`);
-        return JSON.parse(cached);
+        return parsed;
       }
       
       console.log(`[Cache] MISS: ${key}`);

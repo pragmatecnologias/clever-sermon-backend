@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, Param, Body, UseGuards, Req, Res } from '@nestjs/common';
 import { ScriptureService } from './scripture.service';
 import { SDACrossReferencesService } from './sda-cross-references.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,6 +19,8 @@ import { InterpretiveChallengesDataService } from './interpretive-challenges-dat
 import { WordStudyEnhancedService } from './word-study-enhanced.service';
 import { PerVerseContextService } from './per-verse-context.service';
 import { TranslationComparisonEnhancedService } from './translation-comparison-enhanced.service';
+import { PassageSummaryService } from './passage-summary.service';
+import { StudySynthesisService } from './study-synthesis.service';
 
 @Controller('scripture')
 @UseGuards(JwtAuthGuard)
@@ -42,7 +44,9 @@ export class ScriptureController {
     private interpretiveChallengesDataService: InterpretiveChallengesDataService,
     private wordStudyEnhancedService: WordStudyEnhancedService,
     private perVerseContextService: PerVerseContextService,
-    private translationComparisonEnhancedService: TranslationComparisonEnhancedService
+    private translationComparisonEnhancedService: TranslationComparisonEnhancedService,
+    private passageSummaryService: PassageSummaryService,
+    private studySynthesisService: StudySynthesisService
   ) {}
 
   @Get('passage')
@@ -291,8 +295,15 @@ export class ScriptureController {
   }
 
   @Get('verse-commentary')
-  async getVerseCommentary(@Query('reference') reference: string) {
-    return this.verseCommentaryService.getCommentary(reference);
+  async getVerseCommentary(
+    @Query('reference') reference: string,
+    @Query('force') force: string,
+    @Query('language') language: string,
+    @Req() req: any
+  ) {
+    const userId = req.user?.userId || req.user?.id;
+    const forceRegenerate = force === 'true';
+    return this.verseCommentaryService.getCommentary(reference, userId, forceRegenerate, language || 'en');
   }
 
   @Get('morphology-data')
@@ -304,16 +315,8 @@ export class ScriptureController {
   }
 
   @Get('canonical-themes')
-  async getCanonicalThemes(@Query('reference') reference?: string) {
-    if (reference) {
-      return this.canonicalThemeTracerService.getThemesForPassage(reference);
-    }
-    return this.canonicalThemeTracerService.getAllThemes();
-  }
-
-  @Get('canonical-theme')
-  async getCanonicalTheme(@Query('theme') theme: string) {
-    return this.canonicalThemeTracerService.getThemeByName(theme);
+  async getCanonicalThemes(@Query('reference') reference: string) {
+    return this.canonicalThemeTracerService.getThemesForPassage(reference);
   }
 
   @Get('sanctuary-connections')
@@ -339,23 +342,30 @@ export class ScriptureController {
   @Get('structural-analysis')
   async getStructuralAnalysis(
     @Query('reference') reference?: string,
-    @Query('passage') passage?: string
+    @Query('passage') passage?: string,
+    @Query('language') language?: string
   ) {
     const ref = reference || passage;
     if (!ref) {
       throw new Error('Missing reference or passage parameter');
     }
-    return this.structuralAnalysisDataService.getStructuralAnalysis(ref);
+    return this.structuralAnalysisDataService.getStructuralAnalysis(ref, language || 'en');
   }
 
   @Get('interpretive-challenge')
-  async getInterpretiveChallenge(@Query('passage') passage: string) {
-    return this.interpretiveChallengesDataService.getInterpretiveChallenge(passage);
+  async getInterpretiveChallenge(
+    @Query('passage') passage: string,
+    @Query('language') language?: string
+  ) {
+    return this.interpretiveChallengesDataService.getInterpretiveChallenge(passage, language || 'en');
   }
 
   @Get('interpretive-challenges')
-  async getInterpretiveChallenges(@Query('reference') reference: string) {
-    return this.interpretiveChallengesDataService.getInterpretiveChallenge(reference);
+  async getInterpretiveChallenges(
+    @Query('reference') reference: string,
+    @Query('language') language?: string
+  ) {
+    return this.interpretiveChallengesDataService.getInterpretiveChallenge(reference, language || 'en');
   }
 
   @Get('word-study-enhanced')
@@ -372,12 +382,170 @@ export class ScriptureController {
   }
 
   @Get('verse-context')
-  async getVerseContext(@Query('reference') reference: string) {
-    return this.perVerseContextService.getVerseContext(reference);
+  async getVerseContext(
+    @Query('reference') reference: string,
+    @Query('language') language?: string
+  ) {
+    return this.perVerseContextService.getVerseContext(reference, language || 'en');
+  }
+
+  @Get('passage-summary')
+  async getPassageSummary(
+    @Query('reference') reference: string,
+    @Query('language') language?: string
+  ) {
+    return this.passageSummaryService.getPassageSummary(reference, undefined, language || 'en');
+  }
+
+  @Get('study-synthesis')
+  async getStudySynthesis(
+    @Query('reference') reference: string,
+    @Query('language') language?: string
+  ) {
+    return this.studySynthesisService.getStudySynthesis(reference, undefined, language || 'en');
   }
 
   @Get('translation-comparison-enhanced')
-  async getEnhancedTranslationComparison(@Query('reference') reference: string) {
-    return this.translationComparisonEnhancedService.getEnhancedComparison(reference);
+  async getEnhancedTranslationComparison(
+    @Query('reference') reference: string,
+    @Req() req: any,
+    @Query('language') language?: string
+  ) {
+    const userId = req.user?.userId || req.user?.id;
+    return this.translationComparisonEnhancedService.getEnhancedComparison(reference, language || 'en', userId);
+  }
+
+  // IMPORTANT: This wildcard route MUST be last to avoid catching other routes
+  @Get(':reference')
+  async getScriptureHtmlPage(
+    @Param('reference') reference: string,
+    @Query('translation') translation: string = 'KJV',
+    @Res() res: any
+  ) {
+    const decodedReference = decodeURIComponent(reference);
+    const normalizedReference = /\d/.test(decodedReference)
+      ? decodedReference
+      : `${decodedReference} 1`;
+    const passage = await this.scriptureService.getPassage(normalizedReference, translation);
+    
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${normalizedReference} - ${translation}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+      color: #e0e0e0;
+      font-family: 'Georgia', serif;
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      border-radius: 1rem;
+      padding: 3rem;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    .header {
+      border-bottom: 2px solid rgba(34, 211, 238, 0.4);
+      padding-bottom: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    h1 {
+      color: #22d3ee;
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      text-shadow: 0 0 20px rgba(34, 211, 238, 0.5);
+    }
+    .translation {
+      color: #a78bfa;
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      font-weight: 600;
+    }
+    .verse {
+      margin-bottom: 1.5rem;
+      padding: 1rem;
+      background: rgba(34, 211, 238, 0.05);
+      border-left: 3px solid rgba(34, 211, 238, 0.4);
+      border-radius: 0.5rem;
+      transition: all 0.3s ease;
+    }
+    .verse:hover {
+      background: rgba(34, 211, 238, 0.1);
+      border-left-color: #22d3ee;
+      transform: translateX(4px);
+    }
+    .verse-ref {
+      color: #22d3ee;
+      font-weight: bold;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+      display: block;
+      font-family: 'Courier New', monospace;
+    }
+    .verse-text {
+      color: #e0e0e0;
+      line-height: 1.8;
+      font-size: 1.1rem;
+    }
+    .footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(34, 211, 238, 0.2);
+      text-align: center;
+      color: #888;
+      font-size: 0.9rem;
+    }
+    .error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      padding: 2rem;
+      border-radius: 0.5rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    ${passage && passage.verses && passage.verses.length > 0 ? `
+    <div class="header">
+      <h1>${normalizedReference}</h1>
+      <div class="translation">${translation}</div>
+    </div>
+    <div class="verses">
+      ${passage.verses.map((verse: any) => `
+        <div class="verse">
+          <span class="verse-ref">${verse.reference}</span>
+          <div class="verse-text">${verse.text}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="footer">
+      Clever Sermon - Scripture Study Platform
+    </div>
+    ` : `
+    <div class="error">
+      <h2>Passage Not Found</h2>
+      <p>Could not retrieve: ${normalizedReference}</p>
+    </div>
+    `}
+  </div>
+</body>
+</html>
+    `;
+    
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
   }
 }
