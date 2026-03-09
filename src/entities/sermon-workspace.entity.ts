@@ -100,6 +100,27 @@ export class SermonWorkspace {
     parallelTranslations?: string;
     parallelResults?: any[];
     contextData?: any;
+    structuralAnalysis?: any;
+    interpretiveChallenges?: any;
+    perVerseContext?: any;
+    passageSummary?: any;
+    studySynthesis?: any;
+    canonicalThemes?: any;
+    verseCommentary?: any;
+    translationComparison?: any;
+    wordStudy?: {
+      word?: string;
+      language?: string;
+      result?: any;
+      insights?: any;
+      cachedAt?: string;
+    };
+    crossReferences?: {
+      verse?: string;
+      ranked?: any[];
+      cachedAt?: string;
+    };
+    lookupHistory?: any[];
     cachedAt?: Date;
   };
 

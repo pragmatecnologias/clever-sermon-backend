@@ -82,8 +82,15 @@ export class WorkspacesController {
     @Param('id') id: string,
     @Body('outlineId') outlineId: string,
     @Body('promptOverride') promptOverride?: string,
+    @Body('manuscriptOptions') manuscriptOptions?: Record<string, any>,
   ) {
-    return this.workspacesService.generateManuscript(id, outlineId, req.user.userId, promptOverride);
+    return this.workspacesService.generateManuscript(
+      id,
+      outlineId,
+      req.user.userId,
+      promptOverride,
+      manuscriptOptions,
+    );
   }
 
   @Post(':id/applications')
@@ -118,6 +125,22 @@ export class WorkspacesController {
   ) {
     const includeEGWBool = includeEGW === 'true';
     return this.workspacesService.generateStudyReport(id, req.user.userId);
+  }
+
+  @Post(':id/socratic-coach')
+  async generateSocraticCoach(
+    @Param('id') id: string,
+    @Req() req,
+    @Body()
+    body: {
+      mode?: 'refine' | 'self_reflection';
+      listenerProfile?: 'new_believer' | 'skeptic' | 'teenager' | 'bible_scholar' | 'family_church' | string;
+      questionId?: string;
+      answer?: string;
+      promptOverride?: string;
+    },
+  ) {
+    return this.workspacesService.generateSocraticCoach(id, req.user.userId, body || {});
   }
 
   @Post(':id/validate-content')

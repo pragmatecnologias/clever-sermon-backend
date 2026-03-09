@@ -25,6 +25,15 @@ import { EGWStudyReportIntegrationService } from '../egw/egw-study-report-integr
 import { EGWSermonBuilderIntegrationService } from '../egw/egw-sermon-builder-integration.service';
 import { WorkspaceHelpers } from './helpers';
 
+type ManuscriptGenerationOptions = {
+  tone?: 'teaching' | 'pastoral' | 'evangelistic' | 'storytelling' | 'motivational' | string;
+  targetMinutes?: number;
+  format?: 'full' | 'notes' | string;
+  audienceMode?: string;
+  includeSlideCues?: boolean;
+  includeKeyLines?: boolean;
+};
+
 @Injectable()
 export class WorkspacesService {
   private parseJsonSafe = WorkspaceHelpers.parseJsonSafe;
@@ -36,6 +45,221 @@ export class WorkspacesService {
   private parseCitationsFromResponse = WorkspaceHelpers.parseCitationsFromResponse;
   private logLlmOutput = WorkspaceHelpers.logLlmOutput;
   private extractOutlinePointTexts = WorkspaceHelpers.extractOutlinePointTexts;
+
+  private buildSocraticCoachPrompt(
+    workspace: SermonWorkspace,
+    payload: {
+      mode?: 'refine' | 'self_reflection';
+      listenerProfile?: string;
+      questionId?: string;
+      answer?: string;
+      promptOverride?: string;
+    },
+  ) {
+    const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
+    const mode = payload.mode === 'self_reflection' ? 'self_reflection' : 'refine';
+    const listenerProfile = this.asString(payload.listenerProfile || 'general_congregation').toLowerCase();
+    const selectedOutline = workspace.outlines?.find((o: any) => o.isSelected) || workspace.outlines?.[0];
+    const outlinePoints = this.extractOutlinePointTexts(selectedOutline?.structure || {}).slice(0, 8);
+    const manuscriptText = this.asString(workspace.manuscripts?.[0]?.content?.text || '');
+    const reportSections = workspace.studyReports?.[0]?.sections || {};
+    const cache = workspace.scriptureCache || {};
+    const integritySignals = {
+      latestDnaSummary: this.asString(workspace.dnaAnalyses?.[0]?.summary || ''),
+      lastIntegrityIssues: Array.isArray((workspace.metadata || {})?.dnaIntegrity?.issues)
+        ? (workspace.metadata || {}).dnaIntegrity.issues.slice(0, 8)
+        : [],
+    };
+
+    const context = this.compactJsonForPrompt(
+      {
+        workspace: {
+          title: workspace.title,
+          mainPassage: workspace.mainPassage,
+          theme: workspace.theme || '',
+          audienceProfile: workspace.audienceProfile || '',
+          sermonGoals: workspace.sermonGoals || '',
+          language: workspace.language || 'en',
+        },
+        mode,
+        listenerProfile,
+        outline: {
+          title: selectedOutline?.title || '',
+          points: outlinePoints,
+          introduction: this.asString(selectedOutline?.structure?.introduction || ''),
+          conclusion: this.asString(selectedOutline?.structure?.conclusion || ''),
+        },
+        manuscript: {
+          excerpt: manuscriptText.slice(0, 2600),
+          wordCount: manuscriptText ? manuscriptText.split(/\s+/).filter(Boolean).length : 0,
+        },
+        studyReport: {
+          passageOverview: this.asString(reportSections?.passageOverview || ''),
+          exegeticalFlow: Array.isArray(reportSections?.exegeticalFlow) ? reportSections.exegeticalFlow : [],
+          mainTheologicalClaim: this.asString(reportSections?.mainTheologicalClaim || ''),
+          structureOfPassage: Array.isArray(reportSections?.structureOfPassage)
+            ? reportSections.structureOfPassage
+            : [],
+          interpretiveChallenges: Array.isArray(reportSections?.interpretiveChallenges)
+            ? reportSections.interpretiveChallenges
+            : [],
+        },
+        scriptureCache: {
+          passageSummary: cache?.passageSummary || null,
+          crossReferences: cache?.crossReferences?.ranked || [],
+          canonicalThemes: cache?.canonicalThemes || null,
+        },
+        integritySignals,
+      },
+      10000,
+    );
+
+    if (payload.questionId && payload.answer) {
+      return `You are a Socratic Sermon Coach. Analyze the pastor answer and respond with concise coaching feedback.
+
+Language: ${languageLabel}
+Context:
+${context}
+
+Answered Question ID: ${payload.questionId}
+Pastor Answer:
+${payload.answer}
+
+Return ONLY valid JSON:
+{
+  "questionId": "string",
+  "affirmation": "short encouragement",
+  "coachFeedback": "specific theological/exegetical feedback",
+  "improvementSuggestion": "how to strengthen sermon content",
+  "rewriteHint": "one improved sermon sentence the pastor can reuse",
+  "nextQuestion": "one follow-up Socratic question"
+}
+
+Rules:
+- Be text-faithful to the main passage.
+- If answer drifts from text, say it clearly.
+- Keep all fields short and practical.
+- No markdown, no code fences.`;
+    }
+
+    return `${payload.promptOverride || ''}You are a seminary-level Socratic Sermon Coach.
+
+Language: ${languageLabel}
+Task mode: ${mode}
+Listener simulation profile: ${listenerProfile}
+
+Context:
+${context}
+
+Generate 8 coaching questions that challenge interpretation, structure, theological clarity, application linkage, and gospel focus.
+
+Return ONLY valid JSON:
+{
+  "mode": "refine|self_reflection",
+  "listenerProfile": "string",
+  "summary": "1-2 sentence coaching summary",
+  "weakAreas": ["string"],
+  "questions": [
+    {
+      "id": "Q1",
+      "dimension": "text_fidelity|theological_clarity|audience_relevance|gospel_focus|structure_flow|application_strength|cross_reference_grounding|self_reflection",
+      "question": "string",
+      "purpose": "why this matters",
+      "sourceAnchor": "passage verse or outline/manuscript anchor",
+      "severity": "high|medium|low",
+      "listenerAngle": "how this listener might challenge the sermon",
+      "suggestedFollowUp": "optional follow-up prompt"
+    }
+  ],
+  "nextStepSuggestion": "one concrete refinement step"
+}
+
+Rules:
+- Questions must be specific to provided content, not generic.
+- Include at least 2 text-fidelity checks and 2 application-linkage checks.
+- For self_reflection mode, include at least 3 spiritual formation questions.
+- Keep question text concise and pastor-friendly.
+- No markdown, no prose outside JSON.`;
+  }
+
+  async generateSocraticCoach(
+    workspaceId: string,
+    userId: string,
+    payload: {
+      mode?: 'refine' | 'self_reflection';
+      listenerProfile?: 'new_believer' | 'skeptic' | 'teenager' | 'bible_scholar' | 'family_church' | string;
+      questionId?: string;
+      answer?: string;
+      promptOverride?: string;
+    },
+  ) {
+    const workspace = await this.findOne(workspaceId, userId);
+    const prompt = this.buildSocraticCoachPrompt(workspace, payload || {});
+    const response = await this.llmService.generateCompletion(prompt, userId, {
+      temperature: 0.5,
+      maxTokens: 1600,
+    });
+    this.logLlmOutput('socratic-coach', response);
+
+    const parsed = this.parseJsonSafe(response) || {};
+    const now = new Date().toISOString();
+
+    if (payload?.questionId && payload?.answer) {
+      const feedback = {
+        questionId: this.asString(parsed?.questionId || payload.questionId),
+        affirmation: this.asString(parsed?.affirmation || ''),
+        coachFeedback: this.asString(parsed?.coachFeedback || ''),
+        improvementSuggestion: this.asString(parsed?.improvementSuggestion || ''),
+        rewriteHint: this.asString(parsed?.rewriteHint || ''),
+        nextQuestion: this.asString(parsed?.nextQuestion || ''),
+      };
+      workspace.metadata = {
+        ...(workspace.metadata || {}),
+        socraticCoachLastFeedback: {
+          ...feedback,
+          listenerProfile: payload.listenerProfile || 'general_congregation',
+          mode: payload.mode || 'refine',
+          updatedAt: now,
+        },
+      };
+      await this.workspaceRepository.save(workspace);
+      return { ...feedback, updatedAt: now };
+    }
+
+    const questionsRaw = Array.isArray(parsed?.questions) ? parsed.questions : [];
+    const questions = questionsRaw
+      .map((item: any, idx: number) => ({
+        id: this.asString(item?.id || `Q${idx + 1}`),
+        dimension: this.asString(item?.dimension || 'text_fidelity').toLowerCase(),
+        question: this.asString(item?.question || ''),
+        purpose: this.asString(item?.purpose || ''),
+        sourceAnchor: this.asString(item?.sourceAnchor || workspace.mainPassage),
+        severity: this.asString(item?.severity || 'medium').toLowerCase(),
+        listenerAngle: this.asString(item?.listenerAngle || ''),
+        suggestedFollowUp: this.asString(item?.suggestedFollowUp || ''),
+      }))
+      .filter((item: any) => item.question)
+      .slice(0, 10);
+
+    const coachSession = {
+      mode: this.asString(parsed?.mode || payload?.mode || 'refine').toLowerCase(),
+      listenerProfile: this.asString(parsed?.listenerProfile || payload?.listenerProfile || 'general_congregation'),
+      summary: this.asString(parsed?.summary || ''),
+      weakAreas: Array.isArray(parsed?.weakAreas)
+        ? parsed.weakAreas.map((item: any) => this.asString(item)).filter(Boolean).slice(0, 8)
+        : [],
+      questions,
+      nextStepSuggestion: this.asString(parsed?.nextStepSuggestion || ''),
+      generatedAt: now,
+    };
+
+    workspace.metadata = {
+      ...(workspace.metadata || {}),
+      socraticCoachLastSession: coachSession,
+    };
+    await this.workspaceRepository.save(workspace);
+    return coachSession;
+  }
 
   private normalizePointTextForSimilarity(text: string): string {
     return (text || '')
@@ -311,15 +535,99 @@ Rules:
 - Do not include markdown, prose outside JSON, or code fences.`;
   }
 
-  buildManuscriptPrompt(workspace: SermonWorkspace, outline: SermonOutline) {
+  private normalizeManuscriptOptions(
+    workspace: SermonWorkspace,
+    options?: ManuscriptGenerationOptions,
+  ): Required<ManuscriptGenerationOptions> {
+    const targetMinutesRaw = Number(options?.targetMinutes);
+    const targetMinutes = Number.isFinite(targetMinutesRaw) && targetMinutesRaw > 0
+      ? Math.min(60, Math.max(8, Math.round(targetMinutesRaw)))
+      : 22;
+    const tone = this.asString(options?.tone || workspace.style || 'teaching').toLowerCase();
+    const format = this.asString(options?.format || 'full').toLowerCase();
+    const audienceMode = this.asString(options?.audienceMode || workspace.audienceProfile || 'general congregation');
+
+    return {
+      tone: tone || 'teaching',
+      targetMinutes,
+      format: format === 'notes' ? 'notes' : 'full',
+      audienceMode: audienceMode || 'general congregation',
+      includeSlideCues: options?.includeSlideCues !== false,
+      includeKeyLines: options?.includeKeyLines !== false,
+    };
+  }
+
+  private buildManuscriptContext(workspace: SermonWorkspace, outline: SermonOutline) {
+    const cache = workspace.scriptureCache || {};
+    const outlineStructure = outline?.structure || {};
+    const outlinePoints = this.extractOutlinePointTexts(outlineStructure).slice(0, 8);
+    const pointNodes = Array.isArray(outlineStructure?.pointNodes) ? outlineStructure.pointNodes.slice(0, 8) : [];
+    const studyReport = workspace.studyReports?.[0]?.sections || {};
+    const applications = (workspace.applications || [])
+      .slice(0, 12)
+      .map((item: any) => this.asString(item?.content || item?.text))
+      .filter(Boolean);
+    const illustrations = (workspace.illustrations || [])
+      .slice(0, 12)
+      .map((item: any) => this.asString(item?.description || item?.content || item?.scenario))
+      .filter(Boolean);
+    const cachedCrossReferences = Array.isArray(cache?.crossReferences?.ranked)
+      ? cache.crossReferences.ranked.slice(0, 16)
+      : [];
+
+    return {
+      outline: {
+        title: this.asString(outline?.title),
+        introduction: this.asString(outlineStructure?.introduction),
+        points: outlinePoints,
+        pointNodes,
+        conclusion: this.asString(outlineStructure?.conclusion),
+        callToAction: this.asString(outlineStructure?.callToAction),
+      },
+      scripture: {
+        mainPassage: workspace.mainPassage,
+        additionalPassages: workspace.additionalPassages || [],
+        passageSummary: cache?.passageSummary || null,
+        verseContext: cache?.perVerseContext || null,
+        structuralAnalysis: cache?.structuralAnalysis || null,
+        interpretiveChallenges: cache?.interpretiveChallenges || null,
+        canonicalThemes: cache?.canonicalThemes || null,
+        studySynthesis: cache?.studySynthesis || null,
+        translationComparison: cache?.translationComparison || null,
+        verseCommentary: cache?.verseCommentary || null,
+      },
+      studyReport: studyReport || null,
+      crossReferences: cachedCrossReferences,
+      applications,
+      illustrations,
+      workspace: {
+        title: workspace.title,
+        seriesTitle: workspace.seriesTitle || '',
+        theme: workspace.theme || '',
+        sermonGoals: workspace.sermonGoals || '',
+        audienceProfile: workspace.audienceProfile || '',
+        storyArc: workspace.storyArc || '',
+        theologicalLens: workspace.theologicalLens || '',
+      },
+    };
+  }
+
+  buildManuscriptPrompt(
+    workspace: SermonWorkspace,
+    outline: SermonOutline,
+    options?: ManuscriptGenerationOptions,
+  ) {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     const theologicalLens = workspace.theologicalLens || 'adventist';
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
-    
+    const normalizedOptions = this.normalizeManuscriptOptions(workspace, options);
+    const manuscriptContext = this.buildManuscriptContext(workspace, outline);
+    const contextJson = this.compactJsonForPrompt(manuscriptContext, 14000);
+    const selectedPoints = manuscriptContext?.outline?.points || [];
+
     return `${doctrinalContext}
 
-Generate a full sermon manuscript based on this outline:
-${JSON.stringify(outline.structure, null, 2)}
+Generate a sermon manuscript that is fully synchronized with the provided outline and study inputs.
 
 Title: ${workspace.title}
 Series: ${workspace.seriesTitle || 'N/A'}
@@ -332,10 +640,46 @@ Audience: ${workspace.audienceProfile || 'N/A'}
 Sermon Goals: ${workspace.sermonGoals || 'N/A'}
 Style: ${workspace.style || 'N/A'}
 Story Arc: ${workspace.storyArc || 'N/A'}
+Requested Tone: ${normalizedOptions.tone}
+Requested Delivery Length: ${normalizedOptions.targetMinutes} minutes
+Requested Format: ${normalizedOptions.format === 'notes' ? 'Preaching Notes' : 'Full Manuscript'}
+Requested Audience Focus: ${normalizedOptions.audienceMode}
+Include Slide Cues: ${normalizedOptions.includeSlideCues ? 'Yes' : 'No'}
+Highlight Key Preaching Statements: ${normalizedOptions.includeKeyLines ? 'Yes' : 'No'}
+
+Primary Data Inputs (must be used as source material):
+${contextJson}
 
 Write in ${languageLabel}.
 
-Write a complete sermon manuscript with smooth transitions between points.`;
+Hard constraints:
+- The manuscript must follow this sequence:
+  1) Introduction
+  2) Passage Reading (${workspace.mainPassage})
+  3) Context Explanation (literary + historical)
+  4) Main Points (one section for each canonical outline point, same order)
+  5) Applications (point-tied)
+  6) Conclusion with invitation/call to action
+- Use these exact outline point anchors in order:
+${selectedPoints.map((point, index) => `${index + 1}. ${point}`).join('\n') || '1. Use outline points from provided context'}
+- For each main point section include: explanation, one illustration, one practical application.
+- Integrate scripture references naturally and explicitly.
+- Do not invent a different outline flow.
+- Keep theological coherence with provided study report + scripture cache.
+- If evidence is missing for a specific detail, avoid fabrication and stay passage-grounded.
+
+Formatting rules:
+- Use markdown headings for each major manuscript section.
+- ${normalizedOptions.includeSlideCues ? 'Add slide cues in this exact format: `[Slide] ...` where helpful.' : 'Do not add `[Slide]` cues.'}
+- ${normalizedOptions.includeKeyLines ? 'Mark strong preaching lines with this exact marker: `[Key Line] ...`.' : 'Do not add `[Key Line]` markers.'}
+- ${normalizedOptions.format === 'notes'
+  ? 'Output concise preaching notes: bullets under each section, short speaking cues, no long paragraphs.'
+  : 'Output full spoken manuscript prose with smooth transitions and natural oral cadence.'}
+- End with a short metadata block:
+  - Estimated Delivery Time: <number> minutes
+  - Audience Focus: <text>
+  - Tone: <text>
+  - Format: Full Manuscript|Preaching Notes.`;
   }
 
   buildApplicationsPrompt(workspace: SermonWorkspace, mainPoints: string[], audienceType: string) {
@@ -385,14 +729,94 @@ Rules:
 - No tables, no pipes, no markdown, no headings, no extra commentary.`;
   }
 
-  buildStudyReportPrompt(workspace: SermonWorkspace, passageText: string) {
+  private compactJsonForPrompt(value: any, maxChars: number = 6000): string {
+    try {
+      const text = JSON.stringify(value, null, 2);
+      if (text.length <= maxChars) return text;
+      return `${text.slice(0, maxChars)}\n...TRUNCATED...`;
+    } catch {
+      return '{}';
+    }
+  }
+
+  private extractBookFromReference(reference: string): string {
+    const match = String(reference || '').trim().match(/^(.*?)\s+\d+/);
+    return match?.[1]?.trim() || String(reference || '').trim();
+  }
+
+  private async buildStudyReportInputContext(workspace: SermonWorkspace, passageText: string) {
+    const reference = workspace.mainPassage;
+    const book = this.extractBookFromReference(reference);
+    const cache = workspace.scriptureCache || {};
+
+    const [bookMetadata, historicalContext, culturalContext, timeline, crossReferences, crossReferenceDetails] = await Promise.all([
+      this.scriptureService.getBookMetadata(book).catch(() => null),
+      this.scriptureService.getHistoricalContext(book).catch(() => null),
+      this.scriptureService.getCulturalContext(book).catch(() => null),
+      this.scriptureService.getTimeline(book).catch(() => null),
+      this.scriptureService.getCrossReferences(reference).catch(() => []),
+      this.scriptureService.getCrossReferenceDetails(reference).catch(() => []),
+    ]);
+
+    const xrefCategoryMap = new Map(
+      (Array.isArray(crossReferenceDetails) ? crossReferenceDetails : []).map((item: any) => [
+        String(item?.reference || ''),
+        String(item?.category || ''),
+      ]),
+    );
+
+    const normalizedCrossReferences = (Array.isArray(crossReferences) ? crossReferences : [])
+      .slice(0, 20)
+      .map((ref: string) => ({
+        reference: ref,
+        category: xrefCategoryMap.get(ref) || '',
+      }));
+
+    return {
+      passage: {
+        reference,
+        text: passageText,
+      },
+      workspace: {
+        title: workspace.title,
+        theme: workspace.theme || '',
+        audienceProfile: workspace.audienceProfile || '',
+        sermonGoals: workspace.sermonGoals || '',
+        language: workspace.language || 'en',
+        theologicalLens: workspace.theologicalLens || '',
+      },
+      cachedStudySections: {
+        passageSummary: cache?.passageSummary || null,
+        verseContext: cache?.perVerseContext || null,
+        translationComparison: cache?.translationComparison || null,
+        verseCommentary: cache?.verseCommentary || null,
+        structuralAnalysis: cache?.structuralAnalysis || null,
+        interpretiveChallenges: cache?.interpretiveChallenges || null,
+        canonicalThemes: cache?.canonicalThemes || null,
+        studySynthesis: cache?.studySynthesis || null,
+        contextData: cache?.contextData || null,
+        wordStudy: cache?.wordStudy || null,
+        crossReferencesLookup: cache?.crossReferences || null,
+      },
+      referenceData: {
+        crossReferences: normalizedCrossReferences,
+        bookMetadata,
+        historicalContext,
+        culturalContext,
+        timeline,
+      },
+    };
+  }
+
+  buildStudyReportPrompt(workspace: SermonWorkspace, passageText: string, studyInputs: any) {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     const theologicalLens = workspace.theologicalLens || 'adventist';
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
+    const inputJson = this.compactJsonForPrompt(studyInputs, 12000);
     
     return `${doctrinalContext}
 
-Generate a comprehensive Bible study report for:
+Generate a structured exegetical study report for:
 Main Passage: ${workspace.mainPassage}
 Passage Text:
 ${passageText}
@@ -400,19 +824,174 @@ ${passageText}
 Theme: ${workspace.theme || 'N/A'}
 Theological Lens: ${workspace.theologicalLens || 'N/A'}
 
+Study Data Inputs (use these as primary evidence; do not ignore them):
+${inputJson}
+
 Write in ${languageLabel}.
 
-Provide a structured study report with the following sections:
-1. Literary Context
-2. Historical Context
-3. Structural Analysis
-4. Key Themes
-5. Theological Insights
-6. Interpretive Challenges
-7. Canonical Connections
-8. Practical Applications
+Return ONLY valid JSON with this exact shape:
+{
+  "passageOverview": "string",
+  "literaryContext": "string",
+  "exegeticalFlow": ["string"],
+  "exegeticalSummary": "string",
+  "structureOfPassage": [
+    {
+      "movement": "string",
+      "verses": "string",
+      "summary": "string"
+    }
+  ],
+  "keyTerms": [
+    {
+      "term": "string",
+      "language": "Greek|Hebrew|Aramaic",
+      "transliteration": "string",
+      "definition": "string",
+      "nuance": "string"
+    }
+  ],
+  "historicalContext": "string",
+  "canonicalContext": "string",
+  "crossReferences": [
+    {
+      "reference": "Book 1:1",
+      "connection": "why it connects",
+      "category": "thematic|quotation|typology|prophetic_fulfillment|narrative_continuation|interpretive_tension|lexical",
+      "tier": "primary|secondary|illustrative"
+    }
+  ],
+  "interpretiveChallenges": [
+    {
+      "question": "string",
+      "interpretationOptions": ["string"],
+      "preachingGuidance": "string"
+    }
+  ],
+  "theologicalThemes": ["string"],
+  "mainTheologicalClaim": "one-sentence doctrinal claim",
+  "pastoralImplications": {
+    "personalLife": ["string"],
+    "churchLife": ["string"],
+    "mission": ["string"]
+  }
+}
 
-Return as JSON with these section keys.`;
+Rules:
+- This is exegetical analysis, not a sermon draft.
+- Keep each section concise, concrete, and passage-grounded.
+- "mainTheologicalClaim" must be one sentence and explicit.
+- "exegeticalFlow" must describe argument progression (not just outline labels).
+- "structureOfPassage" must include visible verse anchoring in "verses".
+- For "crossReferences", always explain connection with a concrete reason.
+- For "interpretiveChallenges", provide at least 2 interpretationOptions when possible.
+- In "canonicalContext", show storyline movement (OT -> Christ/NT -> consummation) when applicable.
+- "pastoralImplications" must be categorized by personalLife, churchLife, and mission.
+- Prioritize supplied Study Data Inputs over generic assumptions.
+- If a required field has insufficient evidence, explicitly return "Insufficient data available" in that field.
+- No markdown, no prose outside JSON, no code fences.`;
+  }
+
+  private asString(value: any): string {
+    if (typeof value === 'string') return value.trim();
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  }
+
+  private normalizeStudyReportSections(raw: any): Record<string, any> {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const asStringArray = (value: any, limit = 12) => {
+      if (Array.isArray(value)) {
+        return value.map((item) => this.asString(item)).filter(Boolean).slice(0, limit);
+      }
+      if (typeof value === 'string') {
+        return this.parseListFromResponse(value).slice(0, limit);
+      }
+      return [];
+    };
+
+    const structureOfPassage = Array.isArray(source.structureOfPassage)
+      ? source.structureOfPassage
+          .map((item: any) => ({
+            movement: this.asString(item?.movement || item?.title || item?.section),
+            verses: this.asString(item?.verses || item?.reference),
+            summary: this.asString(item?.summary || item?.description || item?.content),
+          }))
+          .filter((item: any) => item.movement || item.summary)
+      : [];
+
+    const keyTerms = Array.isArray(source.keyTerms)
+      ? source.keyTerms
+          .map((item: any) => ({
+            term: this.asString(item?.term || item?.word),
+            language: this.asString(item?.language || ''),
+            transliteration: this.asString(item?.transliteration || ''),
+            definition: this.asString(item?.definition || ''),
+            nuance: this.asString(item?.nuance || item?.notes || ''),
+          }))
+          .filter((item: any) => item.term)
+      : [];
+
+    const crossReferences = Array.isArray(source.crossReferences)
+      ? source.crossReferences
+          .map((item: any) => ({
+            reference: this.asString(item?.reference || item?.verse),
+            connection: this.asString(item?.connection || item?.explanation || item?.reason),
+            category: this.asString(item?.category || 'thematic').toLowerCase(),
+            tier: this.asString(item?.tier || 'secondary').toLowerCase(),
+          }))
+          .filter((item: any) => item.reference)
+      : [];
+
+    const interpretiveChallenges = Array.isArray(source.interpretiveChallenges)
+      ? source.interpretiveChallenges
+          .map((item: any) => ({
+            question: this.asString(item?.question || item?.challenge),
+            interpretationOptions: asStringArray(item?.interpretationOptions || item?.options || [], 5),
+            preachingGuidance: this.asString(item?.preachingGuidance || item?.guidance || item?.note),
+          }))
+          .filter((item: any) => item.question)
+      : [];
+
+    const pastoralImplicationsRaw = source.pastoralImplications || source.practicalApplications || source.applications;
+    const pastoralImplications = (() => {
+      if (pastoralImplicationsRaw && typeof pastoralImplicationsRaw === 'object' && !Array.isArray(pastoralImplicationsRaw)) {
+        return {
+          personalLife: asStringArray((pastoralImplicationsRaw as any).personalLife, 6),
+          churchLife: asStringArray((pastoralImplicationsRaw as any).churchLife, 6),
+          mission: asStringArray((pastoralImplicationsRaw as any).mission, 6),
+        };
+      }
+      const flat = asStringArray(pastoralImplicationsRaw, 12);
+      return {
+        personalLife: flat.slice(0, 4),
+        churchLife: flat.slice(4, 8),
+        mission: flat.slice(8, 12),
+      };
+    })();
+
+    // Legacy key fallback mapping
+    const fallbackThemes = asStringArray(source.theologicalThemes || source.keyThemes || source.themes, 10);
+    const fallbackCanonical = this.asString(source.canonicalContext || source.canonicalConnections || source.canonicalThemes || '');
+    const fallbackClaim = this.asString(source.mainTheologicalClaim || source.theologicalInsights || source.mainClaim || '');
+    const fallbackFlow = asStringArray(source.exegeticalFlow || source.argumentFlow || source.flow || [], 8);
+    const fallbackSummary = this.asString(source.exegeticalSummary || source.summaryStatement || '');
+
+    return {
+      passageOverview: this.asString(source.passageOverview || source.overview || source.summary || ''),
+      literaryContext: this.asString(source.literaryContext || ''),
+      exegeticalFlow: fallbackFlow,
+      exegeticalSummary: fallbackSummary,
+      structureOfPassage,
+      keyTerms,
+      historicalContext: this.asString(source.historicalContext || ''),
+      canonicalContext: fallbackCanonical,
+      crossReferences,
+      interpretiveChallenges,
+      theologicalThemes: fallbackThemes,
+      mainTheologicalClaim: fallbackClaim,
+      pastoralImplications,
+    };
   }
 
   async generateOutlines(
@@ -518,20 +1097,33 @@ Return as JSON with these section keys.`;
     outlineId: string,
     userId: string,
     promptOverride?: string,
+    manuscriptOptions?: ManuscriptGenerationOptions,
   ): Promise<SermonManuscript> {
     const workspace = await this.findOne(workspaceId, userId);
     const outline = await this.outlineRepository.findOne({ where: { id: outlineId } });
+    if (!outline) {
+      throw new Error('Outline not found');
+    }
     await this.manuscriptRepository.delete({ workspaceId, outlineId });
-    const prompt = promptOverride || this.buildManuscriptPrompt(workspace, outline);
+    const normalizedOptions = this.normalizeManuscriptOptions(workspace, manuscriptOptions);
+    const prompt = promptOverride || this.buildManuscriptPrompt(workspace, outline, normalizedOptions);
     const manuscriptText = await this.llmService.generateCompletion(prompt, userId);
     this.logLlmOutput('manuscript', manuscriptText);
+    const wordCount = manuscriptText.split(/\s+/).filter(Boolean).length;
+    const estimatedMinutes = Math.max(1, Math.ceil(wordCount / 145));
 
     const manuscript = this.manuscriptRepository.create({
       workspaceId,
       outlineId,
-      content: { text: manuscriptText },
-      wordCount: manuscriptText.split(' ').length,
-      estimatedMinutes: Math.ceil(manuscriptText.split(' ').length / 150),
+      content: {
+        text: manuscriptText,
+        metadata: {
+          options: normalizedOptions,
+          generatedFromOutlineId: outlineId,
+        },
+      },
+      wordCount,
+      estimatedMinutes,
     });
 
     return this.manuscriptRepository.save(manuscript);
@@ -681,8 +1273,9 @@ Return as JSON with these section keys.`;
     const passageText = Array.isArray(mainPassage?.verses)
       ? mainPassage.verses.map((verse: any) => `${verse.reference} ${verse.text}`).join('\n')
       : JSON.stringify(mainPassage || {});
+    const studyInputs = await this.buildStudyReportInputContext(workspace, passageText);
 
-    const prompt = promptOverride || this.buildStudyReportPrompt(workspace, passageText);
+    const prompt = promptOverride || this.buildStudyReportPrompt(workspace, passageText, studyInputs);
     const response = await this.llmService.generateCompletion(prompt, userId, {
       temperature: 0.4,
       maxTokens: 2200,
@@ -690,9 +1283,24 @@ Return as JSON with these section keys.`;
     this.logLlmOutput('study-report', response);
 
     const parsed = this.parseJsonSafe(response);
+    const normalizedSections = this.normalizeStudyReportSections(parsed);
     const report = this.studyReportRepository.create({
       workspaceId,
-      sections: parsed || { raw: response },
+      sections: {
+        ...normalizedSections,
+        _sources: {
+          crossReferencesCount: Array.isArray(studyInputs?.referenceData?.crossReferences)
+            ? studyInputs.referenceData.crossReferences.length
+            : 0,
+          hasPassageSummary: !!studyInputs?.cachedStudySections?.passageSummary,
+          hasStructuralAnalysis: !!studyInputs?.cachedStudySections?.structuralAnalysis,
+          hasInterpretiveChallenges: !!studyInputs?.cachedStudySections?.interpretiveChallenges,
+          hasCanonicalThemes: !!studyInputs?.cachedStudySections?.canonicalThemes,
+          hasStudySynthesis: !!studyInputs?.cachedStudySections?.studySynthesis,
+          hasWordStudy: !!studyInputs?.cachedStudySections?.wordStudy,
+          hasCrossReferencesLookup: !!studyInputs?.cachedStudySections?.crossReferencesLookup,
+        },
+      },
       rawResponse: parsed ? null : response,
     });
 
@@ -766,7 +1374,8 @@ Return as JSON with these section keys.`;
     }
 
     workspace.scriptureCache = {
-      ...cacheData,
+      ...(workspace.scriptureCache || {}),
+      ...(cacheData || {}),
       cachedAt: new Date(),
     };
 
@@ -860,7 +1469,8 @@ Return as JSON with these section keys.`;
       const passageText = Array.isArray(passage?.verses)
         ? passage.verses.map((verse: any) => `${verse.reference} ${verse.text}`).join('\n')
         : JSON.stringify(passage || {});
-      return this.buildStudyReportPrompt(workspace, passageText);
+      const studyInputs = await this.buildStudyReportInputContext(workspace, passageText);
+      return this.buildStudyReportPrompt(workspace, passageText, studyInputs);
     }
 
     return this.buildDiscussionPrompt(workspace);

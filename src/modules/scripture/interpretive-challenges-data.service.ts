@@ -111,44 +111,16 @@ Guidelines:
 
     let parsed: any;
     try {
-      // Extract JSON from response - handle markdown code blocks
-      let jsonStr = response.trim();
-      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*({[\s\S]*?})\s*```/);
-      if (codeBlockMatch) {
-        jsonStr = codeBlockMatch[1];
-      } else {
-        const jsonMatch = jsonStr.match(/{[\s\S]*}/);
-        if (jsonMatch) {
-          jsonStr = jsonMatch[0];
-        }
-      }
-
-      // Sanitize common LLM JSON issues before parsing
-      jsonStr = jsonStr
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
-        .replace(/\],\s*\},\s*\{/g, ']},{')
-        .replace(/\],\s*\},\s*"/g, ']},"')
-        .replace(/\},\s*\]/g, '}]')
-        .replace(/,\s*([}\]])/g, '$1')
-        .trim();
-
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch (firstParseError) {
-        // Retry with light repairs (quote bare keys, normalize single quotes)
-        const repaired = jsonStr
-          .replace(/([{,]\s*)([A-Za-z_][\w]*)(\s*:)/g, '$1"$2"$3')
-          .replace(/:\s*'([^']*)'/g, ': "$1"')
-          .replace(/\],\s*\},\s*\{/g, ']},{')
-          .replace(/\],\s*\},\s*"/g, ']},"')
-          .replace(/\},\s*\]/g, '}]')
-          .replace(/,\s*([}\]])/g, '$1');
-        parsed = JSON.parse(repaired);
-      }
+      parsed = this.parseInterpretiveChallengeJson(response);
     } catch (error) {
       console.error('Failed to parse interpretive challenge response:', error);
       console.error('Raw response:', response);
-      throw new Error('Invalid JSON response from LLM');
+      const salvaged = this.salvageInterpretiveChallengeFromRaw(response);
+      if (salvaged) {
+        parsed = salvaged;
+      } else {
+        throw new Error('Invalid JSON response from LLM');
+      }
     }
 
     // Handle Spanish field names (desafío, vistas, perspectivaSDA)
@@ -186,6 +158,141 @@ Guidelines:
 
   private normalizePassage(passage: string): string {
     return passage.toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  private parseInterpretiveChallengeJson(raw: string): any {
+    let jsonStr = raw.trim();
+    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*({[\s\S]*?})\s*```/);
+    if (codeBlockMatch) {
+      jsonStr = codeBlockMatch[1];
+    } else {
+      const jsonMatch = jsonStr.match(/{[\s\S]*}/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[0];
+      }
+    }
+
+    const sanitize = (input: string) =>
+      input
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+        // Fix malformed sequence seen in logs: ...],"},{"viewName...
+        .replace(/,\s*"\s*}/g, '}')
+        .replace(/\],\s*"\s*}\s*,\s*{/g, ']},{')
+        .replace(/\],\s*"\s*}\s*,\s*{\s*"viewName"/g, ']},{"viewName"')
+        .replace(/\],\s*}\s*,\s*{/g, ']},{')
+        .replace(/\],\s*}\s*,\s*"/g, ']},"')
+        .replace(/}\s*,\s*"\s*viewName"/g, '},{"viewName"')
+        .replace(/}\s*,\s*,\s*{/g, '},{')
+        .replace(/\},\s*\]/g, '}]')
+        .replace(/,\s*([}\]])/g, '$1')
+        .trim();
+
+    const primary = sanitize(jsonStr);
+    try {
+      return JSON.parse(primary);
+    } catch {
+      const repaired = sanitize(
+        primary
+          .replace(/([{,]\s*)([A-Za-z_][\w]*)(\s*:)/g, '$1"$2"$3')
+          .replace(/:\s*'([^']*)'/g, ': "$1"'),
+      );
+      try {
+        return JSON.parse(repaired);
+      } catch {
+        // Last pass: aggressively normalize broken object boundaries in views arrays.
+        const aggressive = sanitize(
+          repaired
+            .replace(/\],\s*"\s*}\s*,\s*{\s*"/g, ']},{"')
+            .replace(/\],\s*}\s*,\s*{\s*"/g, ']},{"')
+            .replace(/}\s*,\s*"\s*}\s*,\s*{/g, '}},{')
+            .replace(/"\s*}\s*,\s*{\s*"/g, '"},{\"')
+            .replace(/,\s*,/g, ','),
+        );
+        return JSON.parse(aggressive);
+      }
+    }
+  }
+
+  private salvageInterpretiveChallengeFromRaw(raw: string): any | null {
+    const payloadMatch = raw.match(/{[\s\S]*}/);
+    if (!payloadMatch) return null;
+    const payload = payloadMatch[0];
+    const repaired = payload
+      .replace(/\],"\},\{"viewName"/g, ']},{"viewName"')
+      .replace(/\],"\},\s*\{/g, ']},{')
+      .replace(/"\}\],\s*"sdaPerspective"/g, '"]},"sdaPerspective"')
+      .replace(/,\s*,/g, ',');
+
+    const challenge =
+      this.extractJsonStringField(repaired, 'challenge') ||
+      this.extractJsonStringField(repaired, 'desafío') ||
+      this.extractJsonStringField(repaired, 'desafio');
+    if (!challenge) return null;
+
+    const viewRegex =
+      /\{\s*"viewName"\s*:\s*"((?:\\.|[^"\\])*)"\s*,\s*"summary"\s*:\s*"((?:\\.|[^"\\])*)"(?:\s*,\s*"proponents"\s*:\s*"((?:\\.|[^"\\])*)")?[\s\S]*?"keyArguments"\s*:\s*\[([\s\S]*?)\]\s*\}/g;
+    const views: any[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = viewRegex.exec(repaired)) !== null) {
+      const keyArgumentsRaw = match[4] || '';
+      const keyArguments = Array.from(keyArgumentsRaw.matchAll(/"((?:\\.|[^"\\])*)"/g))
+        .map((item) => this.unescapeJsonString(item[1]))
+        .filter(Boolean);
+      views.push({
+        viewName: this.unescapeJsonString(match[1]),
+        summary: this.unescapeJsonString(match[2]),
+        proponents: this.unescapeJsonString(match[3] || ''),
+        keyArguments,
+      });
+    }
+
+    const supportingTextsRaw =
+      repaired.match(/"supportingTexts"\s*:\s*\[([\s\S]*?)\]/)?.[1] ||
+      repaired.match(/"textosDeApoyo"\s*:\s*\[([\s\S]*?)\]/)?.[1] ||
+      '';
+    const supportingTexts = Array.from(supportingTextsRaw.matchAll(/"((?:\\.|[^"\\])*)"/g))
+      .map((item) => this.unescapeJsonString(item[1]))
+      .filter(Boolean);
+
+    const sdaPerspective = {
+      position:
+        this.extractJsonStringField(repaired, 'position') ||
+        this.extractJsonStringField(repaired, 'posición') ||
+        this.extractJsonStringField(repaired, 'posicion') ||
+        '',
+      reasoning:
+        this.extractJsonStringField(repaired, 'reasoning') ||
+        this.extractJsonStringField(repaired, 'razonamiento') ||
+        '',
+      supportingTexts,
+    };
+
+    return {
+      challenge,
+      views,
+      sdaPerspective: sdaPerspective.position || sdaPerspective.reasoning || supportingTexts.length ? sdaPerspective : undefined,
+    };
+  }
+
+  private extractJsonStringField(input: string, fieldName: string): string {
+    const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`"${escapedField}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`);
+    const match = input.match(regex);
+    if (!match) return '';
+    return this.unescapeJsonString(match[1]);
+  }
+
+  private unescapeJsonString(input: string): string {
+    if (!input) return '';
+    try {
+      return JSON.parse(`"${input}"`);
+    } catch {
+      return input
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, '\n')
+        .replace(/\\t/g, '\t')
+        .replace(/\\\\/g, '\\');
+    }
   }
 
   private initializeChallengeData() {

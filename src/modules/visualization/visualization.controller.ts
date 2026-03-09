@@ -6,6 +6,8 @@ import { SermonFlowSculptorService } from './sermon-flow-sculptor.service';
 import { TimelineUniverseService } from './timeline-universe.service';
 import { ProphecyFulfillmentService } from './prophecy-fulfillment.service';
 import { TheologicalThemeGalaxyService } from './theological-theme-galaxy.service';
+import { VisualizationContractService } from './visualization-contract.service';
+import { BiblicalNarrativeMapService } from './biblical-narrative-map.service';
 
 @Controller('visualization')
 @UseGuards(JwtAuthGuard)
@@ -16,7 +18,9 @@ export class VisualizationController {
     private sermonFlowSculptorService: SermonFlowSculptorService,
     private timelineUniverseService: TimelineUniverseService,
     private prophecyFulfillmentService: ProphecyFulfillmentService,
-    private theologicalThemeGalaxyService: TheologicalThemeGalaxyService
+    private theologicalThemeGalaxyService: TheologicalThemeGalaxyService,
+    private visualizationContractService: VisualizationContractService,
+    private biblicalNarrativeMapService: BiblicalNarrativeMapService
   ) {}
 
   @Get('canonical-constellation')
@@ -25,7 +29,8 @@ export class VisualizationController {
     @Query('types') types?: string
   ) {
     const includeTypes = types ? types.split(',') : undefined;
-    return this.canonicalConstellationService.generateConstellation(focusPassage, includeTypes);
+    const data = await this.canonicalConstellationService.generateConstellation(focusPassage, includeTypes);
+    return this.visualizationContractService.enrichGraph(data);
   }
 
   @Get('book-cluster')
@@ -51,13 +56,14 @@ export class VisualizationController {
       illustrations?: string[];
     }
   ) {
-    return this.sermonFlowSculptorService.generateSermonFlow(
+    const data = await this.sermonFlowSculptorService.generateSermonFlow(
       body.bigIdea,
       body.points,
       body.applications,
       body.supportingVerses,
       body.illustrations
     );
+    return this.visualizationContractService.enrichGraph(data);
   }
 
   @Post('sermon-balance')
@@ -93,7 +99,32 @@ export class VisualizationController {
 
   @Get('prophecy-web')
   async getProphecyWeb(@Query('theme') theme?: string) {
-    return this.prophecyFulfillmentService.generateProphecyWeb(theme as any);
+    const data = await this.prophecyFulfillmentService.generateProphecyWeb(theme as any);
+    return this.visualizationContractService.enrichGraph(data);
+  }
+
+  @Get('biblical-narrative-map')
+  async getBiblicalNarrativeMap(
+    @Query('focusPassage') focusPassage?: string,
+    @Query('theme') theme?: string,
+  ) {
+    const passage = String(focusPassage || '').trim();
+    if (!passage) {
+      return {
+        nodes: [],
+        connections: [],
+        timeline: [],
+        metadata: {
+          focusPassage: null,
+          focusStage: null,
+          theme: theme || null,
+          totalNodes: 0,
+          totalConnections: 0,
+        },
+      };
+    }
+
+    return this.biblicalNarrativeMapService.buildNarrativeMap(passage, theme);
   }
 
   @Get('prophecy-2300-days')

@@ -6,6 +6,8 @@ import { SermonFlowSculptorService } from './sermon-flow-sculptor.service';
 import { TimelineUniverseService } from './timeline-universe.service';
 import { ProphecyFulfillmentService } from './prophecy-fulfillment.service';
 import { TheologicalThemeGalaxyService } from './theological-theme-galaxy.service';
+import { VisualizationContractService } from './visualization-contract.service';
+import { BiblicalNarrativeMapService } from './biblical-narrative-map.service';
 import { ScriptureModule } from '../scripture/scripture.module';
 
 @Module({
@@ -17,7 +19,9 @@ import { ScriptureModule } from '../scripture/scripture.module';
     SermonFlowSculptorService,
     TimelineUniverseService,
     ProphecyFulfillmentService,
-    TheologicalThemeGalaxyService
+    TheologicalThemeGalaxyService,
+    VisualizationContractService,
+    BiblicalNarrativeMapService
   ],
   exports: [
     CanonicalConstellationService,
@@ -25,7 +29,9 @@ import { ScriptureModule } from '../scripture/scripture.module';
     SermonFlowSculptorService,
     TimelineUniverseService,
     ProphecyFulfillmentService,
-    TheologicalThemeGalaxyService
+    TheologicalThemeGalaxyService,
+    VisualizationContractService,
+    BiblicalNarrativeMapService
   ]
 })
 export class VisualizationModule {}

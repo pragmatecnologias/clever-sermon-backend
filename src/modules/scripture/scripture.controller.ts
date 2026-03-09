@@ -136,6 +136,21 @@ export class ScriptureController {
     return this.scriptureService.getWordStudyInsights(word, language, context, responseLanguage);
   }
 
+  @Get('word-study-suggestions')
+  async getWordStudySuggestions(
+    @Query('reference') reference: string,
+    @Query('translation') translation?: string,
+    @Query('language') language?: string,
+    @Query('responseLanguage') responseLanguage?: string,
+  ) {
+    return this.scriptureService.getWordStudySuggestions(
+      reference,
+      translation || 'KJV',
+      language || 'greek',
+      responseLanguage,
+    );
+  }
+
   @Get('search')
   async searchScripture(
     @Query('query') query: string,
@@ -233,6 +248,24 @@ export class ScriptureController {
     return this.crossReferenceRankingService.getRankedCrossReferences(verse);
   }
 
+  @Get('cross-references-sop-linked')
+  async getSOPLinkedCrossReferences(
+    @Query('verse') verse: string,
+    @Query('language') language?: string,
+  ) {
+    return this.crossReferenceRankingService.getSOPLinkedCrossReferences(verse, language || 'en');
+  }
+
+  @Post('cross-references-outline-map')
+  async getOutlineCrossReferenceMap(
+    @Body() body: { verse: string; points: Array<{ id?: string; text: string; supportingVerses?: string[] }> },
+  ) {
+    return this.crossReferenceRankingService.mapCrossReferencesToOutlinePoints(
+      body?.verse || '',
+      Array.isArray(body?.points) ? body.points : [],
+    );
+  }
+
   @Get('cross-references-top')
   async getTopCrossReferences(
     @Query('verse') verse: string,
@@ -240,6 +273,11 @@ export class ScriptureController {
   ) {
     const limitNum = limit ? parseInt(limit) : 3;
     return this.crossReferenceRankingService.getTopCrossReferences(verse, limitNum);
+  }
+
+  @Get('cross-references-edges')
+  async getCrossReferenceEdges(@Query('verse') verse: string) {
+    return this.crossReferenceRankingService.getCrossReferenceEdges(verse);
   }
 
   @Get('interpretive-highlights')

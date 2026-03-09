@@ -282,13 +282,14 @@ export class ScriptureService {
     const apiKey = this.configService.get('BIBLE_API_KEY');
     const apiUrl = this.configService.get('BIBLE_API_URL');
     const rawReference = (reference || '').trim();
-    const normalizedReference = this.normalizeReferenceForApi(rawReference);
+    const lookupReference = this.normalizeReferenceForLookup(rawReference);
+    const normalizedReference = this.normalizeReferenceForApi(lookupReference);
     const requestedTranslation = (translationCode || 'KJV').trim().toUpperCase();
     const requiresApiBible = ['RVR1960', 'RVR60', 'NBLA', 'NVI'].includes(requestedTranslation);
 
     if ((!apiKey || !apiUrl) && requiresApiBible) {
       return {
-        reference: rawReference || normalizedReference,
+        reference: lookupReference || normalizedReference,
         translation: requestedTranslation,
         verses: [],
         error: `Translation ${requestedTranslation} requires API.Bible. Configure BIBLE_API_KEY to fetch Spanish passages without fallback.`,
@@ -322,7 +323,7 @@ export class ScriptureService {
           );
 
           // Format response to match expected structure
-          const formatted = formatApiBibleResponse(response.data, reference, requestedTranslation);
+          const formatted = formatApiBibleResponse(response.data, lookupReference || reference, requestedTranslation);
           
           // Cache only non-empty results to avoid stale empty payloads being reused.
           if (Array.isArray(formatted?.verses) && formatted.verses.length > 0) {
@@ -333,11 +334,11 @@ export class ScriptureService {
         }
       } catch (error) {
         console.error('[Scripture] API.Bible error:', error.response?.data || error.message);
-        return this.fetchBibleApiPassage(rawReference, requestedTranslation, normalizedReference);
+        return this.fetchBibleApiPassage(lookupReference, requestedTranslation, normalizedReference);
       }
     }
 
-    return this.fetchBibleApiPassage(rawReference, requestedTranslation, normalizedReference);
+    return this.fetchBibleApiPassage(lookupReference, requestedTranslation, normalizedReference);
   }
 
   async getStructuralAnalysis(reference: string, translationCode: string = 'KJV') {
@@ -451,11 +452,17 @@ Rules:
     const index = await this.loadCrossReferences();
     const normalized = this.normalizeVerseReference(verseReference);
     console.log(`[CrossRef] Looking up: "${verseReference}" -> normalized: "${normalized}"`);
-    
-    // Try multiple formats
-    const results = index.get(normalized) || index.get(verseReference) || [];
+
+    const lookupKeys = this.buildCrossReferenceLookupKeys(verseReference, normalized);
+    const merged = new Set<string>();
+    for (const key of lookupKeys) {
+      const entries = index.get(key) || [];
+      for (const entry of entries) merged.add(entry);
+    }
+
+    const results = Array.from(merged);
+    console.log(`[CrossRef] Lookup keys tried: ${lookupKeys.join(', ') || '(none)'}`);
     console.log(`[CrossRef] Found ${results.length} references`);
-    
     return results;
   }
 
@@ -573,6 +580,74 @@ Rules:
     }
     const localized = await this.localizeWordStudyInsights(parsed, targetLanguage);
     return this.ensureGrammarInsights(localized, partOfSpeech, targetLanguage);
+  }
+
+  async getWordStudySuggestions(
+    reference: string,
+    translationCode: string = 'KJV',
+    language: string = 'greek',
+    responseLanguage: string = 'en',
+  ): Promise<Array<{ term: string; transliteration?: string; gloss?: string; reason?: string; language: string }>> {
+    const passage = await this.getPassage(reference, translationCode);
+    const passageText = this.getPassageText(passage);
+    if (!passageText) {
+      console.warn(
+        `[WordStudySuggestions] Empty passage text for reference="${reference}" translation="${translationCode}"`,
+      );
+      return [];
+    }
+
+    const sourceLanguage = String(language || 'greek').toLowerCase();
+    const targetLanguage = this.resolveResponseLanguage(responseLanguage);
+    const outputLanguageLabel = targetLanguage === 'es' ? 'Spanish' : 'English';
+    const sourceLanguageLabel = sourceLanguage === 'hebrew' ? 'Hebrew' : sourceLanguage === 'aramaic' ? 'Aramaic' : 'Greek';
+
+    const prompt = `Extract the most important ${sourceLanguageLabel} study words for this Bible passage.
+
+Reference: ${reference}
+Passage Text:
+${passageText.slice(0, 2600)}
+Output language for gloss/reason: ${outputLanguageLabel}
+
+Return JSON only:
+[
+  {
+    "term": "string",
+    "transliteration": "string",
+    "gloss": "string",
+    "reason": "short reason this term matters for interpreting the passage",
+    "language": "${sourceLanguage}"
+  }
+]
+
+Rules:
+- Return 5-8 terms max.
+- Prioritize doctrinally central and structurally central terms.
+- Do not return duplicates.
+- No markdown, no commentary.`;
+
+    try {
+      const response = await this.llmService.generateCompletion(prompt, 'system', {
+        temperature: 0.2,
+        maxTokens: 700,
+      });
+      this.logWordStudyLlmOutput('word-study-suggestions', response);
+      const parsed = this.safeJson(response, []);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item: any) => ({
+          term: String(item?.term || '').trim(),
+          transliteration: String(item?.transliteration || '').trim(),
+          gloss: String(item?.gloss || '').trim(),
+          reason: String(item?.reason || '').trim(),
+          language: sourceLanguage,
+        }))
+        .filter((item: any) => item.term)
+        .slice(0, 8);
+    } catch (error) {
+      console.error('[WordStudySuggestions] Failed:', error?.message || error);
+      return [];
+    }
   }
 
   async searchScripture(query: string, translationCode: string = 'KJV'): Promise<any[]> {
@@ -940,9 +1015,18 @@ Rules:
     if (!raw) return fallback;
     const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
     const payload = fenced?.[1] || raw;
-    const start = payload.indexOf('{');
-    const end = payload.lastIndexOf('}');
-    const jsonText = start !== -1 && end !== -1 ? payload.slice(start, end + 1) : payload;
+    const objectStart = payload.indexOf('{');
+    const objectEnd = payload.lastIndexOf('}');
+    const arrayStart = payload.indexOf('[');
+    const arrayEnd = payload.lastIndexOf(']');
+
+    let jsonText = payload;
+    if (arrayStart !== -1 && arrayEnd !== -1 && (objectStart === -1 || arrayStart < objectStart)) {
+      jsonText = payload.slice(arrayStart, arrayEnd + 1);
+    } else if (objectStart !== -1 && objectEnd !== -1) {
+      jsonText = payload.slice(objectStart, objectEnd + 1);
+    }
+
     try {
       return JSON.parse(jsonText);
     } catch {
@@ -1248,6 +1332,112 @@ ${input}`;
     return result;
   }
 
+  private normalizeReferenceForLookup(reference: string): string {
+    const value = String(reference || '').trim().replace(/\u2013|\u2014/g, '-');
+    if (!value) return value;
+
+    // Already standard "Book 1:1-2"
+    if (/\s+\d+(?::\d+(?:-\d+)?)?$/.test(value)) {
+      return value;
+    }
+
+    // Dot formats in cross-reference dataset, e.g. Ps.4.3 or Isa.2.3-Isa.2.5
+    const dottedSingle = value.match(/^([1-3]?[A-Za-z]+)\.(\d+)\.(\d+)$/);
+    const dottedRange = value.match(/^([1-3]?[A-Za-z]+)\.(\d+)\.(\d+)-([1-3]?[A-Za-z]+)\.(\d+)\.(\d+)$/);
+
+    const bookMap: Record<string, string> = {
+      Gen: 'Genesis',
+      Exod: 'Exodus',
+      Lev: 'Leviticus',
+      Num: 'Numbers',
+      Deut: 'Deuteronomy',
+      Josh: 'Joshua',
+      Judg: 'Judges',
+      Ruth: 'Ruth',
+      '1Sam': '1 Samuel',
+      '2Sam': '2 Samuel',
+      '1Kgs': '1 Kings',
+      '2Kgs': '2 Kings',
+      '1Chr': '1 Chronicles',
+      '2Chr': '2 Chronicles',
+      Ezra: 'Ezra',
+      Neh: 'Nehemiah',
+      Esth: 'Esther',
+      Job: 'Job',
+      Ps: 'Psalms',
+      Prov: 'Proverbs',
+      Eccl: 'Ecclesiastes',
+      Song: 'Song of Songs',
+      Isa: 'Isaiah',
+      Jer: 'Jeremiah',
+      Lam: 'Lamentations',
+      Ezek: 'Ezekiel',
+      Dan: 'Daniel',
+      Hos: 'Hosea',
+      Joel: 'Joel',
+      Amos: 'Amos',
+      Obad: 'Obadiah',
+      Jonah: 'Jonah',
+      Mic: 'Micah',
+      Nah: 'Nahum',
+      Hab: 'Habakkuk',
+      Zeph: 'Zephaniah',
+      Hag: 'Haggai',
+      Zech: 'Zechariah',
+      Mal: 'Malachi',
+      Matt: 'Matthew',
+      Mark: 'Mark',
+      Luke: 'Luke',
+      John: 'John',
+      Acts: 'Acts',
+      Rom: 'Romans',
+      '1Cor': '1 Corinthians',
+      '2Cor': '2 Corinthians',
+      Gal: 'Galatians',
+      Eph: 'Ephesians',
+      Phil: 'Philippians',
+      Col: 'Colossians',
+      '1Thess': '1 Thessalonians',
+      '2Thess': '2 Thessalonians',
+      '1Tim': '1 Timothy',
+      '2Tim': '2 Timothy',
+      Titus: 'Titus',
+      Phlm: 'Philemon',
+      Heb: 'Hebrews',
+      Jas: 'James',
+      '1Pet': '1 Peter',
+      '2Pet': '2 Peter',
+      '1John': '1 John',
+      '2John': '2 John',
+      '3John': '3 John',
+      Jude: 'Jude',
+      Rev: 'Revelation',
+    };
+
+    if (dottedSingle) {
+      const [, bookAbbr, chapter, verse] = dottedSingle;
+      const book = bookMap[bookAbbr] || bookAbbr;
+      return `${book} ${chapter}:${verse}`;
+    }
+
+    if (dottedRange) {
+      const [, startBook, startChapter, startVerse, endBook, endChapter, endVerse] = dottedRange;
+      const startBookName = bookMap[startBook] || startBook;
+      const endBookName = bookMap[endBook] || endBook;
+      if (startBook === endBook && startChapter === endChapter) {
+        return `${startBookName} ${startChapter}:${startVerse}-${endVerse}`;
+      }
+      return `${startBookName} ${startChapter}:${startVerse}-${endBookName} ${endChapter}:${endVerse}`;
+    }
+
+    return value;
+  }
+
+  private getPassageText(passage: any): string {
+    if (!Array.isArray(passage?.verses)) return '';
+    return passage.verses.map((verse: any) => String(verse?.text || '')).join(' ').trim();
+  }
+
   private normalizeVerseReference(reference: string): string {
     if (!reference) return reference;
     const cleaned = reference.replace(/\u2013|\u2014/g, '-').trim();
@@ -1282,5 +1472,50 @@ ${input}`;
     } else {
       return `${book}.${chapter}`;
     }
+  }
+
+  private buildCrossReferenceLookupKeys(rawReference: string, normalizedReference: string): string[] {
+    const keys = new Set<string>();
+    const raw = String(rawReference || '').trim();
+    const normalized = String(normalizedReference || '').trim();
+    if (raw) keys.add(raw);
+    if (normalized) keys.add(normalized);
+
+    // If range (e.g. Eph.2.1-Eph.2.10), also query each verse key and the range start.
+    const rangeMatch = normalized.match(/^([A-Za-z0-9]+)\.(\d+)\.(\d+)-([A-Za-z0-9]+)\.(\d+)\.(\d+)$/);
+    if (rangeMatch) {
+      const startBook = rangeMatch[1];
+      const startChapter = Number(rangeMatch[2]);
+      const startVerse = Number(rangeMatch[3]);
+      const endBook = rangeMatch[4];
+      const endChapter = Number(rangeMatch[5]);
+      const endVerse = Number(rangeMatch[6]);
+
+      // Only expand straightforward single-book/single-chapter ranges.
+      if (
+        startBook === endBook &&
+        Number.isFinite(startChapter) &&
+        Number.isFinite(startVerse) &&
+        Number.isFinite(endChapter) &&
+        Number.isFinite(endVerse) &&
+        startChapter === endChapter &&
+        endVerse >= startVerse &&
+        endVerse - startVerse <= 60
+      ) {
+        for (let v = startVerse; v <= endVerse; v += 1) {
+          keys.add(`${startBook}.${startChapter}.${v}`);
+        }
+      }
+      keys.add(`${startBook}.${startChapter}.${startVerse}`);
+      keys.add(`${startBook}.${startChapter}`);
+    }
+
+    // If single verse, also try chapter key.
+    const singleVerseMatch = normalized.match(/^([A-Za-z0-9]+)\.(\d+)\.(\d+)$/);
+    if (singleVerseMatch) {
+      keys.add(`${singleVerseMatch[1]}.${singleVerseMatch[2]}`);
+    }
+
+    return Array.from(keys);
   }
 }
