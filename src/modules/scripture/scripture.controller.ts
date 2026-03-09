@@ -121,8 +121,9 @@ export class ScriptureController {
   async getWordStudy(
     @Query('word') word: string,
     @Query('language') language: string,
+    @Query('responseLanguage') responseLanguage?: string,
   ) {
-    return this.scriptureService.getWordStudy(word, language);
+    return this.scriptureService.getWordStudy(word, language, responseLanguage);
   }
 
   @Get('word-study-insights')
@@ -130,8 +131,9 @@ export class ScriptureController {
     @Query('word') word: string,
     @Query('language') language: string,
     @Query('context') context?: string,
+    @Query('responseLanguage') responseLanguage?: string,
   ) {
-    return this.scriptureService.getWordStudyInsights(word, language, context);
+    return this.scriptureService.getWordStudyInsights(word, language, context, responseLanguage);
   }
 
   @Get('search')

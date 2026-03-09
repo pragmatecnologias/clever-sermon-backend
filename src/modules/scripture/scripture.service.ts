@@ -477,19 +477,28 @@ Rules:
     return details;
   }
 
-  async getWordStudy(word: string, language: string): Promise<any> {
+  async getWordStudy(word: string, language: string, responseLanguage: string = 'en'): Promise<any> {
     const index = await this.loadWordStudyIndex();
     const occurrences = await this.loadWordOccurrences();
     const key = word.toLowerCase();
     const entry = index?.[key];
     const occurrenceEntry = occurrences?.[key];
     const distributionByBook = this.buildDistributionByBook(occurrenceEntry?.verses || []);
+    const targetLanguage = this.resolveResponseLanguage(responseLanguage);
     if (entry) {
-      return {
+      const originalScript = this.resolveOriginalScript(entry?.lemma || key, word, language);
+      const transliteration = this.resolveTransliteration(
+        entry.transliteration || '',
+        entry.lemma || key,
+        word,
+        language,
+      );
+      const baseResult = {
         word,
         language,
         lemma: entry.lemma || key,
-        transliteration: entry.transliteration || word,
+        originalScript,
+        transliteration,
         definition: entry.definition || null,
         usageCount: occurrenceEntry?.count || entry.usageCount || null,
         examples: entry.examples || entry.verseExamples || occurrenceEntry?.verses || [],
@@ -498,13 +507,15 @@ Rules:
         verseOccurrences: occurrenceEntry?.verses || [],
         distributionByBook,
       };
+      return this.localizeWordStudyResult(baseResult, targetLanguage);
     }
 
-    return {
+    const fallbackResult = {
       word,
       language,
       lemma: word.toLowerCase(),
-      transliteration: word,
+      originalScript: this.resolveOriginalScript(word.toLowerCase(), word, language),
+      transliteration: this.resolveTransliteration('', word.toLowerCase(), word, language),
       definition: null,
       usageCount: occurrenceEntry?.count || null,
       examples: occurrenceEntry?.verses || [],
@@ -513,14 +524,18 @@ Rules:
       verseOccurrences: occurrenceEntry?.verses || [],
       distributionByBook,
     };
+    return this.localizeWordStudyResult(fallbackResult, targetLanguage);
   }
 
-  async getWordStudyInsights(word: string, language: string, context?: string) {
+  async getWordStudyInsights(word: string, language: string, context?: string, responseLanguage: string = 'en') {
+    const targetLanguage = this.resolveResponseLanguage(responseLanguage);
+    const outputLanguageLabel = targetLanguage === 'es' ? 'Spanish' : 'English';
     const prompt = `Provide advanced word study insights as JSON only.
 
 Word: ${word}
 Language: ${language}
 Context: ${context || 'N/A'}
+Output Language: ${outputLanguageLabel}
 
 Return JSON:
 {
@@ -542,12 +557,22 @@ Return JSON:
 
 Rules:
 - If unsure, say so in the relevant field.
+- All human-readable values must be written in ${outputLanguageLabel}.
 - No markdown, no extra commentary.`;
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.4,
       maxTokens: 700,
     });
-    return this.safeJson(response, { raw: response });
+    this.logWordStudyLlmOutput('word-study-insights', response);
+    const parsed = this.safeJson(response, { raw: response });
+    const index = await this.loadWordStudyIndex();
+    const wordKey = String(word || '').toLowerCase();
+    const partOfSpeech = String(index?.[wordKey]?.partOfSpeech || '').trim();
+    if (targetLanguage !== 'es') {
+      return this.ensureGrammarInsights(parsed, partOfSpeech, targetLanguage);
+    }
+    const localized = await this.localizeWordStudyInsights(parsed, targetLanguage);
+    return this.ensureGrammarInsights(localized, partOfSpeech, targetLanguage);
   }
 
   async searchScripture(query: string, translationCode: string = 'KJV'): Promise<any[]> {
@@ -923,6 +948,304 @@ Rules:
     } catch {
       return fallback;
     }
+  }
+
+  private async localizeWordStudyResult(result: any, targetLanguage: string): Promise<any> {
+    if (targetLanguage !== 'es') {
+      return result;
+    }
+    const definition = typeof result?.definition === 'string' ? result.definition : '';
+    const partOfSpeech = typeof result?.partOfSpeech === 'string' ? result.partOfSpeech : '';
+    const examples = Array.isArray(result?.examples) ? result.examples : [];
+
+    if (!definition && !partOfSpeech && examples.length === 0) {
+      return result;
+    }
+
+    try {
+      const translatedDefinition = definition
+        ? await this.translateTextToSpanish(definition)
+        : result?.definition;
+      const translatedPartOfSpeech = partOfSpeech
+        ? await this.translateTextToSpanish(partOfSpeech)
+        : result?.partOfSpeech;
+      const translatedExamples = examples.length
+        ? await Promise.all(
+            examples.map(async (example: string) => {
+              // Keep raw verse references unchanged.
+              if (this.looksLikeVerseReference(example)) return example;
+              return this.translateTextToSpanish(example);
+            }),
+          )
+        : result?.examples;
+
+      return {
+        ...result,
+        definition: translatedDefinition ?? result.definition,
+        partOfSpeech: translatedPartOfSpeech ?? result.partOfSpeech,
+        examples: Array.isArray(translatedExamples) ? translatedExamples : result.examples,
+      };
+    } catch {
+      return result;
+    }
+  }
+
+  private async localizeWordStudyInsights(insights: any, targetLanguage: string): Promise<any> {
+    if (targetLanguage !== 'es') {
+      return insights;
+    }
+    if (!insights || typeof insights !== 'object' || Array.isArray(insights)) {
+      return insights;
+    }
+
+    try {
+      const localized: any = { ...insights };
+      if (typeof localized.rootWord === 'string') {
+        localized.rootWord = await this.translateTextToSpanish(localized.rootWord);
+      }
+      if (Array.isArray(localized.semanticRange)) {
+        localized.semanticRange = await Promise.all(
+          localized.semanticRange.map((item: string) => this.translateTextToSpanish(String(item))),
+        );
+      }
+      if (localized.grammarInsights && typeof localized.grammarInsights === 'object') {
+        const translatedGrammar: Record<string, any> = {};
+        for (const [key, value] of Object.entries(localized.grammarInsights)) {
+          if (typeof value === 'string') {
+            translatedGrammar[key] = await this.translateTextToSpanish(value);
+          } else {
+            translatedGrammar[key] = value;
+          }
+        }
+        localized.grammarInsights = translatedGrammar;
+      }
+      if (Array.isArray(localized.nuanceNotes)) {
+        localized.nuanceNotes = await Promise.all(
+          localized.nuanceNotes.map((item: string) => this.translateTextToSpanish(String(item))),
+        );
+      }
+      if (Array.isArray(localized.commonTranslations)) {
+        localized.commonTranslations = await Promise.all(
+          localized.commonTranslations.map((item: string) => this.translateTextToSpanish(String(item))),
+        );
+      }
+      // exampleReferences are references and should remain unchanged
+      return localized;
+    } catch {
+      return insights;
+    }
+  }
+
+  private looksLikeVerseReference(value: string): boolean {
+    if (!value) return false;
+    return /[A-Za-zÁÉÍÓÚáéíóúñÑ]+\s+\d+:\d+/.test(value) || /^[A-Z0-9]{2,5}\.\d+\.\d+/.test(value);
+  }
+
+  private async translateTextToSpanish(text: string): Promise<string> {
+    const input = String(text || '').trim();
+    if (!input) return input;
+    const prompt = `Translate to Spanish.
+
+Rules:
+- Keep Greek/Hebrew words, Strong's identifiers, and Bible references unchanged.
+- Return only the translated text, no quotes, no markdown.
+
+Text:
+${input}`;
+    try {
+      const response = await this.llmService.generateCompletion(prompt, 'system', {
+        temperature: 0.1,
+        maxTokens: 220,
+      });
+      this.logWordStudyLlmOutput('word-study-translate', response);
+      const normalized = String(response || '').trim();
+      return normalized || input;
+    } catch {
+      return input;
+    }
+  }
+
+  private ensureGrammarInsights(payload: any, partOfSpeech: string, targetLanguage: 'en' | 'es'): any {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return payload;
+    }
+
+    const grammar = payload.grammarInsights && typeof payload.grammarInsights === 'object'
+      ? { ...payload.grammarInsights }
+      : {};
+
+    const isNoun = /noun|sustantivo/i.test(partOfSpeech || '');
+    const notApplicable = targetLanguage === 'es' ? 'No aplica (sustantivo)' : 'Not applicable (noun)';
+    const unknown = targetLanguage === 'es' ? 'No especificado' : 'Not specified';
+
+    const normalized = {
+      tense: this.normalizeGrammarValue(grammar.tense, isNoun ? notApplicable : unknown),
+      voice: this.normalizeGrammarValue(grammar.voice, isNoun ? notApplicable : unknown),
+      mood: this.normalizeGrammarValue(grammar.mood, isNoun ? notApplicable : unknown),
+      case: this.normalizeGrammarValue(grammar.case, unknown),
+      number: this.normalizeGrammarValue(grammar.number, unknown),
+      gender: this.normalizeGrammarValue(grammar.gender, unknown),
+      notes: this.normalizeGrammarValue(grammar.notes, unknown),
+    };
+
+    return {
+      ...payload,
+      grammarInsights: normalized,
+    };
+  }
+
+  private normalizeGrammarValue(value: any, fallback: string): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized || normalized.toLowerCase() === 'n/a') {
+      return fallback;
+    }
+    return normalized;
+  }
+
+  private logWordStudyLlmOutput(tag: string, output: string): void {
+    if (process.env.LOG_LLM_REQUESTS === 'true' || process.env.LOG_WORD_STUDY_LLM === 'true') {
+      console.log(`[LLM ${tag}]`, String(output || '').slice(0, 2000));
+    }
+  }
+
+  private resolveResponseLanguage(value?: string): 'en' | 'es' {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return 'en';
+    if (
+      normalized.startsWith('es') ||
+      normalized.includes('spanish') ||
+      normalized.includes('espanol') ||
+      normalized.includes('español')
+    ) {
+      return 'es';
+    }
+    return 'en';
+  }
+
+  private resolveOriginalScript(lemma: string, word: string, language: string): string | null {
+    const normalizedLanguage = String(language || '').toLowerCase();
+    const lemmaValue = String(lemma || '').trim();
+    const wordValue = String(word || '').trim();
+    const source = lemmaValue || wordValue;
+    if (!source) return null;
+
+    if (normalizedLanguage === 'greek') {
+      if (this.containsGreek(source)) return source;
+      if (this.containsGreek(wordValue)) return wordValue;
+      return this.transliterateLatinToGreekApprox(source);
+    }
+
+    return null;
+  }
+
+  private resolveTransliteration(
+    current: string,
+    lemma: string,
+    word: string,
+    language: string,
+  ): string {
+    const existing = String(current || '').trim();
+    if (existing && existing !== word) {
+      return existing;
+    }
+
+    const normalizedLanguage = String(language || '').toLowerCase();
+    const seed = String(lemma || word || '').trim();
+    if (!seed) return existing || word;
+
+    if (normalizedLanguage === 'greek' || this.containsGreek(seed)) {
+      const greekSource = this.containsGreek(seed) ? seed : String(word || '');
+      const transliterated = this.transliterateGreekToLatin(greekSource);
+      return transliterated || existing || word;
+    }
+
+    return existing || word;
+  }
+
+  private containsGreek(value: string): boolean {
+    return /[\u0370-\u03FF\u1F00-\u1FFF]/.test(String(value || ''));
+  }
+
+  private transliterateGreekToLatin(value: string): string {
+    const map: Record<string, string> = {
+      α: 'a', β: 'b', γ: 'g', δ: 'd', ε: 'e', ζ: 'z', η: 'e', θ: 'th',
+      ι: 'i', κ: 'k', λ: 'l', μ: 'm', ν: 'n', ξ: 'x', ο: 'o', π: 'p',
+      ρ: 'r', σ: 's', ς: 's', τ: 't', υ: 'u', φ: 'ph', χ: 'ch', ψ: 'ps',
+      ω: 'o', Α: 'A', Β: 'B', Γ: 'G', Δ: 'D', Ε: 'E', Ζ: 'Z', Η: 'E',
+      Θ: 'Th', Ι: 'I', Κ: 'K', Λ: 'L', Μ: 'M', Ν: 'N', Ξ: 'X', Ο: 'O',
+      Π: 'P', Ρ: 'R', Σ: 'S', Τ: 'T', Υ: 'U', Φ: 'Ph', Χ: 'Ch', Ψ: 'Ps', Ω: 'O',
+      ά: 'a', έ: 'e', ή: 'e', ί: 'i', ό: 'o', ύ: 'u', ώ: 'o',
+      ϊ: 'i', ϋ: 'u', ΐ: 'i', ΰ: 'u',
+      ἀ: 'a', ἁ: 'ha', ἄ: 'a', ἅ: 'ha', ἆ: 'a', ἇ: 'ha',
+      ἐ: 'e', ἑ: 'he', ἔ: 'e', ἕ: 'he',
+      ἠ: 'e', ἡ: 'he', ἤ: 'e', ἥ: 'he', ἦ: 'e', ἧ: 'he',
+      ἰ: 'i', ἱ: 'hi', ἴ: 'i', ἵ: 'hi', ἶ: 'i', ἷ: 'hi',
+      ὀ: 'o', ὁ: 'ho', ὄ: 'o', ὅ: 'ho',
+      ὐ: 'u', ὑ: 'hu', ὔ: 'u', ὕ: 'hu', ὖ: 'u', ὗ: 'hu',
+      ὠ: 'o', ὡ: 'ho', ὤ: 'o', ὥ: 'ho', ὦ: 'o', ὧ: 'ho',
+    };
+
+    const source = String(value || '').trim();
+    if (!source) return '';
+
+    const normalized = source.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    let out = '';
+    for (let i = 0; i < normalized.length; i++) {
+      const ch = normalized[i];
+      const next = normalized[i + 1];
+      const digraph = `${ch}${next || ''}`;
+      const lowerDigraph = digraph.toLowerCase();
+      if (lowerDigraph === 'αι') { out += ch === ch.toUpperCase() ? 'Ai' : 'ai'; i++; continue; }
+      if (lowerDigraph === 'ει') { out += ch === ch.toUpperCase() ? 'Ei' : 'ei'; i++; continue; }
+      if (lowerDigraph === 'οι') { out += ch === ch.toUpperCase() ? 'Oi' : 'oi'; i++; continue; }
+      if (lowerDigraph === 'ου') { out += ch === ch.toUpperCase() ? 'Ou' : 'ou'; i++; continue; }
+      if (lowerDigraph === 'υι') { out += ch === ch.toUpperCase() ? 'Ui' : 'ui'; i++; continue; }
+      if (lowerDigraph === 'ευ') { out += ch === ch.toUpperCase() ? 'Eu' : 'eu'; i++; continue; }
+      if (lowerDigraph === 'αυ') { out += ch === ch.toUpperCase() ? 'Au' : 'au'; i++; continue; }
+
+      out += map[ch] ?? ch;
+    }
+
+    return out.trim();
+  }
+
+  private transliterateLatinToGreekApprox(value: string): string {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+
+    // Keep letters only for transliteration heuristics.
+    const source = raw.replace(/[^a-z]/g, '');
+    if (!source) return '';
+
+    let result = '';
+    let i = 0;
+    while (i < source.length) {
+      const pair = source.slice(i, i + 2);
+      const tri = source.slice(i, i + 3);
+
+      if (tri === 'psa' || pair === 'ps') { result += 'ψ'; i += 2; continue; }
+      if (pair === 'ph') { result += 'φ'; i += 2; continue; }
+      if (pair === 'th') { result += 'θ'; i += 2; continue; }
+      if (pair === 'ch') { result += 'χ'; i += 2; continue; }
+      if (pair === 'ou') { result += 'ου'; i += 2; continue; }
+      if (pair === 'ei') { result += 'ει'; i += 2; continue; }
+      if (pair === 'oi') { result += 'οι'; i += 2; continue; }
+      if (pair === 'ai') { result += 'αι'; i += 2; continue; }
+
+      const ch = source[i];
+      const mapped: Record<string, string> = {
+        a: 'α', b: 'β', c: 'κ', d: 'δ', e: 'ε', f: 'φ', g: 'γ', h: 'η',
+        i: 'ι', j: 'ι', k: 'κ', l: 'λ', m: 'μ', n: 'ν', o: 'ο', p: 'π',
+        q: 'κ', r: 'ρ', s: 'σ', t: 'τ', u: 'υ', v: 'β', w: 'ω', x: 'ξ',
+        y: 'υ', z: 'ζ',
+      };
+      result += mapped[ch] ?? ch;
+      i += 1;
+    }
+
+    // Prefer final sigma at end.
+    result = result.replace(/σ$/g, 'ς');
+    return result;
   }
 
   private normalizeVerseReference(reference: string): string {

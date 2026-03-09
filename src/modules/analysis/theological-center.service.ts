@@ -5,6 +5,7 @@ import { TheologicalCenterAnalysis } from '../../entities/theological-center-ana
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
+import { WorkspaceHelpers } from '../workspaces/helpers';
 
 @Injectable()
 export class TheologicalCenterService {
@@ -36,9 +37,7 @@ export class TheologicalCenterService {
 
     const outline = workspace.outlines?.[0];
     const manuscript = workspace.manuscripts?.[0];
-    const outlinePoints = Array.isArray(outline?.structure?.points) 
-      ? outline.structure.points 
-      : [];
+    const outlinePoints = WorkspaceHelpers.extractOutlinePointTexts(outline?.structure || {});
 
     const prompt = `You are a seasoned preaching mentor analyzing sermon alignment with the theological center of the passage.
 
@@ -46,7 +45,7 @@ PASSAGE: ${workspace.mainPassage}
 TEXT: ${passageText}
 
 SERMON THEME: ${workspace.theme || 'Not specified'}
-OUTLINE POINTS: ${outlinePoints.map((p: any) => typeof p === 'string' ? p : p.title || p.text).join('\n')}
+OUTLINE POINTS: ${outlinePoints.join('\n')}
 
 TASK:
 1. Identify the DOMINANT THEOLOGICAL CENTER of this passage - the central claim, the main point God is making.

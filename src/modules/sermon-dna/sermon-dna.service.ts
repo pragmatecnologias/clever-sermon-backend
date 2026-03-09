@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { SermonDnaAnalysis } from '../../entities/sermon-dna-analysis.entity';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
+import { WorkspaceHelpers } from '../workspaces/helpers';
 
 @Injectable()
 export class SermonDnaService {
@@ -30,7 +31,7 @@ export class SermonDnaService {
 
     const outline = workspace.outlines?.[0];
     const manuscriptText = workspace.manuscripts?.[0]?.content?.text || '';
-    const outlinePoints = Array.isArray(outline?.structure?.points) ? outline.structure.points : [];
+    const outlinePoints = WorkspaceHelpers.extractOutlinePointTexts(outline?.structure || {});
     const wordCount = manuscriptText.split(/\s+/).filter(Boolean).length;
 
     let summary = 'Analysis pending.';

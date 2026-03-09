@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { SDAAlignmentService, ContentScanResult } from '../llm/sda-alignment';
+import { WorkspaceHelpers } from './helpers';
 
 export interface ValidationReport {
   passed: boolean;
@@ -31,7 +32,7 @@ export class ContentValidatorService {
 
     // Scan outline
     if (content.outline?.structure?.points) {
-      const outlineText = content.outline.structure.points.join(' ');
+      const outlineText = WorkspaceHelpers.extractOutlinePointTexts(content.outline.structure).join(' ');
       scans.outline = SDAAlignmentService.scanContent(outlineText);
       totalIssues += scans.outline.issues.length;
       totalChecks++;

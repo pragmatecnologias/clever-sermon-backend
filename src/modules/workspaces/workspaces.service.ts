@@ -35,6 +35,41 @@ export class WorkspacesService {
   private parseIllustrationsFromResponse = WorkspaceHelpers.parseIllustrationsFromResponse;
   private parseCitationsFromResponse = WorkspaceHelpers.parseCitationsFromResponse;
   private logLlmOutput = WorkspaceHelpers.logLlmOutput;
+  private extractOutlinePointTexts = WorkspaceHelpers.extractOutlinePointTexts;
+
+  private normalizePointTextForSimilarity(text: string): string {
+    return (text || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private buildPointSignature(points: string[]): string {
+    if (!Array.isArray(points) || points.length === 0) return '';
+    return points
+      .map((point) => this.normalizePointTextForSimilarity(point))
+      .filter(Boolean)
+      .join(' | ');
+  }
+
+  private isSignatureTooSimilar(candidateSignature: string, existingSignatures: Set<string>): boolean {
+    if (!candidateSignature) return false;
+    const candidateTokens = new Set(candidateSignature.split(/\s+/).filter(Boolean));
+    if (candidateTokens.size === 0) return false;
+
+    for (const existing of existingSignatures) {
+      const existingTokens = new Set(existing.split(/\s+/).filter(Boolean));
+      if (existingTokens.size === 0) continue;
+      const overlap = [...candidateTokens].filter((token) => existingTokens.has(token)).length;
+      const union = new Set([...candidateTokens, ...existingTokens]).size || 1;
+      const jaccard = overlap / union;
+      if (jaccard >= 0.72) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   constructor(
     @InjectRepository(SermonWorkspace)
@@ -205,14 +240,23 @@ Write in ${languageLabel}.
 
 Rules:
 - Each variation must be substantively different in framing, emphasis, and wording.
-- Use different angles (e.g., personal transformation, family/community impact, doctrinal focus, mission/outreach, etc.).
+- Make each variation distinct across these axes:
+  1) Narrative approach
+  2) Theological emphasis
+  3) Audience focus
+  4) Sermon structure style (expository, narrative, thematic, problem-solution, story-driven)
 - Do NOT reuse sentences or phrases across variations.
 
 Return ONLY valid JSON as an array of objects with this shape:
 [
-  {"angle": "<short angle label>", "points": ["Point 1", "Point 2", "Point 3"]},
-  {"angle": "<short angle label>", "points": ["Point 1", "Point 2", "Point 3"]},
-  {"angle": "<short angle label>", "points": ["Point 1", "Point 2", "Point 3"]}
+  {
+    "angle": "<short angle label>",
+    "style": "<style label>",
+    "theologicalEmphasis": "<short emphasis label>",
+    "audienceFocus": "<short audience focus label>",
+    "sermonStructure": "<structure type label>",
+    "points": ["Point 1", "Point 2", "Point 3"]
+  }
 ]
 
 Only include ${count} variations and no extra text.`;
@@ -238,27 +282,33 @@ ${reportText ? `\nStudy Report Context:\n${reportText}` : ''}
 
 Write in ${languageLabel}.
 
-Return the outline in this EXACT format with clear section markers:
+Return ONLY valid JSON with this exact top-level shape:
+{
+  "introduction": "string",
+  "points": ["Point 1", "Point 2", "Point 3"],
+  "pointNodes": [
+    {
+      "title": "string",
+      "summary": "string",
+      "subpoints": ["string"],
+      "supportingVerses": ["Book 1:1"],
+      "canonicalThemes": ["string"],
+      "crossReferences": ["Book 1:1"],
+      "illustrationIdeas": ["string"],
+      "mediaSuggestions": ["string"]
+    }
+  ],
+  "outlineType": "string",
+  "sermonMovement": "string",
+  "conclusion": "string",
+  "callToAction": "string"
+}
 
-INTRODUCTION:
-[Write a complete introduction paragraph]
-
-POINT 1:
-[First main point with full explanation]
-
-POINT 2:
-[Second main point with full explanation]
-
-POINT 3:
-[Third main point with full explanation]
-
-CONCLUSION:
-[Write a complete conclusion paragraph]
-
-CALL TO ACTION:
-[Write a specific call to action]
-
-DO NOT include metadata, JSON, or any other format.`;
+Rules:
+- "points" is required and canonical; it must contain 3-5 concise points.
+- "pointNodes" is optional enrichment aligned by index to "points".
+- Ensure each point remains faithful to the passage and avoids drift.
+- Do not include markdown, prose outside JSON, or code fences.`;
   }
 
   buildManuscriptPrompt(workspace: SermonWorkspace, outline: SermonOutline) {
@@ -389,15 +439,16 @@ Return as JSON with these section keys.`;
 
     const pointsVariations = this.parseOutlinePointsResponse(pointsResponse, count);
     const fallbackPoints = this.parseListFromResponse(pointsResponse).slice(0, 5);
+    const generatedPointSignatures = new Set<string>();
 
     for (let i = 0; i < count; i++) {
       const variationData = pointsVariations[i];
       const points = variationData?.points?.length ? variationData.points : fallbackPoints;
       const variation = variationData?.angle
-        ? `Angle: ${variationData.angle}. Keep this outline distinct in tone and structure.`
+        ? `Angle: ${variationData.angle}. Style: ${variationData.style || 'N/A'}. Theological Emphasis: ${variationData.theologicalEmphasis || 'N/A'}. Audience Focus: ${variationData.audienceFocus || 'N/A'}. Structure: ${variationData.sermonStructure || 'N/A'}. Keep this outline distinct in tone and structure.`
         : `Outline variation ${i + 1} with a distinct angle and tone.`;
       const prompt = this.buildOutlineFromPointsPrompt(workspace, points, variation, reportText);
-      const response = await this.llmService.generateCompletion(prompt, userId, {
+      let response = await this.llmService.generateCompletion(prompt, userId, {
         temperature: 0.9,
         maxTokens: 2200,
       });
@@ -406,6 +457,47 @@ Return as JSON with these section keys.`;
       outlineData = outlineData ? this.normalizeOutlineData(outlineData) : null;
       if (!outlineData) {
         outlineData = this.parseOutlineFromResponse(response);
+      }
+      if (!outlineData) {
+        outlineData = this.normalizeOutlineData({
+          introduction: '',
+          points,
+          conclusion: '',
+          callToAction: '',
+        });
+      }
+
+      // Diversity guard: if generated outline points are too similar to previous outlines, regenerate once.
+      const currentPoints = this.extractOutlinePointTexts(outlineData || {});
+      let currentSignature = this.buildPointSignature(currentPoints);
+      if (currentSignature && this.isSignatureTooSimilar(currentSignature, generatedPointSignatures)) {
+        const diversityPrompt = `${prompt}\n\nIMPORTANT: Previous options are too similar. Regenerate with significantly different point wording, progression, and framing.`;
+        response = await this.llmService.generateCompletion(diversityPrompt, userId, {
+          temperature: 1.0,
+          maxTokens: 2200,
+        });
+        this.logLlmOutput('outline:diversity-regenerate', response);
+        let retriedOutlineData = this.parseJsonSafe(response);
+        retriedOutlineData = retriedOutlineData ? this.normalizeOutlineData(retriedOutlineData) : null;
+        if (!retriedOutlineData) {
+          retriedOutlineData = this.parseOutlineFromResponse(response);
+        }
+        if (!retriedOutlineData) {
+          retriedOutlineData = this.normalizeOutlineData({
+            introduction: '',
+            points,
+            conclusion: '',
+            callToAction: '',
+          });
+        }
+        if (retriedOutlineData) {
+          outlineData = retriedOutlineData;
+          const retriedPoints = this.extractOutlinePointTexts(outlineData || {});
+          currentSignature = this.buildPointSignature(retriedPoints);
+        }
+      }
+      if (currentSignature) {
+        generatedPointSignatures.add(currentSignature);
       }
 
       const outline = this.outlineRepository.create({
@@ -453,7 +545,7 @@ Return as JSON with these section keys.`;
     const workspace = await this.findOne(workspaceId, userId);
     await this.applicationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
-    const mainPoints = Array.isArray(outline?.structure?.points) ? outline.structure.points : [];
+    const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
     const audienceTypes = [
       'youth',
       'new_believers',
@@ -521,7 +613,7 @@ Return as JSON with these section keys.`;
     const workspace = await this.findOne(workspaceId, userId);
     await this.illustrationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
-    const mainPoints = Array.isArray(outline?.structure?.points) ? outline.structure.points : [];
+    const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
     const prompt = promptOverride || this.buildIllustrationsPrompt(workspace, mainPoints);
     const response = await this.llmService.generateCompletion(prompt, userId);
     this.logLlmOutput('illustrations', response);
@@ -749,13 +841,13 @@ Return as JSON with these section keys.`;
 
     if (type === 'applications') {
       const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
-      const mainPoints = Array.isArray(outline?.structure?.points) ? outline.structure.points : [];
+      const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
       return this.buildApplicationsPrompt(workspace, mainPoints, '{{audienceType}}');
     }
 
     if (type === 'illustrations') {
       const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
-      const mainPoints = Array.isArray(outline?.structure?.points) ? outline.structure.points : [];
+      const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
       return this.buildIllustrationsPrompt(workspace, mainPoints);
     }
 

@@ -3,6 +3,37 @@
  */
 
 export class WorkspaceHelpers {
+  static pointText(point: any): string {
+    if (typeof point === 'string') return point.trim();
+    if (!point || typeof point !== 'object') return '';
+    return String(point.title || point.text || point.content || '').trim();
+  }
+
+  static asStringArray(value: any, limit: number = 20): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item) => WorkspaceHelpers.pointText(item))
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, limit);
+  }
+
+  static extractOutlinePointTexts(structure: any): string[] {
+    if (!structure || typeof structure !== 'object') return [];
+    const points = WorkspaceHelpers.asStringArray(structure.points, 24);
+    if (points.length > 0) return points;
+
+    if (Array.isArray(structure.pointNodes)) {
+      const fromNodes = WorkspaceHelpers.asStringArray(
+        structure.pointNodes.map((node: any) => node?.title || node?.text || node?.content || ''),
+        24,
+      );
+      if (fromNodes.length > 0) return fromNodes;
+    }
+
+    return WorkspaceHelpers.asStringArray(structure.mainPoints, 24);
+  }
+
   static parseJsonSafe(text: string): any {
     try {
       // Try to extract JSON from markdown code blocks
@@ -34,9 +65,16 @@ export class WorkspaceHelpers {
   }
 
   static parseOutlinePointsResponse(text: string, count: number): any[] {
-    const parsed = this.parseJsonSafe(text);
+    const parsed = WorkspaceHelpers.parseJsonSafe(text);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed.slice(0, count);
+      return parsed.slice(0, count).map((variation: any, idx: number) => ({
+        angle: variation?.angle || `Variation ${idx + 1}`,
+        style: variation?.style || variation?.outlineType || '',
+        theologicalEmphasis: variation?.theologicalEmphasis || '',
+        audienceFocus: variation?.audienceFocus || '',
+        sermonStructure: variation?.sermonStructure || '',
+        points: WorkspaceHelpers.asStringArray(variation?.points || variation?.mainPoints, 8),
+      }));
     }
     
     // Fallback: try to parse variations manually
@@ -44,10 +82,14 @@ export class WorkspaceHelpers {
     const sections = text.split(/Variation \d+:|Option \d+:/i);
     
     for (let i = 1; i < Math.min(sections.length, count + 1); i++) {
-      const points = this.parseListFromResponse(sections[i]).slice(0, 5);
+      const points = WorkspaceHelpers.parseListFromResponse(sections[i]).slice(0, 5);
       if (points.length > 0) {
         variations.push({
           angle: `Variation ${i}`,
+          style: '',
+          theologicalEmphasis: '',
+          audienceFocus: '',
+          sermonStructure: '',
           points
         });
       }
@@ -83,11 +125,35 @@ export class WorkspaceHelpers {
 
   static normalizeOutlineData(data: any): any {
     if (!data) return null;
-    
+    const normalizedPoints = WorkspaceHelpers.extractOutlinePointTexts(data);
+
+    const pointNodes = Array.isArray(data.pointNodes)
+      ? data.pointNodes
+          .map((point: any, idx: number) => ({
+            id: String(point?.id || `point-${idx + 1}`),
+            level: Number(point?.level) || 1,
+            title: WorkspaceHelpers.pointText(point),
+            summary: typeof point?.summary === 'string' ? point.summary.trim() : '',
+            movement: typeof point?.movement === 'string' ? point.movement.trim() : '',
+            supportingVerses: WorkspaceHelpers.asStringArray(point?.supportingVerses || point?.verses, 10),
+            canonicalThemes: WorkspaceHelpers.asStringArray(point?.canonicalThemes || point?.themes, 8),
+            crossReferences: WorkspaceHelpers.asStringArray(point?.crossReferences || point?.crossRefs, 10),
+            subpoints: WorkspaceHelpers.asStringArray(point?.subpoints || point?.children, 10),
+            illustrationIdeas: WorkspaceHelpers.asStringArray(point?.illustrationIdeas || point?.illustrations, 6),
+            mediaSuggestions: WorkspaceHelpers.asStringArray(point?.mediaSuggestions || point?.media, 6),
+            notes: typeof point?.notes === 'string' ? point.notes.trim() : '',
+          }))
+          .filter((point: any) => point.title)
+      : [];
+
     return {
       introduction: data.introduction || data.intro || '',
-      points: Array.isArray(data.points) ? data.points : 
-              Array.isArray(data.mainPoints) ? data.mainPoints : [],
+      points: normalizedPoints,
+      pointNodes,
+      outlineType: data.outlineType || data.style || '',
+      sermonMovement: data.sermonMovement || data.movement || '',
+      slidePlan: WorkspaceHelpers.asStringArray(data.slidePlan || data.slides, 20),
+      workflowTags: WorkspaceHelpers.asStringArray(data.workflowTags || data.pipelineTags, 12),
       conclusion: data.conclusion || '',
       callToAction: data.callToAction || data.call_to_action || data.cta || ''
     };

@@ -5,6 +5,7 @@ import { BlindSpotAnalysis } from '../../entities/blind-spot-analysis.entity';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
+import { WorkspaceHelpers } from '../workspaces/helpers';
 
 @Injectable()
 export class BlindSpotDetectorService {
@@ -35,9 +36,7 @@ export class BlindSpotDetectorService {
       : '';
 
     const outline = workspace.outlines?.[0];
-    const outlinePoints = Array.isArray(outline?.structure?.points) 
-      ? outline.structure.points 
-      : [];
+    const outlinePoints = WorkspaceHelpers.extractOutlinePointTexts(outline?.structure || {});
 
     const applications = workspace.applications || [];
     const applicationTexts = applications.map(a => a.content).join('\n');
@@ -47,7 +46,7 @@ export class BlindSpotDetectorService {
 PASSAGE: ${workspace.mainPassage}
 TEXT: ${passageText}
 
-SERMON OUTLINE: ${outlinePoints.map((p: any) => typeof p === 'string' ? p : p.title || p.text).join('\n')}
+SERMON OUTLINE: ${outlinePoints.join('\n')}
 APPLICATIONS: ${applicationTexts.substring(0, 800)}
 
 TASK: Identify what this sermon is NOT addressing:

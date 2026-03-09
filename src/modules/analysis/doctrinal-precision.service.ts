@@ -5,6 +5,7 @@ import { DoctrinalPrecisionCheck, DoctrinalCategory } from '../../entities/doctr
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
+import { WorkspaceHelpers } from '../workspaces/helpers';
 
 @Injectable()
 export class DoctrinalPrecisionService {
@@ -37,9 +38,7 @@ export class DoctrinalPrecisionService {
     const manuscript = workspace.manuscripts?.[0];
     const manuscriptText = manuscript?.content?.text || '';
     const outline = workspace.outlines?.[0];
-    const outlinePoints = Array.isArray(outline?.structure?.points) 
-      ? outline.structure.points 
-      : [];
+    const outlinePoints = WorkspaceHelpers.extractOutlinePointTexts(outline?.structure || {});
 
     const prompt = `You are a Seventh-day Adventist theological guard, ensuring doctrinal precision and consistency.
 
@@ -47,7 +46,7 @@ PASSAGE: ${workspace.mainPassage}
 TEXT: ${passageText}
 
 SERMON THEME: ${workspace.theme || 'Not specified'}
-OUTLINE: ${outlinePoints.map((p: any) => typeof p === 'string' ? p : p.title || p.text).join('\n')}
+OUTLINE: ${outlinePoints.join('\n')}
 MANUSCRIPT EXCERPT: ${manuscriptText.substring(0, 1200)}
 
 TASK: Check doctrinal consistency in these categories:
