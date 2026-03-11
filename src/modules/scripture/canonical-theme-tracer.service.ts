@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
+import { parseJsonObjectFromLlm } from './json-response.util';
 
 export interface ThemeThread {
   theme: string;
@@ -49,17 +50,40 @@ export class CanonicalThemeTracerService {
       }
 
       const prompt = this.buildPrompt(reference, passageText, language);
-      const response = await this.llmService.generateCompletion(
-        prompt,
-        userId || 'system',
-        {
-          temperature: 0.4,
-          maxTokens: 1600,
-        }
-      );
 
-      const parsed = this.parseResponse(response, reference);
-      return parsed;
+      let lastParseError: Error | null = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const attemptPrompt =
+          attempt === 1
+            ? prompt
+            : `${prompt}\n\nCRITICAL: Your previous response was invalid or truncated JSON. Return compact valid JSON only.`;
+        const response = await this.llmService.generateCompletion(
+          attemptPrompt,
+          userId || 'system',
+          {
+            temperature: 0.3,
+            maxTokens: 1800,
+          }
+        );
+
+        try {
+          const parsed = this.parseResponse(response, reference);
+          if (parsed.dataSource === 'llm-generated' && parsed.themes.length > 0) {
+            return parsed;
+          }
+        } catch (error: any) {
+          lastParseError = error;
+        }
+      }
+
+      if (lastParseError) {
+        console.error('Canonical themes parse failed after retries:', lastParseError.message);
+      }
+      return {
+        passage: reference,
+        themes: [],
+        dataSource: 'unavailable',
+      };
     } catch (error) {
       console.error('Error generating canonical themes:', error);
       return {
@@ -116,66 +140,7 @@ Rules:
 
   private parseResponse(response: string, reference: string): CanonicalThemesResponse {
     try {
-      // Extract JSON from response - try multiple patterns
-      let jsonStr = '';
-      
-      // Try to find JSON block with code fence
-      const codeBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-      if (codeBlockMatch) {
-        jsonStr = codeBlockMatch[1];
-      } else {
-        // Try to find raw JSON object - be greedy to catch truncated responses
-        const jsonMatch = response.match(/\{[\s\S]*$/);
-        if (jsonMatch) {
-          jsonStr = jsonMatch[0];
-        } else {
-          throw new Error('No JSON found in response');
-        }
-      }
-
-      // Repair truncated JSON by closing unclosed structures
-      const openBraces = (jsonStr.match(/\{/g) || []).length;
-      const closeBraces = (jsonStr.match(/\}/g) || []).length;
-      const openBrackets = (jsonStr.match(/\[/g) || []).length;
-      const closeBrackets = (jsonStr.match(/\]/g) || []).length;
-      
-      // Close unclosed strings first
-      const quoteCount = (jsonStr.match(/(?<!\\)"/g) || []).length;
-      if (quoteCount % 2 !== 0) {
-        jsonStr += '"';
-      }
-      
-      // Close unclosed arrays
-      for (let i = 0; i < openBrackets - closeBrackets; i++) {
-        jsonStr += ']';
-      }
-      
-      // Close unclosed objects
-      for (let i = 0; i < openBraces - closeBraces; i++) {
-        jsonStr += '}';
-      }
-
-      // Clean up common JSON issues from LLM responses
-      jsonStr = jsonStr
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
-        .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-        .replace(/,\s*$/, '') // Remove trailing comma at end
-        .trim();
-
-      let parsed: any;
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch (parseError) {
-        console.error('First parse attempt failed:', parseError.message);
-        console.error('JSON string:', jsonStr.substring(0, 500));
-        
-        // Try to fix common issues and parse again
-        jsonStr = jsonStr
-          .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3') // Quote unquoted keys
-          .replace(/:\s*'([^']*)'/g, ': "$1"'); // Replace single quotes with double quotes
-        
-        parsed = JSON.parse(jsonStr);
-      }
+      const parsed: any = parseJsonObjectFromLlm(response);
 
       // Handle Spanish field names (temas instead of themes)
       const themesArray = parsed.themes || parsed.temas;
@@ -218,11 +183,7 @@ Rules:
     } catch (error) {
       console.error('Error parsing canonical themes response:', error);
       console.error('Raw response:', response.substring(0, 500));
-      return {
-        passage: reference,
-        themes: [],
-        dataSource: 'unavailable',
-      };
+      throw error;
     }
   }
 

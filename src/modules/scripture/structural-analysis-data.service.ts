@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
+import { parseJsonObjectFromLlm } from './json-response.util';
 
 export interface StructuralAnalysis {
   passage: string;
@@ -140,44 +141,37 @@ Guidelines:
 - Parallelism is optional - only include if clearly present
 - Return ONLY valid JSON, no markdown or extra text`;
 
-    console.log(`[StructuralAnalysis] Calling LLM for passage: ${passage}`);
-    const response = await this.llmService.generateCompletion(prompt, 'system', {
-      temperature: 0.3,
-      maxTokens: 1500, // Increased for Spanish responses
-    });
+    let parsed: any = null;
+    let lastParseError: Error | null = null;
 
-    console.log(`[StructuralAnalysis] LLM response length: ${response.length} chars`);
-    console.log(`[StructuralAnalysis] Response preview: ${response.substring(0, 200)}...`);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const attemptPrompt =
+        attempt === 1
+          ? prompt
+          : `${prompt}\n\nCRITICAL: Your previous response was invalid JSON. Return compact valid JSON only. No comments, no prose, no markdown.`;
 
-    // Extract JSON from response - handle markdown code blocks or extra text
-    let jsonStr = response.trim();
-    
-    // Try to extract JSON from markdown code block
-    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-    if (codeBlockMatch) {
-      console.log('[StructuralAnalysis] Extracted JSON from markdown code block');
-      jsonStr = codeBlockMatch[1];
-    } else {
-      // Try to find raw JSON object
-      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        console.log('[StructuralAnalysis] Extracted JSON from raw response');
-        jsonStr = jsonMatch[0];
-      } else {
-        console.error('[StructuralAnalysis] No JSON found in response');
+      console.log(`[StructuralAnalysis] Calling LLM for passage: ${passage} (attempt ${attempt})`);
+      const response = await this.llmService.generateCompletion(attemptPrompt, 'system', {
+        temperature: 0.2,
+        maxTokens: 1600,
+      });
+
+      console.log(`[StructuralAnalysis] LLM response length: ${response.length} chars`);
+      console.log(`[StructuralAnalysis] Response preview: ${response.substring(0, 200)}...`);
+
+      try {
+        parsed = parseJsonObjectFromLlm(response);
+        console.log('[StructuralAnalysis] Successfully parsed JSON');
+        break;
+      } catch (parseError: any) {
+        lastParseError = parseError;
+        console.error('[StructuralAnalysis] Failed to parse JSON:', parseError.message);
+        console.error('[StructuralAnalysis] Full response:', response);
       }
     }
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(jsonStr);
-      console.log('[StructuralAnalysis] Successfully parsed JSON');
-    } catch (parseError) {
-      console.error('[StructuralAnalysis] Failed to parse JSON:', parseError.message);
-      console.error('[StructuralAnalysis] JSON string length:', jsonStr.length);
-      console.error('[StructuralAnalysis] JSON snippet:', jsonStr.substring(0, 500));
-      console.error('[StructuralAnalysis] Full response:', response);
-      throw new Error(`JSON parse failed: ${parseError.message}`);
+    if (!parsed) {
+      throw new Error(`JSON parse failed after retries: ${lastParseError?.message || 'unknown error'}`);
     }
 
     // Handle Spanish field names

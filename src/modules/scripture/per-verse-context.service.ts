@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
+import { parseJsonObjectFromLlm } from './json-response.util';
 
 export interface PerVerseContext {
   reference: string;
@@ -139,23 +140,7 @@ Reglas:
 
     let parsed: any;
     try {
-      // Extract JSON from response - handle markdown code blocks
-      let jsonStr = response.trim();
-      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*({[\s\S]*?})\s*```/);
-      if (codeBlockMatch) {
-        jsonStr = codeBlockMatch[1];
-      } else {
-        const jsonMatch = jsonStr.match(/{[\s\S]*}/);
-        if (jsonMatch) {
-          jsonStr = jsonMatch[0];
-        }
-      }
-      jsonStr = jsonStr
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
-        .replace(/,\s*([}\]])/g, '$1')
-        .trim();
-
-      parsed = JSON.parse(jsonStr);
+      parsed = parseJsonObjectFromLlm(response);
     } catch (error) {
       console.error('Failed to parse per-verse context response:', error);
       console.error('Raw response:', response);

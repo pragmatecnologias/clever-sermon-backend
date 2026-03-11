@@ -756,6 +756,71 @@ Rules:
 - No tables, no pipes, no markdown, no headings, no extra commentary.`;
   }
 
+  buildMediaSuggestionsPrompt(
+    workspace: SermonWorkspace,
+    passageText: string,
+    studyInputs: any,
+    reportSections: Record<string, any>,
+    existingPrompts: string[] = [],
+  ) {
+    const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
+    const contextJson = this.compactJsonForPrompt(
+      {
+        workspace: {
+          title: workspace.title,
+          mainPassage: workspace.mainPassage,
+          theme: workspace.theme || '',
+          audienceProfile: workspace.audienceProfile || '',
+          sermonGoals: workspace.sermonGoals || '',
+          language: workspace.language || 'en',
+        },
+        passageText,
+        reportSections: {
+          passageOverview: this.asString(reportSections?.passageOverview),
+          exegeticalFlow: Array.isArray(reportSections?.exegeticalFlow) ? reportSections.exegeticalFlow : [],
+          theologicalThemes: Array.isArray(reportSections?.theologicalThemes) ? reportSections.theologicalThemes : [],
+          pastoralImplications: reportSections?.pastoralImplications || null,
+          structureOfPassage: Array.isArray(reportSections?.structureOfPassage)
+            ? reportSections.structureOfPassage
+            : [],
+        },
+        studyInputs: {
+          cachedStudySections: studyInputs?.cachedStudySections || {},
+          referenceData: studyInputs?.referenceData || {},
+        },
+        existingPrompts,
+      },
+      12000,
+    );
+
+    return `You are a sermon media director.
+
+Generate high-quality, production-ready media suggestions for sermon preparation.
+
+Language: ${languageLabel}
+Context:
+${contextJson}
+
+Return ONLY valid JSON in this exact shape:
+{
+  "mediaSuggestions": [
+    {
+      "type": "Presentación|Visual Principal|Audio / Voz|Canto Tema|Video|Social / Promoción",
+      "intent": "short intent label",
+      "prompt": "final production prompt"
+    }
+  ]
+}
+
+Rules:
+- Generate 5-8 suggestions total.
+- Every suggestion must be concrete and usable as a prompt, not abstract advice.
+- Prompts must be context-grounded in the passage, theological focus, and audience.
+- Prefer one suggestion per core media type: slides, image, narration/audio, song, video, social promo.
+- Keep "intent" short (2-6 words).
+- No markdown, no prose outside JSON, no code fences.`;
+  }
+
   private compactJsonForPrompt(value: any, maxChars: number = 6000): string {
     try {
       const text = JSON.stringify(value, null, 2);
@@ -1165,6 +1230,33 @@ Rules:
     };
   }
 
+  private normalizeMediaSuggestionCards(value: any, limit = 8): Array<{ type: string; intent: string; prompt: string }> {
+    if (!Array.isArray(value)) return [];
+    const cards: Array<{ type: string; intent: string; prompt: string }> = [];
+    for (const item of value) {
+      if (typeof item === 'string') {
+        const prompt = this.asString(item);
+        if (!prompt) continue;
+        cards.push({
+          type: 'Media',
+          intent: 'Study prompt',
+          prompt,
+        });
+        continue;
+      }
+      const type = this.asString(item?.type || item?.label || item?.name);
+      const intent = this.asString(item?.intent || item?.category || item?.purpose);
+      const prompt = this.asString(item?.prompt || item?.text || item?.content || item?.description);
+      if (!prompt) continue;
+      cards.push({
+        type: type || 'Media',
+        intent: intent || 'Study prompt',
+        prompt,
+      });
+    }
+    return cards.slice(0, limit);
+  }
+
   private normalizeStudyAssets(source: any, structureOfPassage: any[], workspace?: SermonWorkspace) {
     const movementSource = Array.isArray(source?.studyAssets?.movementAssets)
       ? source.studyAssets.movementAssets
@@ -1254,13 +1346,20 @@ Rules:
       }
     }
 
+    const mediaSuggestionCards = this.normalizeMediaSuggestionCards(
+      categorySource?.mediaSuggestionCards || source?.mediaSuggestionCards || categorySource?.mediaSuggestions || source?.mediaSuggestions,
+      12,
+    );
+    const mediaSuggestions = this.asStringArray(categorySource?.mediaSuggestions || categorySource?.media || source?.mediaSuggestions, 12);
+
     return {
       movementAssets,
       categoryAssets: {
         applications: this.asStringArray(categorySource?.applications || source?.applications, 12),
         discussionQuestions: this.asStringArray(categorySource?.discussionQuestions || categorySource?.questions || source?.discussionQuestions, 12),
         illustrationIdeas: this.asStringArray(categorySource?.illustrationIdeas || categorySource?.illustrations || source?.illustrationIdeas, 12),
-        mediaSuggestions: this.asStringArray(categorySource?.mediaSuggestions || categorySource?.media || source?.mediaSuggestions, 12),
+        mediaSuggestions: mediaSuggestions.length ? mediaSuggestions : mediaSuggestionCards.map((item) => item.prompt).slice(0, 12),
+        mediaSuggestionCards,
         egwSupport: normalizedEgw.slice(0, 10),
         references: normalizedReferences,
       },
@@ -1459,11 +1558,63 @@ Rules:
 
     const pastoralImplicationsRaw = source.pastoralImplications || source.practicalApplications || source.applications;
     const pastoralImplications = (() => {
+      const pickFirstList = (...values: any[]): string[] => {
+        for (const value of values) {
+          const parsed = this.asStringArray(value, 6);
+          if (parsed.length) return parsed;
+        }
+        return [];
+      };
       if (pastoralImplicationsRaw && typeof pastoralImplicationsRaw === 'object' && !Array.isArray(pastoralImplicationsRaw)) {
+        const personalLife = pickFirstList(
+          (pastoralImplicationsRaw as any).personalLife,
+          (pastoralImplicationsRaw as any).personal,
+          (pastoralImplicationsRaw as any).vidaPersonal,
+          (pastoralImplicationsRaw as any).individualLife,
+        );
+        const churchLife = pickFirstList(
+          (pastoralImplicationsRaw as any).churchLife,
+          (pastoralImplicationsRaw as any).churchApplication,
+          (pastoralImplicationsRaw as any).communityLife,
+          (pastoralImplicationsRaw as any).congregationalLife,
+          (pastoralImplicationsRaw as any).communalLife,
+          (pastoralImplicationsRaw as any).vidaIglesia,
+          (pastoralImplicationsRaw as any).iglesia,
+        );
+        const mission = pickFirstList(
+          (pastoralImplicationsRaw as any).mission,
+          (pastoralImplicationsRaw as any).missional,
+          (pastoralImplicationsRaw as any).missionApplication,
+          (pastoralImplicationsRaw as any).outreach,
+          (pastoralImplicationsRaw as any).evangelism,
+          (pastoralImplicationsRaw as any).mision,
+        );
+        const combined = Array.from(
+          new Set([
+            ...this.asStringArray((pastoralImplicationsRaw as any).implications, 12),
+            ...this.asStringArray((pastoralImplicationsRaw as any).applications, 12),
+            ...personalLife,
+            ...churchLife,
+            ...mission,
+          ]),
+        );
+        const fillMissing = (items: string[], used: Set<string>) => {
+          if (items.length) {
+            items.forEach((item) => used.add(item));
+            return items.slice(0, 6);
+          }
+          let fill = combined.filter((item) => !used.has(item)).slice(0, 6);
+          if (!fill.length && combined.length) {
+            fill = combined.slice(0, 6);
+          }
+          fill.forEach((item) => used.add(item));
+          return fill;
+        };
+        const used = new Set<string>();
         return {
-          personalLife: this.asStringArray((pastoralImplicationsRaw as any).personalLife, 6),
-          churchLife: this.asStringArray((pastoralImplicationsRaw as any).churchLife, 6),
-          mission: this.asStringArray((pastoralImplicationsRaw as any).mission, 6),
+          personalLife: fillMissing(personalLife, used),
+          churchLife: fillMissing(churchLife, used),
+          mission: fillMissing(mission, used),
         };
       }
       const flat = this.asStringArray(pastoralImplicationsRaw, 12);
@@ -1893,6 +2044,94 @@ Rules:
     const savedReport = await this.studyReportRepository.save(report);
     await this.syncStudyAssetRecords(workspaceId, mergedSections.studyAssets);
     return savedReport;
+  }
+
+  async generateMediaSuggestions(
+    workspaceId: string,
+    userId: string,
+    promptOverride?: string,
+  ): Promise<SermonStudyReport> {
+    const workspace = await this.findOne(workspaceId, userId);
+    const mainPassage = await this.scriptureService.getPassage(workspace.mainPassage);
+    const passageText = Array.isArray(mainPassage?.verses)
+      ? mainPassage.verses.map((verse: any) => `${verse.reference} ${verse.text}`).join('\n')
+      : JSON.stringify(mainPassage || {});
+    const studyInputs = await this.buildStudyReportInputContext(workspace, passageText);
+    const latestReport = workspace.studyReports?.[0] || null;
+    const latestSections = latestReport?.sections || {};
+    const normalizedSections = this.normalizeStudyReportSections(
+      Object.keys(latestSections).length ? latestSections : this.buildStudyReportBaseSections(studyInputs),
+    );
+    const existingAssets = this.normalizeStudyAssets(
+      {
+        ...normalizedSections,
+        studyAssets: latestSections?.studyAssets || null,
+      },
+      normalizedSections?.structureOfPassage || [],
+      workspace,
+    );
+
+    const existingPrompts = this.asStringArray(existingAssets?.categoryAssets?.mediaSuggestions, 12);
+    const prompt =
+      promptOverride ||
+      this.buildMediaSuggestionsPrompt(workspace, passageText, studyInputs, normalizedSections, existingPrompts);
+    const response = await this.llmService.generateCompletion(prompt, userId, {
+      temperature: 0.35,
+      maxTokens: 1800,
+    });
+    this.logLlmOutput('media-suggestions', response);
+
+    const parsed = this.parseJsonSafe(response);
+    const rawSuggestions = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.mediaSuggestions)
+        ? parsed.mediaSuggestions
+        : Array.isArray(parsed?.suggestions)
+          ? parsed.suggestions
+          : [];
+
+    let mediaSuggestionCards = this.normalizeMediaSuggestionCards(rawSuggestions, 12);
+    if (!mediaSuggestionCards.length) {
+      mediaSuggestionCards = this.parseListFromResponse(response)
+        .map((item) => ({
+          type: 'Media',
+          intent: 'Study prompt',
+          prompt: this.asString(item),
+        }))
+        .filter((item) => item.prompt)
+        .slice(0, 12);
+    }
+
+    const mergedAssets = {
+      ...existingAssets,
+      categoryAssets: {
+        ...(existingAssets?.categoryAssets || {}),
+        mediaSuggestionCards,
+        mediaSuggestions: mediaSuggestionCards.map((item) => item.prompt).slice(0, 12),
+      },
+    };
+
+    const mergedSections = {
+      ...normalizedSections,
+      egw: studyInputs?.egwSection || normalizedSections?.egw || null,
+      studyAssets: mergedAssets,
+    };
+
+    let persistedReport: SermonStudyReport;
+    if (latestReport) {
+      latestReport.sections = mergedSections;
+      latestReport.rawResponse = null;
+      persistedReport = await this.studyReportRepository.save(latestReport);
+    } else {
+      const created = this.studyReportRepository.create({
+        workspaceId,
+        sections: mergedSections,
+        rawResponse: null,
+      });
+      persistedReport = await this.studyReportRepository.save(created);
+    }
+
+    return persistedReport;
   }
 
   async validateCitations(workspaceId: string, userId: string, translationCode: string = 'KJV') {

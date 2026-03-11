@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
+import { parseJsonObjectFromLlm } from './json-response.util';
 
 export interface PassageSummaryData {
   passage: string;
@@ -93,42 +94,7 @@ Be concise, theologically precise, and pastor-focused.`;
 
   private parseResponse(response: string, reference: string): PassageSummaryData {
     try {
-      // Extract JSON from response - try multiple patterns
-      let jsonStr = '';
-      
-      // Try to find JSON block with code fence
-      const codeBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-      if (codeBlockMatch) {
-        jsonStr = codeBlockMatch[1];
-      } else {
-        // Try to find raw JSON object
-        const jsonMatch = response.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          jsonStr = jsonMatch[0];
-        } else {
-          throw new Error('No JSON found in response');
-        }
-      }
-
-      // Clean up common JSON issues from LLM responses
-      jsonStr = jsonStr
-        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
-        .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-        .trim();
-
-      let parsed: any;
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch (parseError) {
-        // Try to fix common issues and parse again
-        jsonStr = jsonStr
-          .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3') // Quote unquoted keys
-          .replace(/:\s*'([^']*)'/g, ': "$1"') // Replace single quotes with double quotes
-          .replace(/\n/g, '\\n') // Escape newlines in strings
-          .replace(/\t/g, '\\t'); // Escape tabs in strings
-        
-        parsed = JSON.parse(jsonStr);
-      }
+      const parsed: any = parseJsonObjectFromLlm(response);
 
       // Handle Spanish field names
       return {

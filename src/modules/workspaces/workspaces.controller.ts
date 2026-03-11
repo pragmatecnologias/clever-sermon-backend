@@ -127,6 +127,15 @@ export class WorkspacesController {
     return this.workspacesService.generateStudyReport(id, req.user.userId);
   }
 
+  @Post(':id/media-suggestions')
+  generateMediaSuggestions(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('promptOverride') promptOverride?: string,
+  ) {
+    return this.workspacesService.generateMediaSuggestions(id, req.user.userId, promptOverride);
+  }
+
   @Post(':id/socratic-coach')
   async generateSocraticCoach(
     @Param('id') id: string,
