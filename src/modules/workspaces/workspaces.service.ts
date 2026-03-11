@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { SermonOutline } from '../../entities/sermon-outline.entity';
 import { SermonManuscript } from '../../entities/sermon-manuscript.entity';
-import { SermonApplication } from '../../entities/sermon-application.entity';
+import { AudienceType, SermonApplication } from '../../entities/sermon-application.entity';
 import { DiscussionQuestion } from '../../entities/discussion-question.entity';
 import { SermonIllustration } from '../../entities/sermon-illustration.entity';
 import { SermonCitation } from '../../entities/sermon-citation.entity';
@@ -354,13 +354,14 @@ Rules:
     return workspace;
   }
 
-  buildIllustrationsPrompt(workspace: SermonWorkspace, mainPoints: string[]) {
+  buildIllustrationsPrompt(workspace: SermonWorkspace, mainPoints: string[], seededIdeas: string[] = []) {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     return `Generate 3-5 sermon illustrations based on:
 Title: ${workspace.title}
 Main Passage: ${workspace.mainPassage}
 Theme: ${workspace.theme || 'N/A'}
 Main Points: ${mainPoints.join(', ') || 'N/A'}
+${seededIdeas.length ? `Existing study illustration ideas: ${seededIdeas.join(' | ')}` : ''}
 
 Write in ${languageLabel}.
 
@@ -518,8 +519,18 @@ Return ONLY valid JSON with this exact top-level shape:
       "supportingVerses": ["Book 1:1"],
       "canonicalThemes": ["string"],
       "crossReferences": ["Book 1:1"],
+      "applications": ["string"],
+      "discussionQuestions": ["string"],
       "illustrationIdeas": ["string"],
-      "mediaSuggestions": ["string"]
+      "mediaSuggestions": ["string"],
+      "egwSupport": [
+        {
+          "citation": "string",
+          "quote": "string",
+          "relevance": "string"
+        }
+      ],
+      "references": ["Book 1:1"]
     }
   ],
   "outlineType": "string",
@@ -531,6 +542,8 @@ Return ONLY valid JSON with this exact top-level shape:
 Rules:
 - "points" is required and canonical; it must contain 3-5 concise points.
 - "pointNodes" is optional enrichment aligned by index to "points".
+- Use study assets from the Study Report Context when present.
+- Keep applications, questions, illustration ideas, media suggestions, EGW support, and references tied to each point instead of treating them as separate tabs.
 - Ensure each point remains faithful to the passage and avoids drift.
 - Do not include markdown, prose outside JSON, or code fences.`;
   }
@@ -563,14 +576,26 @@ Rules:
     const outlinePoints = this.extractOutlinePointTexts(outlineStructure).slice(0, 8);
     const pointNodes = Array.isArray(outlineStructure?.pointNodes) ? outlineStructure.pointNodes.slice(0, 8) : [];
     const studyReport = workspace.studyReports?.[0]?.sections || {};
-    const applications = (workspace.applications || [])
-      .slice(0, 12)
-      .map((item: any) => this.asString(item?.content || item?.text))
-      .filter(Boolean);
-    const illustrations = (workspace.illustrations || [])
-      .slice(0, 12)
-      .map((item: any) => this.asString(item?.description || item?.content || item?.scenario))
-      .filter(Boolean);
+    const pointApplications = pointNodes.flatMap((point: any) => this.asStringArray(point?.applications, 4));
+    const pointIllustrations = pointNodes.flatMap((point: any) => this.asStringArray(point?.illustrationIdeas, 4));
+    const applications = Array.from(
+      new Set([
+        ...pointApplications,
+        ...(workspace.applications || [])
+          .slice(0, 12)
+          .map((item: any) => this.asString(item?.content || item?.text))
+          .filter(Boolean),
+      ]),
+    ).slice(0, 12);
+    const illustrations = Array.from(
+      new Set([
+        ...pointIllustrations,
+        ...(workspace.illustrations || [])
+          .slice(0, 12)
+          .map((item: any) => this.asString(item?.description || item?.content || item?.scenario))
+          .filter(Boolean),
+      ]),
+    ).slice(0, 12);
     const cachedCrossReferences = Array.isArray(cache?.crossReferences?.ranked)
       ? cache.crossReferences.ranked.slice(0, 16)
       : [];
@@ -682,7 +707,7 @@ Formatting rules:
   - Format: Full Manuscript|Preaching Notes.`;
   }
 
-  buildApplicationsPrompt(workspace: SermonWorkspace, mainPoints: string[], audienceType: string) {
+  buildApplicationsPrompt(workspace: SermonWorkspace, mainPoints: string[], audienceType: string, seededApplications: string[] = []) {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     const theologicalLens = workspace.theologicalLens || 'adventist';
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
@@ -694,6 +719,7 @@ Main Passage: ${workspace.mainPassage}
 Theme: ${workspace.theme || 'N/A'}
 Sermon Goals: ${workspace.sermonGoals || 'N/A'}
 Main Points: ${mainPoints.join(', ') || 'N/A'}
+${seededApplications.length ? `Existing study applications to refine: ${seededApplications.join(' | ')}` : ''}
 
 Write in ${languageLabel}.
 
@@ -706,7 +732,7 @@ Rules:
 - No tables, no pipes, no markdown, no headings, no extra commentary.`;
   }
 
-  buildDiscussionPrompt(workspace: SermonWorkspace) {
+  buildDiscussionPrompt(workspace: SermonWorkspace, seededQuestions: string[] = []) {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     const theologicalLens = workspace.theologicalLens || 'adventist';
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
@@ -722,6 +748,7 @@ Sermon Goals: ${workspace.sermonGoals || 'N/A'}
 Write in ${languageLabel}.
 
 Provide 5-7 thought-provoking questions that encourage deep reflection and application.
+${seededQuestions.length ? `\nUse and sharpen these existing study questions when helpful:\n${seededQuestions.map((item, idx) => `${idx + 1}. ${item}`).join('\n')}` : ''}
 
 Rules:
 - Return ONLY a numbered list (1., 2., 3., etc.).
@@ -744,10 +771,24 @@ Rules:
     return match?.[1]?.trim() || String(reference || '').trim();
   }
 
+  private describeCrossReferenceCategory(category: string): string {
+    const normalized = this.asString(category).toLowerCase();
+    if (normalized === 'quotation') return 'This passage is linked by direct quotation or strong verbal overlap.';
+    if (normalized === 'typology') return 'This passage mirrors the same pattern or biblical type.';
+    if (normalized === 'prophetic_fulfillment') return 'This passage advances a prophecy-to-fulfillment connection.';
+    if (normalized === 'narrative_continuation') return 'This passage continues the same storyline or redemptive movement.';
+    if (normalized === 'interpretive_tension') return 'This passage sharpens the same theological tension or interpretive issue.';
+    if (normalized === 'lexical') return 'This passage shares important wording or key terms with the main text.';
+    if (normalized === 'thematic') return 'This passage develops the same theological theme from another angle.';
+    return 'This passage supports the same theme or doctrinal movement in the study.';
+  }
+
   private async buildStudyReportInputContext(workspace: SermonWorkspace, passageText: string) {
     const reference = workspace.mainPassage;
     const book = this.extractBookFromReference(reference);
     const cache = workspace.scriptureCache || {};
+    const egwReference = this.parseReferenceForEgw(reference);
+    const includeEgw = Boolean((workspace as any)?.egwEnabled || workspace?.metadata?.egwEnabled);
 
     const [bookMetadata, historicalContext, culturalContext, timeline, crossReferences, crossReferenceDetails] = await Promise.all([
       this.scriptureService.getBookMetadata(book).catch(() => null),
@@ -761,16 +802,49 @@ Rules:
     const xrefCategoryMap = new Map(
       (Array.isArray(crossReferenceDetails) ? crossReferenceDetails : []).map((item: any) => [
         String(item?.reference || ''),
-        String(item?.category || ''),
+        {
+          category: String(item?.category || ''),
+          connection: String(item?.connection || item?.explanation || item?.reason || ''),
+        },
+      ]),
+    );
+
+    const cachedRankedMap = new Map(
+      (Array.isArray(cache?.crossReferences?.ranked) ? cache.crossReferences.ranked : []).map((item: any) => [
+        String(item?.reference || ''),
+        {
+          category: String(item?.category || ''),
+          connection: String(item?.explanation || item?.connection || item?.reason || ''),
+        },
       ]),
     );
 
     const normalizedCrossReferences = (Array.isArray(crossReferences) ? crossReferences : [])
       .slice(0, 20)
-      .map((ref: string) => ({
-        reference: ref,
-        category: xrefCategoryMap.get(ref) || '',
-      }));
+      .map((ref: string) => {
+        const detailed = xrefCategoryMap.get(ref);
+        const cached = cachedRankedMap.get(ref);
+        const category = this.asString(detailed?.category || cached?.category || '');
+        const connection = this.asString(detailed?.connection || cached?.connection || this.describeCrossReferenceCategory(category));
+        return {
+          reference: ref,
+          category,
+          connection,
+        };
+      });
+
+    const egwSection =
+      includeEgw && egwReference
+        ? await this.egwStudyReportService
+            .generateStudyReportSection(
+              egwReference.book,
+              egwReference.chapter,
+              egwReference.verseStart,
+              egwReference.verseEnd,
+              true,
+            )
+            .catch(() => null)
+        : null;
 
     return {
       passage: {
@@ -800,11 +874,13 @@ Rules:
       },
       referenceData: {
         crossReferences: normalizedCrossReferences,
+        savedReferences: this.normalizeReferenceEntries(workspace.references || [], 20),
         bookMetadata,
         historicalContext,
         culturalContext,
         timeline,
       },
+      egwSection,
     };
   }
 
@@ -874,6 +950,46 @@ Return ONLY valid JSON with this exact shape:
     "personalLife": ["string"],
     "churchLife": ["string"],
     "mission": ["string"]
+  },
+  "studyAssets": {
+    "movementAssets": [
+      {
+        "movement": "string",
+        "verses": "string",
+        "summary": "string",
+        "applications": ["string"],
+        "discussionQuestions": ["string"],
+        "illustrationIdeas": ["string"],
+        "mediaSuggestions": ["string"],
+        "egwSupport": [
+          {
+            "citation": "string",
+            "quote": "string",
+            "relevance": "string"
+          }
+        ],
+        "references": ["string"]
+      }
+    ],
+    "categoryAssets": {
+      "applications": ["string"],
+      "discussionQuestions": ["string"],
+      "illustrationIdeas": ["string"],
+      "mediaSuggestions": ["string"],
+      "egwSupport": [
+        {
+          "citation": "string",
+          "quote": "string",
+          "relevance": "string"
+        }
+      ],
+      "references": [
+        {
+          "reference": "Book 1:1",
+          "context": "string"
+        }
+      ]
+    }
   }
 }
 
@@ -883,6 +999,8 @@ Rules:
 - "mainTheologicalClaim" must be one sentence and explicit.
 - "exegeticalFlow" must describe argument progression (not just outline labels).
 - "structureOfPassage" must include visible verse anchoring in "verses".
+- "studyAssets" must organize sermon material already grounded in the passage for later outline work.
+- Use saved references and EGW input when available instead of inventing generic assets.
 - For "crossReferences", always explain connection with a concrete reason.
 - For "interpretiveChallenges", provide at least 2 interpretationOptions when possible.
 - In "canonicalContext", show storyline movement (OT -> Christ/NT -> consummation) when applicable.
@@ -898,17 +1016,403 @@ Rules:
     return String(value).trim();
   }
 
+  private asStringArray(value: any, limit = 12): string[] {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.asString(item)).filter(Boolean).slice(0, limit);
+    }
+    if (typeof value === 'string') {
+      return this.parseListFromResponse(value).slice(0, limit);
+    }
+    return [];
+  }
+
+  private normalizeReferenceEntries(value: any, limit = 12) {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item: any) => {
+        if (typeof item === 'string') {
+          return { reference: this.asString(item), context: '', addedAt: '' };
+        }
+        return {
+          reference: this.asString(item?.reference || item?.label || item?.id),
+          context: this.asString(item?.context || item?.connection || item?.relevance),
+          addedAt: this.asString(item?.addedAt || ''),
+        };
+      })
+      .filter((item) => item.reference)
+      .slice(0, limit);
+  }
+
+  private buildStudyReportBaseSections(studyInputs: any): Record<string, any> {
+    const summary = studyInputs?.cachedStudySections?.passageSummary || {};
+    const verseContext = studyInputs?.cachedStudySections?.verseContext || {};
+    const structural = studyInputs?.cachedStudySections?.structuralAnalysis || {};
+    const challenges = studyInputs?.cachedStudySections?.interpretiveChallenges || {};
+    const canonical = studyInputs?.cachedStudySections?.canonicalThemes || {};
+    const synthesis = studyInputs?.cachedStudySections?.studySynthesis || {};
+    const wordStudy = studyInputs?.cachedStudySections?.wordStudy || {};
+    const referenceData = studyInputs?.referenceData || {};
+
+    const historicalNotes = Array.isArray(verseContext?.historical)
+      ? verseContext.historical.map((item: any) => this.asString(item?.note)).filter(Boolean)
+      : [];
+    const culturalNotes = Array.isArray(verseContext?.cultural)
+      ? verseContext.cultural.map((item: any) => this.asString(item?.note)).filter(Boolean)
+      : [];
+
+    const crossReferences = Array.isArray(referenceData?.crossReferences)
+      ? referenceData.crossReferences.slice(0, 8).map((item: any) => ({
+          reference: this.asString(item?.reference),
+          connection: this.asString(item?.connection || this.describeCrossReferenceCategory(item?.category)),
+          category: this.asString(item?.category || 'thematic'),
+          tier: 'secondary',
+        }))
+      : [];
+
+    const interpretiveChallenges = challenges?.challenge
+      ? [
+          {
+            question: this.asString(challenges.challenge),
+            interpretationOptions: Array.isArray(challenges?.views)
+              ? challenges.views.map((item: any) => this.asString(item?.summary || item?.viewName)).filter(Boolean).slice(0, 4)
+              : [],
+            preachingGuidance: this.asString(challenges?.sdaPerspective?.reasoning || ''),
+          },
+        ]
+      : [];
+
+    const canonicalThemes = Array.isArray(canonical?.themes)
+      ? canonical.themes.map((item: any) => this.asString(item?.theme)).filter(Boolean).slice(0, 8)
+      : [];
+
+    const keyTerms = Array.isArray(wordStudy?.insights)
+      ? wordStudy.insights.slice(0, 6).map((item: any) => ({
+          term: this.asString(item?.term || item?.word),
+          language: this.asString(item?.language || ''),
+          transliteration: this.asString(item?.transliteration || ''),
+          definition: this.asString(item?.definition || item?.gloss || ''),
+          nuance: this.asString(item?.nuance || item?.summary || ''),
+        }))
+      : [];
+
+    const allImplications = Array.from(
+      new Set(
+        [
+          ...this.asStringArray(synthesis?.personalApplication || [], 4),
+          ...this.asStringArray(synthesis?.churchApplication || [], 4),
+          ...this.asStringArray(synthesis?.missionApplication || [], 4),
+          ...this.asStringArray(synthesis?.applications || [], 8),
+          ...culturalNotes,
+        ].map((item) => item.trim()).filter(Boolean),
+      ),
+    ).slice(0, 9);
+
+    const personalLife = this.asStringArray(synthesis?.personalApplication || [], 4);
+    const churchLife = this.asStringArray(synthesis?.churchApplication || [], 4);
+    const mission = this.asStringArray(synthesis?.missionApplication || culturalNotes, 4);
+
+    const distributedImplications = {
+      personalLife: personalLife.length ? personalLife : allImplications.slice(0, 3),
+      churchLife: churchLife.length ? churchLife : allImplications.slice(3, 6),
+      mission: mission.length ? mission : allImplications.slice(6, 9),
+    };
+
+    return {
+      passageOverview: this.asString(summary?.summary || synthesis?.summary || ''),
+      literaryContext: this.asString(referenceData?.bookMetadata?.literaryType || referenceData?.bookMetadata?.genre || ''),
+      exegeticalFlow: this.asStringArray(summary?.movement || synthesis?.movement || [], 8),
+      exegeticalSummary: this.asString(synthesis?.summary || summary?.interpretiveCenter || ''),
+      structureOfPassage: Array.isArray(structural?.structure)
+        ? structural.structure.map((item: any) => ({
+            movement: this.asString(item?.description || item?.type),
+            verses: this.asString(item?.verses),
+            summary: this.asString(item?.description || item?.type),
+          }))
+        : [],
+      keyTerms,
+      historicalContext: [this.asString(referenceData?.historicalContext?.summary || ''), ...historicalNotes].filter(Boolean).join(' '),
+      canonicalContext: this.asString(
+        synthesis?.canonicalContext ||
+          (Array.isArray(canonical?.themes)
+            ? canonical.themes
+                .map((item: any) => this.asString(item?.canonicalMovement))
+                .filter(Boolean)
+                .slice(0, 2)
+                .join(' | ')
+            : ''),
+      ),
+      crossReferences,
+      interpretiveChallenges,
+      theologicalThemes: canonicalThemes,
+      mainTheologicalClaim: this.asString(synthesis?.mainClaim || summary?.interpretiveCenter || ''),
+      pastoralImplications: distributedImplications,
+    };
+  }
+
+  private parseReferenceForEgw(reference: string): { book: string; chapter: number; verseStart?: number; verseEnd?: number } | null {
+    const normalized = this.asString(reference).replace(/\u2013|\u2014/g, '-');
+    const match = normalized.match(/^(.+?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$/);
+    if (!match) return null;
+    const chapter = Number(match[2]);
+    if (!Number.isFinite(chapter)) return null;
+    const verseStart = match[3] ? Number(match[3]) : undefined;
+    const verseEnd = match[4] ? Number(match[4]) : undefined;
+    return {
+      book: this.asString(match[1]),
+      chapter,
+      verseStart: Number.isFinite(verseStart as number) ? verseStart : undefined,
+      verseEnd: Number.isFinite(verseEnd as number) ? verseEnd : undefined,
+    };
+  }
+
+  private normalizeStudyAssets(source: any, structureOfPassage: any[], workspace?: SermonWorkspace) {
+    const movementSource = Array.isArray(source?.studyAssets?.movementAssets)
+      ? source.studyAssets.movementAssets
+      : Array.isArray(source?.movementAssets)
+        ? source.movementAssets
+        : [];
+    const categorySource = source?.studyAssets?.categoryAssets && typeof source.studyAssets.categoryAssets === 'object'
+      ? source.studyAssets.categoryAssets
+      : source?.categoryAssets && typeof source.categoryAssets === 'object'
+        ? source.categoryAssets
+        : {};
+
+    const categoryEgw = Array.isArray(categorySource?.egwSupport)
+      ? categorySource.egwSupport
+      : Array.isArray(source?.egwSupport)
+        ? source.egwSupport
+        : [];
+
+    const normalizedEgw = categoryEgw
+      .map((item: any) => ({
+        citation: this.asString(item?.citation || item?.reference || item?.bookTitle),
+        quote: this.asString(item?.quote || item?.text),
+        relevance: this.asString(item?.relevance || item?.summary || item?.connection),
+      }))
+      .filter((item) => item.citation || item.quote || item.relevance)
+      .slice(0, 8);
+
+    if (Array.isArray(source?.egw?.quotes)) {
+      for (const quote of source.egw.quotes.slice(0, 8)) {
+        const normalizedQuote = {
+          citation: this.asString(quote?.reference || quote?.bookTitle),
+          quote: this.asString(quote?.text),
+          relevance: this.asString(quote?.category || ''),
+        };
+        if (normalizedQuote.citation || normalizedQuote.quote) {
+          normalizedEgw.push(normalizedQuote);
+        }
+      }
+    }
+
+    const normalizedReferences = this.normalizeReferenceEntries(
+      categorySource?.references || source?.references || workspace?.references || [],
+      12,
+    );
+
+    const movementAssets = movementSource
+      .map((item: any, index: number) => ({
+        movement: this.asString(item?.movement || item?.title || structureOfPassage?.[index]?.movement),
+        verses: this.asString(item?.verses || structureOfPassage?.[index]?.verses),
+        summary: this.asString(item?.summary || item?.description || structureOfPassage?.[index]?.summary),
+        applications: this.asStringArray(item?.applications, 6),
+        discussionQuestions: this.asStringArray(item?.discussionQuestions || item?.questions, 6),
+        illustrationIdeas: this.asStringArray(item?.illustrationIdeas || item?.illustrations, 6),
+        mediaSuggestions: this.asStringArray(item?.mediaSuggestions || item?.media, 6),
+        egwSupport: Array.isArray(item?.egwSupport)
+          ? item.egwSupport
+              .map((egw: any) => ({
+                citation: this.asString(egw?.citation || egw?.reference),
+                quote: this.asString(egw?.quote || egw?.text),
+                relevance: this.asString(egw?.relevance || egw?.summary),
+              }))
+              .filter((egw: any) => egw.citation || egw.quote || egw.relevance)
+              .slice(0, 4)
+          : [],
+        references: this.asStringArray(item?.references || item?.explorationReferences, 6),
+      }))
+      .filter((item) => item.movement || item.summary || item.verses);
+
+    if (!movementAssets.length && Array.isArray(structureOfPassage)) {
+      for (const item of structureOfPassage.slice(0, 8)) {
+        const movement = this.asString(item?.movement);
+        const verses = this.asString(item?.verses);
+        const summary = this.asString(item?.summary);
+        if (movement || verses || summary) {
+          movementAssets.push({
+            movement,
+            verses,
+            summary,
+            applications: [],
+            discussionQuestions: [],
+            illustrationIdeas: [],
+            mediaSuggestions: [],
+            egwSupport: [],
+            references: [],
+          });
+        }
+      }
+    }
+
+    return {
+      movementAssets,
+      categoryAssets: {
+        applications: this.asStringArray(categorySource?.applications || source?.applications, 12),
+        discussionQuestions: this.asStringArray(categorySource?.discussionQuestions || categorySource?.questions || source?.discussionQuestions, 12),
+        illustrationIdeas: this.asStringArray(categorySource?.illustrationIdeas || categorySource?.illustrations || source?.illustrationIdeas, 12),
+        mediaSuggestions: this.asStringArray(categorySource?.mediaSuggestions || categorySource?.media || source?.mediaSuggestions, 12),
+        egwSupport: normalizedEgw.slice(0, 10),
+        references: normalizedReferences,
+      },
+    };
+  }
+
+  private buildOutlineStudyContext(studyReport: any, workspace: SermonWorkspace) {
+    const sections = studyReport?.sections || {};
+    return {
+      structureOfPassage: Array.isArray(sections?.structureOfPassage) ? sections.structureOfPassage : [],
+      theologicalThemes: Array.isArray(sections?.theologicalThemes) ? sections.theologicalThemes : [],
+      interpretiveChallenges: Array.isArray(sections?.interpretiveChallenges) ? sections.interpretiveChallenges : [],
+      pastoralImplications: sections?.pastoralImplications || null,
+      studyAssets: sections?.studyAssets || null,
+      references: this.normalizeReferenceEntries(workspace?.references || [], 12),
+    };
+  }
+
+  private findBestMovementAsset(point: any, movementAssets: any[]) {
+    const title = `${this.asString(point?.title)} ${this.asString(point?.summary)} ${this.asString(point?.movement)}`.toLowerCase();
+    const verses = this.asStringArray(point?.supportingVerses || point?.verses, 8).join(' ').toLowerCase();
+    let bestAsset = null;
+    let bestScore = 0;
+
+    for (const asset of movementAssets) {
+      const movement = this.asString(asset?.movement).toLowerCase();
+      const assetVerses = this.asString(asset?.verses).toLowerCase();
+      const assetSummary = this.asString(asset?.summary).toLowerCase();
+      let score = 0;
+      if (movement && title.includes(movement)) score += 4;
+      if (movement && movement.includes(title)) score += 2;
+      if (assetVerses && verses && (assetVerses.includes(verses) || verses.includes(assetVerses))) score += 4;
+      if (assetSummary && title && (title.includes(assetSummary) || assetSummary.includes(title))) score += 1;
+      if (score > bestScore) {
+        bestScore = score;
+        bestAsset = asset;
+      }
+    }
+
+    return bestAsset;
+  }
+
+  private mergeUniqueStrings(primary: any[], secondary: any[], limit = 8) {
+    const merged = [...this.asStringArray(primary, limit), ...this.asStringArray(secondary, limit)]
+      .map((item) => this.asString(item))
+      .filter(Boolean);
+    return Array.from(new Set(merged)).slice(0, limit);
+  }
+
+  private attachStudyAssetsToOutline(outlineData: any, studyAssets: any) {
+    if (!outlineData || !studyAssets || !Array.isArray(outlineData.pointNodes)) return outlineData;
+    const movementAssets = Array.isArray(studyAssets?.movementAssets) ? studyAssets.movementAssets : [];
+    const categoryAssets = studyAssets?.categoryAssets || {};
+
+    outlineData.pointNodes = outlineData.pointNodes.map((point: any) => {
+      const movementAsset = this.findBestMovementAsset(point, movementAssets);
+      const mergedEgw = [
+        ...(Array.isArray(point?.egwSupport) ? point.egwSupport : []),
+        ...(Array.isArray(movementAsset?.egwSupport) ? movementAsset.egwSupport : []),
+        ...(Array.isArray(categoryAssets?.egwSupport) ? categoryAssets.egwSupport.slice(0, 2) : []),
+      ]
+        .map((item: any) => ({
+          citation: this.asString(item?.citation || item?.reference),
+          quote: this.asString(item?.quote || item?.text),
+          relevance: this.asString(item?.relevance || item?.summary),
+        }))
+        .filter((item) => item.citation || item.quote || item.relevance)
+        .slice(0, 4);
+
+      return {
+        ...point,
+        applications: this.mergeUniqueStrings(point?.applications, movementAsset?.applications || categoryAssets?.applications, 6),
+        discussionQuestions: this.mergeUniqueStrings(point?.discussionQuestions, movementAsset?.discussionQuestions || categoryAssets?.discussionQuestions, 6),
+        illustrationIdeas: this.mergeUniqueStrings(point?.illustrationIdeas, movementAsset?.illustrationIdeas || categoryAssets?.illustrationIdeas, 6),
+        mediaSuggestions: this.mergeUniqueStrings(point?.mediaSuggestions, movementAsset?.mediaSuggestions || categoryAssets?.mediaSuggestions, 6),
+        references: this.mergeUniqueStrings(point?.references, movementAsset?.references || categoryAssets?.references?.map((item: any) => item?.reference || item), 6),
+        egwSupport: mergedEgw,
+      };
+    });
+
+    return outlineData;
+  }
+
+  private async upgradeWorkspaceContracts(workspace: SermonWorkspace): Promise<SermonWorkspace> {
+    if (!workspace) return workspace;
+
+    let touched = false;
+    const primaryStudyReport = workspace.studyReports?.[0] || null;
+    const normalizedStudySections = primaryStudyReport?.sections
+      ? this.normalizeStudyReportSections(primaryStudyReport.sections)
+      : null;
+    const upgradedStudyAssets =
+      normalizedStudySections && (!primaryStudyReport?.sections?.studyAssets || !primaryStudyReport.sections.studyAssets.categoryAssets)
+        ? this.normalizeStudyAssets(primaryStudyReport.sections, normalizedStudySections.structureOfPassage || [], workspace)
+        : primaryStudyReport?.sections?.studyAssets || null;
+
+    if (primaryStudyReport && normalizedStudySections) {
+      const nextSections = {
+        ...primaryStudyReport.sections,
+        ...normalizedStudySections,
+        studyAssets: upgradedStudyAssets,
+      };
+      const before = JSON.stringify(primaryStudyReport.sections || {});
+      const after = JSON.stringify(nextSections);
+      if (before !== after) {
+        primaryStudyReport.sections = nextSections;
+        await this.studyReportRepository.save(primaryStudyReport);
+        touched = true;
+      }
+    }
+
+    const studyAssets = upgradedStudyAssets || primaryStudyReport?.sections?.studyAssets || null;
+    for (const outline of workspace.outlines || []) {
+      if (!outline?.structure) continue;
+      const normalizedStructure = this.normalizeOutlineData(outline.structure);
+      const enrichedStructure = this.attachStudyAssetsToOutline(
+        {
+          ...(normalizedStructure || {}),
+          pointNodes: Array.isArray(normalizedStructure?.pointNodes) ? normalizedStructure.pointNodes : [],
+        },
+        studyAssets,
+      );
+      const before = JSON.stringify(outline.structure || {});
+      const after = JSON.stringify(enrichedStructure || {});
+      if (before !== after) {
+        outline.structure = enrichedStructure;
+        await this.outlineRepository.save(outline);
+        touched = true;
+      }
+    }
+
+    if (!touched) {
+      return workspace;
+    }
+
+    return this.workspaceRepository.findOne({
+      where: { id: workspace.id, userId: workspace.userId },
+      relations: [
+        'outlines',
+        'manuscripts',
+        'applications',
+        'illustrations',
+        'discussionQuestions',
+        'citations',
+        'dnaAnalyses',
+        'studyReports',
+      ],
+    });
+  }
+
   private normalizeStudyReportSections(raw: any): Record<string, any> {
     const source = raw && typeof raw === 'object' ? raw : {};
-    const asStringArray = (value: any, limit = 12) => {
-      if (Array.isArray(value)) {
-        return value.map((item) => this.asString(item)).filter(Boolean).slice(0, limit);
-      }
-      if (typeof value === 'string') {
-        return this.parseListFromResponse(value).slice(0, limit);
-      }
-      return [];
-    };
 
     const structureOfPassage = Array.isArray(source.structureOfPassage)
       ? source.structureOfPassage
@@ -947,7 +1451,7 @@ Rules:
       ? source.interpretiveChallenges
           .map((item: any) => ({
             question: this.asString(item?.question || item?.challenge),
-            interpretationOptions: asStringArray(item?.interpretationOptions || item?.options || [], 5),
+            interpretationOptions: this.asStringArray(item?.interpretationOptions || item?.options || [], 5),
             preachingGuidance: this.asString(item?.preachingGuidance || item?.guidance || item?.note),
           }))
           .filter((item: any) => item.question)
@@ -957,12 +1461,12 @@ Rules:
     const pastoralImplications = (() => {
       if (pastoralImplicationsRaw && typeof pastoralImplicationsRaw === 'object' && !Array.isArray(pastoralImplicationsRaw)) {
         return {
-          personalLife: asStringArray((pastoralImplicationsRaw as any).personalLife, 6),
-          churchLife: asStringArray((pastoralImplicationsRaw as any).churchLife, 6),
-          mission: asStringArray((pastoralImplicationsRaw as any).mission, 6),
+          personalLife: this.asStringArray((pastoralImplicationsRaw as any).personalLife, 6),
+          churchLife: this.asStringArray((pastoralImplicationsRaw as any).churchLife, 6),
+          mission: this.asStringArray((pastoralImplicationsRaw as any).mission, 6),
         };
       }
-      const flat = asStringArray(pastoralImplicationsRaw, 12);
+      const flat = this.asStringArray(pastoralImplicationsRaw, 12);
       return {
         personalLife: flat.slice(0, 4),
         churchLife: flat.slice(4, 8),
@@ -971,10 +1475,10 @@ Rules:
     })();
 
     // Legacy key fallback mapping
-    const fallbackThemes = asStringArray(source.theologicalThemes || source.keyThemes || source.themes, 10);
+    const fallbackThemes = this.asStringArray(source.theologicalThemes || source.keyThemes || source.themes, 10);
     const fallbackCanonical = this.asString(source.canonicalContext || source.canonicalConnections || source.canonicalThemes || '');
     const fallbackClaim = this.asString(source.mainTheologicalClaim || source.theologicalInsights || source.mainClaim || '');
-    const fallbackFlow = asStringArray(source.exegeticalFlow || source.argumentFlow || source.flow || [], 8);
+    const fallbackFlow = this.asStringArray(source.exegeticalFlow || source.argumentFlow || source.flow || [], 8);
     const fallbackSummary = this.asString(source.exegeticalSummary || source.summaryStatement || '');
 
     return {
@@ -991,7 +1495,64 @@ Rules:
       theologicalThemes: fallbackThemes,
       mainTheologicalClaim: fallbackClaim,
       pastoralImplications,
+      studyAssets: this.normalizeStudyAssets(source, structureOfPassage),
     };
+  }
+
+  private flattenStudyAssetStrings(studyAssets: any, key: string, limit: number = 12): string[] {
+    const categoryAssets = studyAssets?.categoryAssets || {};
+    const movementAssets = Array.isArray(studyAssets?.movementAssets) ? studyAssets.movementAssets : [];
+    const direct = this.asStringArray(categoryAssets?.[key], limit);
+    const movement = movementAssets.flatMap((item: any) => this.asStringArray(item?.[key], limit));
+    return Array.from(new Set([...direct, ...movement].map((item) => item.trim()).filter(Boolean))).slice(0, limit);
+  }
+
+  private async syncStudyAssetRecords(workspaceId: string, studyAssets: any): Promise<void> {
+    const applications = this.flattenStudyAssetStrings(studyAssets, 'applications', 18);
+    const discussionQuestions = this.flattenStudyAssetStrings(studyAssets, 'discussionQuestions', 18);
+    const illustrationIdeas = this.flattenStudyAssetStrings(studyAssets, 'illustrationIdeas', 18);
+
+    await this.applicationRepository.delete({ workspaceId });
+    await this.questionRepository.delete({ workspaceId });
+    await this.illustrationRepository.delete({ workspaceId });
+
+    if (applications.length) {
+      await this.applicationRepository.save(
+        applications.map((content, index) =>
+          this.applicationRepository.create({
+            workspaceId,
+            audienceType: AudienceType.MIXED_CONGREGATION,
+            content,
+            orderIndex: index,
+          }),
+        ),
+      );
+    }
+
+    if (discussionQuestions.length) {
+      await this.questionRepository.save(
+        discussionQuestions.map((question, index) =>
+          this.questionRepository.create({
+            workspaceId,
+            question,
+            orderIndex: index,
+            category: 'study',
+          }),
+        ),
+      );
+    }
+
+    if (illustrationIdeas.length) {
+      await this.illustrationRepository.save(
+        illustrationIdeas.map((content, index) =>
+          this.illustrationRepository.create({
+            workspaceId,
+            title: `Illustration ${index + 1}`,
+            content,
+          }),
+        ),
+      );
+    }
   }
 
   async generateOutlines(
@@ -1008,7 +1569,8 @@ Rules:
     const outlines = [];
 
     const studyReport = workspace.studyReports?.[0];
-    const reportText = studyReport?.sections ? JSON.stringify(studyReport.sections, null, 2) : '';
+    const studyContext = this.buildOutlineStudyContext(studyReport, workspace);
+    const reportText = studyReport?.sections ? JSON.stringify(studyContext, null, 2) : '';
     const pointsPrompt = promptOverride || this.buildOutlinePointsPrompt(workspace, count, reportText);
     const pointsResponse = await this.llmService.generateCompletion(pointsPrompt, userId, {
       temperature: 0.6,
@@ -1075,6 +1637,7 @@ Rules:
           currentSignature = this.buildPointSignature(retriedPoints);
         }
       }
+      outlineData = this.attachStudyAssetsToOutline(outlineData, studyContext?.studyAssets);
       if (currentSignature) {
         generatedPointSignatures.add(currentSignature);
       }
@@ -1138,6 +1701,8 @@ Rules:
     await this.applicationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
+    const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
+    const seededApplications = Array.from(new Set(pointNodes.flatMap((point: any) => this.asStringArray(point?.applications, 4)))).slice(0, 12);
     const audienceTypes = [
       'youth',
       'new_believers',
@@ -1151,7 +1716,7 @@ Rules:
     for (const audienceType of audienceTypes) {
       const prompt = promptOverride
         ? this.applyAudiencePrompt(promptOverride, audienceType)
-        : this.buildApplicationsPrompt(workspace, mainPoints, audienceType);
+        : this.buildApplicationsPrompt(workspace, mainPoints, audienceType, seededApplications);
       const response = await this.llmService.generateCompletion(prompt, userId);
       this.logLlmOutput(`applications:${audienceType}`, response);
       const appTexts = this.parseListFromResponse(response);
@@ -1178,7 +1743,10 @@ Rules:
   ): Promise<DiscussionQuestion[]> {
     const workspace = await this.findOne(workspaceId, userId);
     await this.questionRepository.delete({ workspaceId });
-    const prompt = promptOverride || this.buildDiscussionPrompt(workspace);
+    const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
+    const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
+    const seededQuestions = Array.from(new Set(pointNodes.flatMap((point: any) => this.asStringArray(point?.discussionQuestions, 4)))).slice(0, 12);
+    const prompt = promptOverride || this.buildDiscussionPrompt(workspace, seededQuestions);
     const response = await this.llmService.generateCompletion(prompt, userId);
     this.logLlmOutput('questions', response);
     const questionTexts = this.parseListFromResponse(response);
@@ -1206,7 +1774,10 @@ Rules:
     await this.illustrationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
-    const prompt = promptOverride || this.buildIllustrationsPrompt(workspace, mainPoints);
+    const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
+    const seededIllustrations = Array.from(new Set(pointNodes.flatMap((point: any) => this.asStringArray(point?.illustrationIdeas, 4)))).slice(0, 12);
+    const prompt =
+      promptOverride || this.buildIllustrationsPrompt(workspace, mainPoints, seededIllustrations);
     const response = await this.llmService.generateCompletion(prompt, userId);
     this.logLlmOutput('illustrations', response);
 
@@ -1283,11 +1854,27 @@ Rules:
     this.logLlmOutput('study-report', response);
 
     const parsed = this.parseJsonSafe(response);
-    const normalizedSections = this.normalizeStudyReportSections(parsed);
+    const baseSections = this.buildStudyReportBaseSections(studyInputs);
+    const normalizedSections = this.normalizeStudyReportSections({
+      ...baseSections,
+      ...(parsed && typeof parsed === 'object' ? parsed : {}),
+    });
+    const mergedSections = {
+      ...normalizedSections,
+      egw: studyInputs?.egwSection || normalizedSections?.egw || null,
+      studyAssets: this.normalizeStudyAssets(
+        {
+          ...(parsed && typeof parsed === 'object' ? parsed : {}),
+          egw: studyInputs?.egwSection || null,
+        },
+        normalizedSections?.structureOfPassage || [],
+        workspace,
+      ),
+    };
     const report = this.studyReportRepository.create({
       workspaceId,
       sections: {
-        ...normalizedSections,
+        ...mergedSections,
         _sources: {
           crossReferencesCount: Array.isArray(studyInputs?.referenceData?.crossReferences)
             ? studyInputs.referenceData.crossReferences.length
@@ -1303,8 +1890,9 @@ Rules:
       },
       rawResponse: parsed ? null : response,
     });
-
-    return this.studyReportRepository.save(report);
+    const savedReport = await this.studyReportRepository.save(report);
+    await this.syncStudyAssetRecords(workspaceId, mergedSections.studyAssets);
+    return savedReport;
   }
 
   async validateCitations(workspaceId: string, userId: string, translationCode: string = 'KJV') {
@@ -1396,7 +1984,7 @@ Rules:
   }
 
   async findOne(id: string, userId: string): Promise<SermonWorkspace> {
-    return this.workspaceRepository.findOne({
+    const workspace = await this.workspaceRepository.findOne({
       where: { id, userId },
       relations: [
         'outlines',
@@ -1409,6 +1997,7 @@ Rules:
         'studyReports',
       ],
     });
+    return this.upgradeWorkspaceContracts(workspace);
   }
 
   async update(id: string, userId: string, updateDto: UpdateWorkspaceDto): Promise<SermonWorkspace> {
@@ -1451,13 +2040,17 @@ Rules:
     if (type === 'applications') {
       const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
       const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
-      return this.buildApplicationsPrompt(workspace, mainPoints, '{{audienceType}}');
+      const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
+      const seededApplications = Array.from(new Set(pointNodes.flatMap((point: any) => this.asStringArray(point?.applications, 4)))).slice(0, 12);
+      return this.buildApplicationsPrompt(workspace, mainPoints, '{{audienceType}}', seededApplications);
     }
 
     if (type === 'illustrations') {
       const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
       const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
-      return this.buildIllustrationsPrompt(workspace, mainPoints);
+      const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
+      const seededIllustrations = Array.from(new Set(pointNodes.flatMap((point: any) => this.asStringArray(point?.illustrationIdeas, 4)))).slice(0, 12);
+      return this.buildIllustrationsPrompt(workspace, mainPoints, seededIllustrations);
     }
 
     if (type === 'citations') {
@@ -1473,7 +2066,10 @@ Rules:
       return this.buildStudyReportPrompt(workspace, passageText, studyInputs);
     }
 
-    return this.buildDiscussionPrompt(workspace);
+    const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
+    const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
+    const seededQuestions = Array.from(new Set(pointNodes.flatMap((point: any) => this.asStringArray(point?.discussionQuestions, 4)))).slice(0, 12);
+    return this.buildDiscussionPrompt(workspace, seededQuestions);
   }
 
   async updateOutline(userId: string, id: string, dto: UpdateOutlineDto): Promise<SermonOutline> {

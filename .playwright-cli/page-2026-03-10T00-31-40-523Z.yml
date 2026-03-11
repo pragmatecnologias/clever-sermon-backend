@@ -1,0 +1,38 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e16]
+  - generic [ref=e17]:
+    - navigation [ref=e18]:
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - paragraph [ref=e21]: Clever Sermon
+          - heading "Mission Control" [level=1] [ref=e22]
+        - generic [ref=e23]:
+          - generic [ref=e24]: Admin User
+          - button "Theology Map" [ref=e25] [cursor=pointer]
+          - button "Sermon DNA" [ref=e26] [cursor=pointer]
+          - button "Logout" [ref=e27] [cursor=pointer]:
+            - img [ref=e28]
+            - text: Logout
+    - generic [ref=e31]:
+      - generic [ref=e32]:
+        - generic [ref=e33]:
+          - paragraph [ref=e34]: Workspaces
+          - heading "My Workspaces" [level=2] [ref=e35]
+        - button "New Workspace" [ref=e36] [cursor=pointer]:
+          - img [ref=e37]
+          - text: New Workspace
+      - generic [ref=e38]:
+        - generic [ref=e39] [cursor=pointer]:
+          - heading "La Gracia Transformadora" [level=3] [ref=e40]
+          - paragraph [ref=e41]: Efesios 2:1-10
+          - paragraph [ref=e42]: "Theme: La gracia de Dios nos transforma de muerte a vida."
+          - generic [ref=e43]:
+            - generic [ref=e44]: 3/9/2026
+            - generic [ref=e45]: in_progress
+        - generic [ref=e46] [cursor=pointer]:
+          - heading "Faith Under Fire" [level=3] [ref=e47]
+          - paragraph [ref=e48]: Daniel 3:16-28
+          - paragraph [ref=e49]: "Theme: God meets us in adversity with presence and power."
+          - generic [ref=e50]:
+            - generic [ref=e51]: 3/9/2026
+            - generic [ref=e52]: in_progress

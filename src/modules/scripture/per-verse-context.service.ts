@@ -81,19 +81,18 @@ export class PerVerseContextService {
       console.error('Failed to fetch passage text for verse context:', error);
     }
 
-    const languageLabel = language === 'es' ? 'Spanish' : 'English';
     const languageInstruction = language === 'es'
       ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
       : 'Respond in English.';
     
-    const prompt = `${languageInstruction} You are a biblical scholar providing historical, cultural, and geographical context for scripture passages.
+    const prompt = `${languageInstruction} Devuelve solo JSON válido. Eres un erudito bíblico que da contexto histórico, cultural y geográfico.
 
 Reference: ${reference}
 
 Passage Text:
 ${passageText || 'Text not available'}
 
-Provide detailed context in the following JSON format:
+Formato JSON:
 {
   "historical": [
     {
@@ -126,19 +125,16 @@ Provide detailed context in the following JSON format:
   ]
 }
 
-Guidelines:
-- Provide 2-4 historical notes covering the political, religious, and social background
-- Include 2-4 cultural notes about customs, practices, or beliefs relevant to the passage
-- List 1-3 geographical locations mentioned or relevant to the passage
-- Include 1-3 timeline events that provide chronological context
-- Be specific and scholarly, citing biblical references where appropriate
-- Use accurate historical dates and periods
-- For cultural categories, use: custom, law, practice, belief, or social
-- Return ONLY valid JSON, no markdown or extra text`;
+Reglas:
+- 2-3 notas históricas.
+- 2-3 notas culturales.
+- 1-2 notas geográficas.
+- 1-2 eventos cronológicos.
+- Sin markdown ni texto fuera del JSON.`;
 
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.3,
-      maxTokens: 1500,
+      maxTokens: 900,
     });
 
     let parsed: any;
@@ -154,7 +150,11 @@ Guidelines:
           jsonStr = jsonMatch[0];
         }
       }
-      
+      jsonStr = jsonStr
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+        .replace(/,\s*([}\]])/g, '$1')
+        .trim();
+
       parsed = JSON.parse(jsonStr);
     } catch (error) {
       console.error('Failed to parse per-verse context response:', error);

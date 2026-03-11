@@ -65,19 +65,18 @@ export class InterpretiveChallengesDataService {
       console.error('Failed to fetch passage text for interpretive challenges:', error);
     }
 
-    const languageLabel = language === 'es' ? 'Spanish' : 'English';
     const languageInstruction = language === 'es'
       ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
       : 'Respond in English.';
     
-    const prompt = `${languageInstruction} You are a biblical scholar identifying interpretive challenges and different theological perspectives on scripture passages.
+    const prompt = `${languageInstruction} Devuelve solo JSON válido. Eres un erudito bíblico que identifica tensiones interpretativas y perspectivas teológicas.
 
 Passage Reference: ${passage}
 
 Passage Text:
 ${passageText || 'Text not available'}
 
-Provide interpretive challenges in the following JSON format:
+Formato JSON:
 {
   "challenge": "Main interpretive question or difficulty",
   "views": [
@@ -95,18 +94,15 @@ Provide interpretive challenges in the following JSON format:
   }
 }
 
-Guidelines:
-- Identify genuine interpretive challenges or theological debates
-- Present 2-4 different scholarly views fairly
-- Include key arguments for each view
-- Provide SDA perspective when relevant to SDA theology
-- Be balanced and scholarly
-- If no significant interpretive challenge exists, return null for challenge field
-- Return ONLY valid JSON, no markdown or extra text`;
+Reglas:
+- Devuelve 2-4 perspectivas reales.
+- Cada perspectiva debe tener 2-3 argumentos breves.
+- Si no hay desafío importante, usa null en challenge.
+- No uses markdown ni texto fuera del JSON.`;
 
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.3,
-      maxTokens: 1200,
+      maxTokens: 800,
     });
 
     let parsed: any;
@@ -128,10 +124,6 @@ Guidelines:
     const views = parsed.views || parsed.vistas || [];
     const sdaPerspective = parsed.sdaPerspective || parsed.perspectivaSDA;
 
-    if (!challenge) {
-      return null;
-    }
-
     // Normalize views structure (handle Spanish field names)
     const normalizedViews = views.map((view: any) => ({
       viewName: view.viewName || view.nombreVista || view.nombre || '',
@@ -139,6 +131,10 @@ Guidelines:
       proponents: view.proponents || view.proponentes || '',
       keyArguments: view.keyArguments || view.argumentosClave || view.argumentos || [],
     }));
+
+    if (!challenge || normalizedViews.length === 0) {
+      return null;
+    }
 
     // Normalize SDA perspective (handle Spanish field names)
     const normalizedSdaPerspective = sdaPerspective ? {
@@ -175,6 +171,7 @@ Guidelines:
     const sanitize = (input: string) =>
       input
         .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+        .replace(/^\uFEFF/, '')
         // Fix malformed sequence seen in logs: ...],"},{"viewName...
         .replace(/,\s*"\s*}/g, '}')
         .replace(/\],\s*"\s*}\s*,\s*{/g, ']},{')
@@ -185,6 +182,8 @@ Guidelines:
         .replace(/}\s*,\s*,\s*{/g, '},{')
         .replace(/\},\s*\]/g, '}]')
         .replace(/,\s*([}\]])/g, '$1')
+        .replace(/,\s*"sdaPerspective"\s*:/g, ',"sdaPerspective":')
+        .replace(/,\s*"perspectivaSDA"\s*:/g, ',"perspectivaSDA":')
         .trim();
 
     const primary = sanitize(jsonStr);
@@ -205,7 +204,9 @@ Guidelines:
             .replace(/\],\s*"\s*}\s*,\s*{\s*"/g, ']},{"')
             .replace(/\],\s*}\s*,\s*{\s*"/g, ']},{"')
             .replace(/}\s*,\s*"\s*}\s*,\s*{/g, '}},{')
-            .replace(/"\s*}\s*,\s*{\s*"/g, '"},{\"')
+            .replace(/"\s*}\s*,\s*{\s*"/g, '"},{"')
+            .replace(/"\s*}\s*,\s*"sdaPerspective"/g, '"},"sdaPerspective"')
+            .replace(/"\s*}\s*,\s*"perspectivaSDA"/g, '"},"perspectivaSDA"')
             .replace(/,\s*,/g, ','),
         );
         return JSON.parse(aggressive);

@@ -1,0 +1,16 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e6]
+  - generic [ref=e8]:
+    - generic [ref=e9]:
+      - heading "Pastor Decks" [level=3] [ref=e10]
+      - paragraph [ref=e11]: Sign in to your account
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - text: Email
+          - textbox "pastor@church.com" [ref=e15]
+        - generic [ref=e16]:
+          - text: Password
+          - textbox "••••••••" [ref=e17]
+        - button "Sign In" [ref=e18] [cursor=pointer]
+      - button "Don't have an account? Sign up" [ref=e20] [cursor=pointer]

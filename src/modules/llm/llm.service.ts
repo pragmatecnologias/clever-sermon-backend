@@ -8,6 +8,9 @@ import { LlmProvider } from '../../entities/enums/llm-provider.enum';
 
 @Injectable()
 export class LlmService {
+  private static readonly LOCAL_TIMEOUT_MS = 45000;
+  private static readonly LOCAL_MAX_ATTEMPTS = 2;
+
   constructor(
     private configService: ConfigService,
     @InjectRepository(LlmRequest)
@@ -143,18 +146,73 @@ export class LlmService {
   ): Promise<{ response: string; model: string }> {
     const lmStudioUrl = this.configService.get('LM_STUDIO_URL');
     const model = options.model || this.configService.get('LLM_MODEL_NAME') || 'local-model';
+    const baseMaxTokens = options.maxTokens || 2000;
+    let lastError: any;
 
-    const response = await axios.post(`${lmStudioUrl}/chat/completions`, {
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: options.temperature || 0.7,
-      max_tokens: options.maxTokens || 2000,
-    });
+    for (let attempt = 1; attempt <= LlmService.LOCAL_MAX_ATTEMPTS; attempt++) {
+      const maxTokens =
+        attempt === 1 ? baseMaxTokens : Math.max(400, Math.floor(baseMaxTokens * 0.7));
 
-    return {
-      response: response.data.choices[0].message.content,
-      model,
-    };
+      try {
+        const response = await axios.post(
+          `${lmStudioUrl}/chat/completions`,
+          {
+            model,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: options.temperature || 0.7,
+            max_tokens: maxTokens,
+          },
+          {
+            timeout: LlmService.LOCAL_TIMEOUT_MS,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+
+        const content = response.data?.choices?.[0]?.message?.content;
+        if (typeof content !== 'string' || !content.trim()) {
+          throw new Error('Local LLM returned an empty completion payload');
+        }
+
+        return {
+          response: content,
+          model,
+        };
+      } catch (error: any) {
+        lastError = error;
+        if (!this.shouldRetryLocalLlm(error) || attempt === LlmService.LOCAL_MAX_ATTEMPTS) {
+          break;
+        }
+      }
+    }
+
+    throw this.wrapLocalLlmError(lastError, model);
+  }
+
+  private shouldRetryLocalLlm(error: any): boolean {
+    const status = error?.response?.status;
+    const code = error?.code;
+    return (
+      status >= 500 ||
+      code === 'ECONNABORTED' ||
+      code === 'ETIMEDOUT' ||
+      code === 'ECONNRESET'
+    );
+  }
+
+  private wrapLocalLlmError(error: any, model: string): Error {
+    const status = error?.response?.status;
+    const code = error?.code;
+    const body =
+      typeof error?.response?.data === 'string'
+        ? error.response.data.replace(/\s+/g, ' ').trim().slice(0, 180)
+        : '';
+    const parts = [`Local LLM request failed for model ${model}`];
+    if (status) parts.push(`status ${status}`);
+    if (code) parts.push(`code ${code}`);
+    if (body) parts.push(body);
+    return new Error(parts.join(' - '));
   }
 
   private async callOpenAI(

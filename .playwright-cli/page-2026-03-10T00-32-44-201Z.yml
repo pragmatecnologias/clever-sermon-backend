@@ -1,0 +1,240 @@
+- generic [ref=e1]:
+  - alert [ref=e16]
+  - generic [ref=e53]:
+    - navigation [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - paragraph [ref=e58]: Clever Sermon
+          - heading "Workspace Core" [level=1] [ref=e59]
+        - generic [ref=e61]:
+          - 'textbox "Global search (full text): notes, workspaces, outlines, manuscripts..." [ref=e62]'
+          - button "Search" [ref=e63] [cursor=pointer]
+        - button "Back to dashboard" [ref=e64] [cursor=pointer]
+    - generic [ref=e67]:
+      - button "Step 1 Passage" [ref=e68] [cursor=pointer]:
+        - generic [ref=e69]:
+          - generic [ref=e70]: Step 1
+          - img [ref=e71]
+        - paragraph [ref=e74]: Passage
+      - button "Step 2 Study" [active] [ref=e75] [cursor=pointer]:
+        - generic [ref=e76]:
+          - generic [ref=e77]: Step 2
+          - img [ref=e78]
+        - paragraph [ref=e81]: Study
+      - button "Step 3 Structure" [ref=e82] [cursor=pointer]:
+        - generic [ref=e83]:
+          - generic [ref=e84]: Step 3
+          - img [ref=e85]
+        - paragraph [ref=e88]: Structure
+      - button "Step 4 Write" [ref=e89] [cursor=pointer]:
+        - generic [ref=e90]:
+          - generic [ref=e91]: Step 4
+          - img [ref=e92]
+        - paragraph [ref=e95]: Write
+      - button "Step 5 Refine" [ref=e96] [cursor=pointer]:
+        - generic [ref=e98]: Step 5
+        - paragraph [ref=e99]: Refine
+      - button "Step 6 Deliver" [disabled] [ref=e100]:
+        - generic [ref=e101]:
+          - generic [ref=e102]: Step 6
+          - img [ref=e103]
+        - paragraph [ref=e106]: Deliver
+    - generic [ref=e108]:
+      - complementary [ref=e109]:
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - generic [ref=e112]:
+              - heading "Workflow Progress" [level=3] [ref=e113]
+              - generic [ref=e114]: 67%
+            - generic [ref=e117]:
+              - generic "Passage" [ref=e118]:
+                - img [ref=e119]
+                - generic [ref=e122]:
+                  - paragraph [ref=e123]: 1. Passage
+                  - generic [ref=e124]: Scripture lookup is cached for this workspace.
+              - generic "Study" [ref=e125]:
+                - img [ref=e126]
+                - generic [ref=e129]:
+                  - paragraph [ref=e130]: 2. Study
+                  - generic [ref=e131]: Study report is available.
+              - generic "Structure" [ref=e132]:
+                - img [ref=e133]
+                - generic [ref=e136]:
+                  - paragraph [ref=e137]: 3. Structure
+                  - generic [ref=e138]: A selected outline is available.
+              - generic "Write" [ref=e139]:
+                - img [ref=e140]
+                - generic [ref=e143]:
+                  - paragraph [ref=e144]: 4. Write
+                  - generic [ref=e145]: A manuscript has been generated.
+              - generic "Refine" [ref=e146]:
+                - img [ref=e147]
+                - paragraph [ref=e150]: 5. Refine
+              - 'generic "Complete Write and Refine first: manuscript plus DNA or coach session required." [ref=e151]':
+                - img [ref=e152]
+                - generic [ref=e155]:
+                  - paragraph [ref=e156]: 6. Deliver
+                  - generic [ref=e157]: "Complete Write and Refine first: manuscript plus DNA or coach session required."
+          - generic [ref=e159]:
+            - img [ref=e160]
+            - generic [ref=e164]:
+              - paragraph [ref=e165]: Suggested Next Step
+              - heading "Refine" [level=3] [ref=e166]
+              - paragraph [ref=e167]: Continue with Refine to keep sermon preparation on track.
+              - button "Run DNA / Coach" [ref=e168] [cursor=pointer]:
+                - generic [ref=e169]: Run DNA / Coach
+                - img [ref=e170]
+          - generic [ref=e172]:
+            - paragraph [ref=e173]: Workspace
+            - heading "La Gracia Transformadora" [level=2] [ref=e174]
+            - paragraph [ref=e175]: Efesios 2:1-10
+            - generic [ref=e176]:
+              - generic [ref=e177]: in_progress
+              - button "Details" [ref=e178] [cursor=pointer]
+            - paragraph [ref=e179]: "Language: es"
+          - generic [ref=e180]:
+            - paragraph [ref=e181]: Study Tools
+            - button "Study Report" [ref=e818] [cursor=pointer]
+            - button "Cross References" [ref=e819] [cursor=pointer]
+            - generic [ref=e184]:
+              - paragraph [ref=e185]: Locked Actions
+              - 'button "Deliver: Start Media Production" [disabled] [ref=e186]':
+                - img [ref=e187]
+                - generic [ref=e190]: "Deliver: Start Media Production"
+      - generic [ref=e820]:
+        - generic [ref=e821]:
+          - heading "Study Report" [level=3] [ref=e823]
+          - button "Generate" [ref=e824] [cursor=pointer]
+        - generic [ref=e826]:
+          - generic [ref=e827]:
+            - paragraph [ref=e828]: Study Report
+            - paragraph [ref=e829]: 3 minute read
+          - group [ref=e830]:
+            - generic "Passage Overview" [ref=e831] [cursor=pointer]
+            - paragraph [ref=e832]: Pablo describe el estado previo de los creyentes como muertos en pecado y su transformación por la gracia divina, que los resucita con Cristo y los sitúa en los cielos. La salvación se presenta como un don de Dios, no por obras humanas, y los creyentes son creados para buenas obras.
+          - group [ref=e833]:
+            - generic "Literary Context" [ref=e834] [cursor=pointer]
+            - paragraph [ref=e835]: El pasaje forma parte de la sección de doctrinas fundamentales (Efesios 1:15‑3:21) donde Pablo expone la unidad de los creyentes en Cristo y el propósito del evangelio. Se dirige a una comunidad que incluye judíos y gentiles, enfatizando la gracia como medio de reconciliación.
+          - group [ref=e836]:
+            - generic "Historical Context" [ref=e837] [cursor=pointer]
+            - paragraph [ref=e838]: Pablo escribió esta epístola alrededor del 60‑62 d.C. a la iglesia de Éfeso, una comunidad que incluía judíos y gentiles en un contexto romano donde el paganismo y la filosofía helenística influyeron en la vida cotidiana.
+          - group [ref=e839]:
+            - generic "Canonical Context" [ref=e840] [cursor=pointer]
+            - paragraph [ref=e841]: El pasaje continúa el relato de la redención iniciada en el Antiguo Testamento con la creación y caída, se cumple en Cristo (Nuevo Testamento) y apunta a la consumación futura cuando los creyentes están sentados en los cielos.
+          - group [ref=e842]:
+            - generic "Main Theological Claim" [ref=e843] [cursor=pointer]
+            - paragraph [ref=e844]: La gracia de Dios, recibida por fe, transforma a los creyentes muertos en pecado en una nueva vida junto con Cristo, y los llama a vivir buenas obras como fruto de esa transformación.
+          - group [ref=e845]:
+            - generic "Exegetical Flow" [ref=e846] [cursor=pointer]
+            - list [ref=e847]:
+              - listitem [ref=e848]: Versículos 1‑3 presentan el estado de muerte espiritual y la vida mundana bajo la influencia del "príncipe del aire".
+              - listitem [ref=e849]: "Versículos 4‑7 revelan el acto soberano de Dios: la gracia que resucita y eleva a los creyentes junto con Cristo."
+              - listitem [ref=e850]: Versículos 8‑9 subrayan que la salvación es por gracia, mediante fe y no por obras.
+              - listitem [ref=e851]: Versículo 10 concluye con la finalidad de las buenas obras como fruto y cumplimiento del plan divino.
+          - group [ref=e852]:
+            - generic "Exegetical Summary" [ref=e853] [cursor=pointer]
+            - paragraph [ref=e854]: El texto muestra la progresión de la condición humana (muerte en pecado) a la vida transformada por la gracia de Dios, culminando en una nueva identidad creada para buenas obras.
+          - group [ref=e855]:
+            - generic "Structure of the Passage" [ref=e856] [cursor=pointer]
+            - generic [ref=e857]:
+              - generic [ref=e858]:
+                - paragraph [ref=e859]:
+                  - text: Estado de muerte espiritual
+                  - generic [ref=e860]: • 1‑3
+                - paragraph [ref=e861]: Los creyentes estaban muertos en pecados y vivían según la corriente del mundo, bajo el poder del aire.
+              - generic [ref=e862]:
+                - paragraph [ref=e863]:
+                  - text: Acto de gracia y resurrección
+                  - generic [ref=e864]: • 4‑7
+                - paragraph [ref=e865]: Dios, rico en misericordia y amor, los dio vida con Cristo, los levantó y los sitúa en lugares celestiales.
+              - generic [ref=e866]:
+                - paragraph [ref=e867]:
+                  - text: Fundamento de la salvación
+                  - generic [ref=e868]: • 8‑9
+                - paragraph [ref=e869]: La salvación es por gracia, recibida mediante fe y no por obras humanas.
+              - generic [ref=e870]:
+                - paragraph [ref=e871]:
+                  - text: Propósito de las buenas obras
+                  - generic [ref=e872]: • 10
+                - paragraph [ref=e873]: Los creyentes son obra maestra de Dios, creados para buenas obras que ya fueron ordenadas.
+          - group [ref=e874]:
+            - generic "Key Terms" [ref=e875] [cursor=pointer]
+            - generic [ref=e876]:
+              - 'button "muerte (Greek) Open Word Study Transliteration: thanatos estado de inactividad espiritual, sin vida en el sentido divino. no implica muerte física; es la falta de vida en Cristo." [ref=e877] [cursor=pointer]':
+                - paragraph [ref=e878]:
+                  - text: muerte
+                  - generic [ref=e879]: (Greek)
+                  - generic [ref=e880]: Open Word Study
+                - paragraph [ref=e881]: "Transliteration: thanatos"
+                - paragraph [ref=e882]: estado de inactividad espiritual, sin vida en el sentido divino.
+                - paragraph [ref=e883]: no implica muerte física; es la falta de vida en Cristo.
+              - 'button "gracia (Greek) Open Word Study Transliteration: charis favor inmerecido de Dios. no es una obra humana, sino un don divino." [ref=e884] [cursor=pointer]':
+                - paragraph [ref=e885]:
+                  - text: gracia
+                  - generic [ref=e886]: (Greek)
+                  - generic [ref=e887]: Open Word Study
+                - paragraph [ref=e888]: "Transliteration: charis"
+                - paragraph [ref=e889]: favor inmerecido de Dios.
+                - paragraph [ref=e890]: no es una obra humana, sino un don divino.
+              - 'button "fe (Greek) Open Word Study Transliteration: pistis confianza y aceptación de la obra redentora. es el medio por el cual se recibe la gracia." [ref=e891] [cursor=pointer]':
+                - paragraph [ref=e892]:
+                  - text: fe
+                  - generic [ref=e893]: (Greek)
+                  - generic [ref=e894]: Open Word Study
+                - paragraph [ref=e895]: "Transliteration: pistis"
+                - paragraph [ref=e896]: confianza y aceptación de la obra redentora.
+                - paragraph [ref=e897]: es el medio por el cual se recibe la gracia.
+          - group [ref=e898]:
+            - generic "Cross References" [ref=e899] [cursor=pointer]
+            - generic [ref=e900]:
+              - generic [ref=e901]:
+                - paragraph [ref=e902]: Romanos 3:23‑24
+                - paragraph [ref=e903]: Muestra que todos están bajo pecado y son justificados por gracia, reforzando la idea de salvación por gracia.
+              - generic [ref=e904]:
+                - paragraph [ref=e905]: Colosenses 1:13‑14
+                - paragraph [ref=e906]: Enfatiza la liberación de la oscuridad y la entrega a la voluntad del Hijo, paralelo al traslado celestial en Efesios 2:6‑7.
+              - generic [ref=e907]:
+                - paragraph [ref=e908]: Hebreos 10:38
+                - paragraph [ref=e909]: Habla de la fe que permanece firme, conectando con el tema de la fe en Efesios 2:8‑9.
+          - group [ref=e910]:
+            - generic "Interpretive Challenges" [ref=e911] [cursor=pointer]
+            - generic [ref=e912]:
+              - generic [ref=e913]:
+                - paragraph [ref=e914]: ¿Cómo reconciliamos la afirmación de que las buenas obras no son causa de salvación con su propósito final?
+                - list [ref=e915]:
+                  - listitem [ref=e916]: Las buenas obras son fruto de la gracia, no medio para obtenerla.
+                  - listitem [ref=e917]: El propósito es demostrar la transformación interna y obedecer a Dios.
+                - paragraph [ref=e918]: Enfatizar que la gracia produce una vida obediente; las obras son evidencia, no requisito.
+              - generic [ref=e919]:
+                - paragraph [ref=e920]: ¿Qué implica la frase "sentados en los lugares celestiales"?
+                - list [ref=e921]:
+                  - listitem [ref=e922]: Metáfora de la posición espiritual junto a Cristo.
+                  - listitem [ref=e923]: Indicación literal de una realidad futura en el cielo.
+                - paragraph [ref=e924]: Usar la interpretación que mantiene coherencia con el lenguaje de esperanza y la visión escatológica del Nuevo Testamento.
+          - generic [ref=e925]:
+            - paragraph [ref=e926]: Theological Themes
+            - list [ref=e927]:
+              - listitem [ref=e928]: Gracia soberana
+              - listitem [ref=e929]: Salvación por fe
+              - listitem [ref=e930]: Transformación espiritual
+              - listitem [ref=e931]: Propósito de las buenas obras
+          - group [ref=e932]:
+            - generic "Pastoral Implications" [ref=e933] [cursor=pointer]
+            - generic [ref=e934]:
+              - generic [ref=e935]:
+                - paragraph [ref=e936]: Personal Life
+                - list [ref=e937]:
+                  - listitem [ref=e938]: Reconocer la dependencia de la gracia en todas las áreas de vida.
+                  - listitem [ref=e939]: Buscar una vida de obediencia que refleje la nueva identidad en Cristo.
+              - generic [ref=e940]:
+                - paragraph [ref=e941]: Church Life
+                - list [ref=e942]:
+                  - listitem [ref=e943]: Enfatizar la enseñanza de la gracia y la fe en la predicación.
+                  - listitem [ref=e944]: Fomentar el servicio comunitario como expresión de buenas obras.
+              - generic [ref=e945]:
+                - paragraph [ref=e946]: Mission
+                - list [ref=e947]:
+                  - listitem [ref=e948]: Compartir la verdad de que la salvación es un don gratuito.
+                  - listitem [ref=e949]: Invitar a los no creyentes a experimentar la gracia transformadora.
+    - button "Keyboard shortcuts" [ref=e815] [cursor=pointer]:
+      - img [ref=e816]

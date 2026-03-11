@@ -1,0 +1,634 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e16]
+  - generic [ref=e53]:
+    - navigation [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - paragraph [ref=e58]: Clever Sermon
+          - heading "Workspace Core" [level=1] [ref=e59]
+        - generic [ref=e61]:
+          - 'textbox "Global search (full text): notes, workspaces, outlines, manuscripts..." [ref=e62]'
+          - button "Search" [ref=e63] [cursor=pointer]
+        - button "Back to dashboard" [ref=e64] [cursor=pointer]
+    - generic [ref=e67]:
+      - button "Step 1 Passage" [ref=e68] [cursor=pointer]:
+        - generic [ref=e69]:
+          - generic [ref=e70]: Step 1
+          - img [ref=e71]
+        - paragraph [ref=e74]: Passage
+      - button "Step 2 Study" [ref=e75] [cursor=pointer]:
+        - generic [ref=e76]:
+          - generic [ref=e77]: Step 2
+          - img [ref=e78]
+        - paragraph [ref=e81]: Study
+      - button "Step 3 Structure" [ref=e82] [cursor=pointer]:
+        - generic [ref=e83]:
+          - generic [ref=e84]: Step 3
+          - img [ref=e85]
+        - paragraph [ref=e88]: Structure
+      - button "Step 4 Write" [ref=e89] [cursor=pointer]:
+        - generic [ref=e90]:
+          - generic [ref=e91]: Step 4
+          - img [ref=e92]
+        - paragraph [ref=e95]: Write
+      - button "Step 5 Refine" [ref=e96] [cursor=pointer]:
+        - generic [ref=e98]: Step 5
+        - paragraph [ref=e99]: Refine
+      - button "Step 6 Deliver" [disabled] [ref=e100]:
+        - generic [ref=e101]:
+          - generic [ref=e102]: Step 6
+          - img [ref=e103]
+        - paragraph [ref=e106]: Deliver
+    - generic [ref=e108]:
+      - complementary [ref=e109]:
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - generic [ref=e112]:
+              - heading "Workflow Progress" [level=3] [ref=e113]
+              - generic [ref=e114]: 67%
+            - generic [ref=e117]:
+              - generic "Passage" [ref=e118]:
+                - img [ref=e119]
+                - generic [ref=e122]:
+                  - paragraph [ref=e123]: 1. Passage
+                  - generic [ref=e124]: Scripture lookup is cached for this workspace.
+              - generic "Study" [ref=e125]:
+                - img [ref=e126]
+                - generic [ref=e129]:
+                  - paragraph [ref=e130]: 2. Study
+                  - generic [ref=e131]: Study report is available.
+              - generic "Structure" [ref=e132]:
+                - img [ref=e133]
+                - generic [ref=e136]:
+                  - paragraph [ref=e137]: 3. Structure
+                  - generic [ref=e138]: A selected outline is available.
+              - generic "Write" [ref=e139]:
+                - img [ref=e140]
+                - generic [ref=e143]:
+                  - paragraph [ref=e144]: 4. Write
+                  - generic [ref=e145]: A manuscript has been generated.
+              - generic "Refine" [ref=e146]:
+                - img [ref=e147]
+                - paragraph [ref=e150]: 5. Refine
+              - 'generic "Complete Write and Refine first: manuscript plus DNA or coach session required." [ref=e151]':
+                - img [ref=e152]
+                - generic [ref=e155]:
+                  - paragraph [ref=e156]: 6. Deliver
+                  - generic [ref=e157]: "Complete Write and Refine first: manuscript plus DNA or coach session required."
+          - generic [ref=e159]:
+            - img [ref=e160]
+            - generic [ref=e164]:
+              - paragraph [ref=e165]: Suggested Next Step
+              - heading "Refine" [level=3] [ref=e166]
+              - paragraph [ref=e167]: Continue with Refine to keep sermon preparation on track.
+              - button "Run DNA / Coach" [ref=e168] [cursor=pointer]:
+                - generic [ref=e169]: Run DNA / Coach
+                - img [ref=e170]
+          - generic [ref=e172]:
+            - paragraph [ref=e173]: Workspace
+            - heading "La Gracia Transformadora" [level=2] [ref=e174]
+            - paragraph [ref=e175]: Efesios 2:1-10
+            - generic [ref=e176]:
+              - generic [ref=e177]: in_progress
+              - button "Details" [ref=e178] [cursor=pointer]
+            - paragraph [ref=e179]: "Language: es"
+          - generic [ref=e180]:
+            - paragraph [ref=e181]: Passage Tools
+            - button "Scripture" [ref=e182] [cursor=pointer]
+            - button "Word Study" [ref=e183] [cursor=pointer]
+            - generic [ref=e184]:
+              - paragraph [ref=e185]: Locked Actions
+              - 'button "Deliver: Start Media Production" [disabled] [ref=e186]':
+                - img [ref=e187]
+                - generic [ref=e190]: "Deliver: Start Media Production"
+      - generic [ref=e194]:
+        - generic [ref=e195]:
+          - heading "Scripture" [level=3] [ref=e196]
+          - button "Lookup" [ref=e197] [cursor=pointer]
+        - generic [ref=e198]:
+          - generic [ref=e199]:
+            - generic [ref=e200]:
+              - generic [ref=e201]: Scripture Reference
+              - textbox "John 3:16" [ref=e202]: Efesios 2:1-10
+            - generic [ref=e203]:
+              - generic [ref=e204]: Translation
+              - combobox [ref=e205]:
+                - option "RVR1960" [selected]
+                - option "NVI"
+                - option "NBLA"
+          - generic [ref=e206]:
+            - generic [ref=e207]: "Last lookup: Efesios 2:1-10"
+            - generic [ref=e208]: •
+            - generic [ref=e209]: RVR1960
+          - generic [ref=e210]:
+            - paragraph [ref=e211]: Saved Scripture Snapshots
+            - button "Efesios 2:1-10 RVR1960•saved 3/9/2026, 6:51:45 PM" [ref=e213] [cursor=pointer]:
+              - paragraph [ref=e214]: Efesios 2:1-10
+              - paragraph [ref=e215]: RVR1960•saved 3/9/2026, 6:51:45 PM
+          - generic [ref=e216]:
+            - generic [ref=e217]:
+              - generic [ref=e218]: 1Y DE ella recibisteis vosotros, que estabais muertos en vuestros delitos y pecados,
+              - generic [ref=e219]: "2En que en otro tiempo anduvisteis conforme á la condición de este mundo, conforme al príncipe de la potestad del aire, el espíritu que ahora obra en los hijos de desobediencia: 1 Vocación de los Gentiles. 2 Unión de Judíos y Gentiles."
+              - generic [ref=e220]: 3Entre los cuales todos nosotros también vivimos en otro tiempo en los deseos de nuestra carne, haciendo la voluntad de la carne y de los pensamientos; y éramos por naturaleza hijos de ira, también como los demás.
+              - generic [ref=e221]: 4Empero Dios, que es rico en misericordia, por su mucho amor con que nos amó,
+              - generic [ref=e222]: 5Aun estando nosotros muertos en pecados, nos dió vida juntamente con Cristo; por gracia sois salvos;
+              - generic [ref=e223]: 6Y juntamente nos resucitó, y asimismo nos hizo sentar en los cielos con Cristo Jesús,
+              - generic [ref=e224]: 7Para mostrar en los siglos venideros las abundantes riquezas de su gracia en su bondad para con nosotros en Cristo Jesús.
+              - generic [ref=e225]: "8Porque por gracia sois salvos por la fe; y esto no de vosotros, pues es don de Dios:"
+              - generic [ref=e226]: 9No por obras, para que nadie se gloríe.
+              - generic [ref=e227]: 10Porque somos hechura suya, criados en Cristo Jesús para buenas obras, las cuales Dios preparó para que anduviésemos en ellas. 2.1 Col. 2.13. 2.2 vers. 3,11,13 2.2 Ga. 1.4. 2.2 Jn. 12.31. cp. 6.12 2.2 cp. 5.6. Col. 3.6. 2.3 Ga. 5.26. 2.3 Sal. 51.5. 2.5 Ro. 5.6,8,10. 2.5 Ro. 6.4,5. 2.6 cp. 1.3. 2.8 ver. 5. Ro. 3.24. 2.8 Ro. 4.16. 2.8 Jn. 6.44,65. 2.9 Ro. 11.6. 2.10 cp. 1.4.
+            - generic [ref=e228]:
+              - button "Generate" [ref=e229] [cursor=pointer]
+              - generic [ref=e230]:
+                - generic [ref=e231]:
+                  - img [ref=e232]
+                  - heading "Passage Overview" [level=3] [ref=e235]
+                  - generic [ref=e236]: AI-Generated
+                - generic [ref=e237]:
+                  - heading "Summary" [level=4] [ref=e240]
+                  - paragraph [ref=e241]: El apóstol Pablo describe el estado previo de los creyentes como muertos en pecado y su transformación por la gracia divina, que los resucita con Cristo y los sitúa en los cielos. La salvación se presenta como un don de Dios, no por obras humanas, y los creyentes son creados para buenas obras.
+                - generic [ref=e242]:
+                  - generic [ref=e243]:
+                    - img [ref=e244]
+                    - heading "Interpretive Center" [level=4] [ref=e248]
+                  - paragraph [ref=e250]: La salvación es un acto de gracia soberana que trasciende la condición humana, y el creyente es obra maestra de Dios destinado a vivir en obediencia.
+                - generic [ref=e251]:
+                  - generic [ref=e252]:
+                    - img [ref=e253]
+                    - heading "Main Tension" [level=4] [ref=e255]
+                  - paragraph [ref=e257]: Cómo reconciliar la idea de que la salvación es un don gratuito con la exigencia de buenas obras como fruto auténtico del creyente.
+            - generic [ref=e258]:
+              - button "Generate" [ref=e259] [cursor=pointer]
+              - generic [ref=e260]:
+                - generic [ref=e261]:
+                  - img [ref=e262]
+                  - heading "Historical Context" [level=3] [ref=e265]
+                - generic [ref=e266]:
+                  - heading "Efesios 2:1-10" [level=4] [ref=e267]
+                  - paragraph [ref=e268]: Historical, Cultural & Geographical Context
+                - generic [ref=e269]:
+                  - generic [ref=e270]:
+                    - img [ref=e271]
+                    - heading "Historical Context" [level=5] [ref=e274]
+                  - generic [ref=e275]:
+                    - generic [ref=e276]:
+                      - paragraph [ref=e277]: El apóstol Pablo, autor de Efesios, era un judío del siglo I que se convirtió al cristianismo tras una visión en el camino a Damasco. Su misión principal fue difundir la fe cristiana entre los gentiles del Imperio Romano.
+                      - generic [ref=e278]:
+                        - generic [ref=e279]: Siglo I d.C. (c. 50‑60)
+                        - generic [ref=e280]: •
+                        - generic [ref=e281]: Hechos 9; Efesios 1:1
+                    - generic [ref=e282]:
+                      - paragraph [ref=e283]: La ciudad de Éfeso, donde se dirigió la epístola, era un importante centro comercial y religioso del Imperio Romano, famoso por su templo a Artemisa y por ser un punto de encuentro entre culturas grecorromanas y judías.
+                      - generic [ref=e284]:
+                        - generic [ref=e285]: Imperio Romano, siglo I
+                        - generic [ref=e286]: •
+                        - generic [ref=e287]: Efesios 1:3; Historia de los pueblos del mundo, Plinio el Viejo
+                    - generic [ref=e288]:
+                      - paragraph [ref=e289]: El concepto de ‘príncipe de la potestad del aire’ (Efesios 2:2) refleja la influencia de la filosofía helenística y el cristianismo primitivo en la interpretación del mal como una fuerza espiritual.
+                      - generic [ref=e290]:
+                        - generic [ref=e291]: Siglo I‑II d.C.
+                        - generic [ref=e292]: •
+                        - generic [ref=e293]: Efesios 2:2; Comentario de E. P. Sanders
+                    - generic [ref=e294]:
+                      - paragraph [ref=e295]: La idea de la ‘resurrección y sentarse en los cielos’ (Efesios 2:6) se basa en la creencia cristiana de que los creyentes participan en la gloria celestial junto a Cristo, una enseñanza desarrollada por los primeros teólogos paulinos.
+                      - generic [ref=e296]:
+                        - generic [ref=e297]: Siglo I‑II d.C.
+                        - generic [ref=e298]: •
+                        - generic [ref=e299]: Efesios 2:6; Comentario de N. T. Wright
+                - generic [ref=e300]:
+                  - generic [ref=e301]:
+                    - img [ref=e302]
+                    - heading "Cultural Context" [level=5] [ref=e307]
+                  - generic [ref=e308]:
+                    - generic [ref=e309]:
+                      - paragraph [ref=e310]: Los judíos practicaban la circuncisión como signo de pacto con Dios, mientras que los gentiles no lo hacían; la epístola subraya la unidad entre ambos grupos.
+                      - text: law
+                    - generic [ref=e311]:
+                      - paragraph [ref=e312]: El concepto de ‘vida en la carne’ (Efesios 2:3) refleja la práctica del hedonismo y el culto a los dioses paganos que predominaba en la sociedad romana.
+                      - text: belief
+                    - generic [ref=e313]:
+                      - paragraph [ref=e314]: La expresión ‘ser hijos de ira’ (Efesios 2:3) se relaciona con la creencia judía de que el pecado genera ira divina, una idea que también se encuentra en los Salmos.
+                      - text: belief
+                    - generic [ref=e315]:
+                      - paragraph [ref=e316]: El uso de la palabra ‘gracia’ (Efesios 2:8‑9) indica una práctica teológica de la época que enfatizaba el don divino como base de la salvación, contrastando con las leyes judías.
+                      - text: belief
+                - generic [ref=e317]:
+                  - generic [ref=e318]:
+                    - img [ref=e319]
+                    - heading "Geographical Context" [level=5] [ref=e322]
+                  - generic [ref=e323]:
+                    - generic [ref=e324]:
+                      - heading "Éfeso" [level=6] [ref=e325]
+                      - paragraph [ref=e326]: Ciudad portuaria en la costa occidental de Asia Menor, capital del reino de Jonás y centro comercial.
+                      - paragraph [ref=e327]:
+                        - strong [ref=e328]: "Significance:"
+                        - text: Lugar donde se escribió la epístola; importante para el cristianismo primitivo.
+                      - paragraph [ref=e329]: "Modern location: Izmir, Turquía"
+                    - generic [ref=e330]:
+                      - heading "Asia Menor" [level=6] [ref=e331]
+                      - paragraph [ref=e332]: Región del actual oeste de Turquía, donde se extendió el cristianismo en los primeros siglos.
+                      - paragraph [ref=e333]:
+                        - strong [ref=e334]: "Significance:"
+                        - text: Contexto geográfico del Imperio Romano y la difusión de las ideas paulinas.
+                      - paragraph [ref=e335]: "Modern location: Turquía"
+                - generic [ref=e336]: "Data source: llm-generated"
+            - generic [ref=e337]:
+              - button "Generate" [ref=e338] [cursor=pointer]
+              - generic [ref=e339]:
+                - generic [ref=e340]:
+                  - img [ref=e341]
+                  - heading "Translation Comparison" [level=3] [ref=e343]
+                - generic [ref=e344]:
+                  - heading "Efesios 2:1-10" [level=4] [ref=e345]
+                  - paragraph [ref=e346]: 2 translations compared
+                - generic [ref=e347]:
+                  - heading "Key Differences" [level=4] [ref=e348]:
+                    - img [ref=e349]
+                    - text: Key Differences
+                  - generic [ref=e351]:
+                    - generic [ref=e352]:
+                      - generic [ref=e353]:
+                        - img [ref=e354]
+                        - generic [ref=e356]: Literal vs Dynamic
+                      - generic [ref=e357]: medium significance
+                    - paragraph [ref=e358]:
+                      - strong [ref=e359]: "Difference:"
+                      - text: El RVR mantiene la construcción pasiva de Cristo como fuente, mientras NBLA usa activo con ‘Él’
+                    - paragraph [ref=e360]:
+                      - strong [ref=e361]: "Explanation:"
+                      - text: El RVR enfatiza la obra de Dios como ‘de ella’ (Cristo), subrayando la pasividad del creyente; NBLA presenta a Cristo como agente directo, lo que puede percibirse como más dinámico y cercano.
+                    - generic [ref=e362]:
+                      - generic [ref=e363]: "RVR1960: \"Y DE ella recibisteis vosotros, que estabais muertos en vuestros delitos y pecados\""
+                      - generic [ref=e364]: "NBLA: \"Y Él les dio vida a ustedes, que estaban muertos en sus delitos y pecados\""
+                  - generic [ref=e365]:
+                    - generic [ref=e366]:
+                      - generic [ref=e367]:
+                        - img [ref=e368]
+                        - generic [ref=e370]: Theological Term
+                      - generic [ref=e371]: low significance
+                    - paragraph [ref=e372]:
+                      - strong [ref=e373]: "Difference:"
+                      - text: Uso de ‘mucho’ vs ‘gran’
+                    - paragraph [ref=e374]:
+                      - strong [ref=e375]: "Explanation:"
+                      - text: Ambos términos son sinónimos, pero ‘mucho’ es más coloquial y tradicional en la RVR; NBLA opta por ‘gran’, que suena más formal y puede enfatizar la magnitud del amor.
+                    - generic [ref=e376]:
+                      - generic [ref=e377]: "RVR1960: \"por su mucho amor con que nos amó\""
+                      - generic [ref=e378]: "NBLA: \"por causa del gran amor con que nos amó\""
+                  - generic [ref=e379]:
+                    - generic [ref=e380]:
+                      - generic [ref=e381]:
+                        - img [ref=e382]
+                        - generic [ref=e384]: Verb Difference
+                      - generic [ref=e385]: medium significance
+                    - paragraph [ref=e386]:
+                      - strong [ref=e387]: "Difference:"
+                      - text: Orden y puntuación de la cláusula de gracia
+                    - paragraph [ref=e388]:
+                      - strong [ref=e389]: "Explanation:"
+                      - text: RVR separa la salvación por gracia como una cláusula independiente, mientras NBLA la integra entre paréntesis, lo que puede afectar la interpretación de causalidad y énfasis.
+                    - generic [ref=e390]:
+                      - generic [ref=e391]: "RVR1960: \"nos dió vida juntamente con Cristo; por gracia sois salvos\""
+                      - generic [ref=e392]: "NBLA: \"nos dio vida juntamente con Cristo (por gracia ustedes han sido salvados)\""
+                  - generic [ref=e393]:
+                    - generic [ref=e394]:
+                      - generic [ref=e395]:
+                        - img [ref=e396]
+                        - generic [ref=e398]: Addition/Omission
+                      - generic [ref=e399]: medium significance
+                    - paragraph [ref=e400]:
+                      - strong [ref=e401]: "Difference:"
+                      - text: Uso de subjuntivo imperfecto vs. pluscuamperfecto
+                    - paragraph [ref=e402]:
+                      - strong [ref=e403]: "Explanation:"
+                      - text: RVR emplea el subjuntivo imperfecto, indicando una acción futura en relación con la salvación; NBLA usa pluscuamperfecto, sugiriendo una acción ya completada en el pasado. Esto altera la percepción temporal de las buenas obras.
+                    - generic [ref=e404]:
+                      - generic [ref=e405]: "RVR1960: \"para que anduviésemos en ellas\""
+                      - generic [ref=e406]: "NBLA: \"para que anduviéramos en ellas\""
+                  - generic [ref=e407]:
+                    - generic [ref=e408]:
+                      - generic [ref=e409]:
+                        - img [ref=e410]
+                        - generic [ref=e412]: Literal vs Dynamic
+                      - generic [ref=e413]: low significance
+                    - paragraph [ref=e414]:
+                      - strong [ref=e415]: "Difference:"
+                      - text: Adjetivo ‘abundantes’ vs. ‘sobreabundantes’
+                    - paragraph [ref=e416]:
+                      - strong [ref=e417]: "Explanation:"
+                      - text: NBLA intensifica la idea de abundancia con ‘sobreabundantes’, lo que puede percibirse como más emotivo y enfatizado, mientras RVR mantiene un tono más moderado.
+                    - generic [ref=e418]:
+                      - generic [ref=e419]: "RVR1960: \"para mostrar en los siglos venideros las abundantes riquezas de su gracia\""
+                      - generic [ref=e420]: "NBLA: \"a fin de poder mostrar en los siglos venideros las sobreabundantes riquezas de Su gracia\""
+                - generic [ref=e421]:
+                  - heading "Verse-by-Verse Comparison" [level=4] [ref=e422]:
+                    - img [ref=e423]
+                    - text: Verse-by-Verse Comparison
+                  - generic [ref=e425]:
+                    - generic [ref=e426]:
+                      - generic [ref=e427]: Verse
+                      - generic [ref=e429]:
+                        - generic [ref=e430]:
+                          - paragraph [ref=e431]: NBLA
+                          - paragraph [ref=e432]: Nueva Biblia de las Américas
+                        - generic [ref=e433]: formal
+                      - generic [ref=e435]:
+                        - generic [ref=e436]:
+                          - paragraph [ref=e437]: RVR1960
+                          - paragraph [ref=e438]: Reina-Valera 1960
+                        - generic [ref=e439]: formal
+                    - generic [ref=e440]:
+                      - generic [ref=e441]:
+                        - generic [ref=e442]: "1"
+                        - generic [ref=e443]: Y Él les dio vida a ustedes, que estaban muertos en sus delitos y pecados,
+                        - generic [ref=e444]: Y DE ella recibisteis vosotros, que estabais muertos en vuestros delitos y pecados,
+                      - generic [ref=e445]:
+                        - generic [ref=e446]: "2"
+                        - generic [ref=e447]: en los cuales anduvieron en otro tiempo según la corriente de este mundo, conforme al príncipe de la potestad del aire, el espíritu que ahora opera en los hijos de desobediencia.
+                        - generic [ref=e448]: "En que en otro tiempo anduvisteis conforme á la condición de este mundo, conforme al príncipe de la potestad del aire, el espíritu que ahora obra en los hijos de desobediencia: 1 Vocación de los Gentiles. 2 Unión de Judíos y Gentiles."
+                      - generic [ref=e449]:
+                        - generic [ref=e450]: "3"
+                        - generic [ref=e451]: Entre ellos también todos nosotros en otro tiempo vivíamos en las pasiones de nuestra carne, satisfaciendo los deseos de la carne y de la mente, y éramos por naturaleza hijos de ira, lo mismo que los demás.
+                        - generic [ref=e452]: Entre los cuales todos nosotros también vivimos en otro tiempo en los deseos de nuestra carne, haciendo la voluntad de la carne y de los pensamientos; y éramos por naturaleza hijos de ira, también como los demás.
+                      - generic [ref=e453]:
+                        - generic [ref=e454]: "4"
+                        - generic [ref=e455]: Pero Dios, que es rico en misericordia, por causa del gran amor con que nos amó,
+                        - generic [ref=e456]: Empero Dios, que es rico en misericordia, por su mucho amor con que nos amó,
+                      - generic [ref=e457]:
+                        - generic [ref=e458]: "5"
+                        - generic [ref=e459]: aun cuando estábamos muertos en nuestros delitos, nos dio vida juntamente con Cristo (por gracia ustedes han sido salvados),
+                        - generic [ref=e460]: Aun estando nosotros muertos en pecados, nos dió vida juntamente con Cristo; por gracia sois salvos;
+                      - generic [ref=e461]:
+                        - generic [ref=e462]: "6"
+                        - generic [ref=e463]: y con Él nos resucitó y con Él nos sentó en los lugares celestiales en Cristo Jesús,
+                        - generic [ref=e464]: Y juntamente nos resucitó, y asimismo nos hizo sentar en los cielos con Cristo Jesús,
+                      - generic [ref=e465]:
+                        - generic [ref=e466]: "7"
+                        - generic [ref=e467]: a fin de poder mostrar en los siglos venideros las sobreabundantes riquezas de Su gracia por Su bondad para con nosotros en Cristo Jesús.
+                        - generic [ref=e468]: Para mostrar en los siglos venideros las abundantes riquezas de su gracia en su bondad para con nosotros en Cristo Jesús.
+                      - generic [ref=e469]:
+                        - generic [ref=e470]: "8"
+                        - generic [ref=e471]: Porque por gracia ustedes han sido salvados por medio de la fe, y esto no procede de ustedes, sino que es don de Dios;
+                        - generic [ref=e472]: "Porque por gracia sois salvos por la fe; y esto no de vosotros, pues es don de Dios:"
+                      - generic [ref=e473]:
+                        - generic [ref=e474]: "9"
+                        - generic [ref=e475]: no por obras, para que nadie se gloríe.
+                        - generic [ref=e476]: No por obras, para que nadie se gloríe.
+                      - generic [ref=e477]:
+                        - generic [ref=e478]: "10"
+                        - generic [ref=e479]: Porque somos hechura Suya, creados en Cristo Jesús para hacer buenas obras, las cuales Dios preparó de antemano para que anduviéramos en ellas. 2:1 Lit. estando. 2:1 O a causa de. 2:2 Lit. la época. 2:3 Lit. haciendo. 2:4 Lit. de Su. 2:5 O a causa de. 2:9 Lit. de; i.e. como resultado de.
+                        - generic [ref=e480]: Porque somos hechura suya, criados en Cristo Jesús para buenas obras, las cuales Dios preparó para que anduviésemos en ellas. 2.1 Col. 2.13. 2.2 vers. 3,11,13 2.2 Ga. 1.4. 2.2 Jn. 12.31. cp. 6.12 2.2 cp. 5.6. Col. 3.6. 2.3 Ga. 5.26. 2.3 Sal. 51.5. 2.5 Ro. 5.6,8,10. 2.5 Ro. 6.4,5. 2.6 cp. 1.3. 2.8 ver. 5. Ro. 3.24. 2.8 Ro. 4.16. 2.8 Jn. 6.44,65. 2.9 Ro. 11.6. 2.10 cp. 1.4.
+                - generic [ref=e481]:
+                  - heading "Overall Assessment" [level=4] [ref=e482]
+                  - paragraph [ref=e483]: "Ambas traducciones conservan el núcleo doctrinal de la salvación por gracia y las buenas obras. Las diferencias son mayormente estilísticas: RVR mantiene una estructura más fiel al griego y un tono tradicional, mientras NBLA opta por mayor claridad y expresividad. Para la predicación pastoral, se recomienda usar RVR cuando se enfatice la pasividad del creyente ante la obra de Cristo, y NBLA cuando se busque un lenguaje más accesible y emotivo."
+            - generic [ref=e484]:
+              - button "Generate" [ref=e485] [cursor=pointer]
+              - generic [ref=e486]:
+                - generic [ref=e487]:
+                  - img [ref=e488]
+                  - heading "Verse Commentary" [level=3] [ref=e490]
+                  - generic [ref=e491]: AI-Generated
+                  - generic [ref=e492]: Efesios 2:1-10
+                - generic [ref=e493]:
+                  - button "Context Efesios 1‑2" [ref=e495] [cursor=pointer]:
+                    - img [ref=e496]
+                    - generic [ref=e499]: Context
+                    - generic [ref=e500]: Efesios 1‑2
+                    - img [ref=e501]
+                  - button "Word Study BDAG" [ref=e504] [cursor=pointer]:
+                    - img [ref=e505]
+                    - generic [ref=e508]: Word Study
+                    - generic [ref=e509]: BDAG
+                    - img [ref=e510]
+                  - button "Historical Eerdmans Commentary" [ref=e513] [cursor=pointer]:
+                    - img [ref=e514]
+                    - generic [ref=e516]: Historical
+                    - generic [ref=e517]: Eerdmans Commentary
+                    - img [ref=e518]
+                  - button "Theological Theological Dictionary of the New Testament" [ref=e521] [cursor=pointer]:
+                    - img [ref=e522]
+                    - generic [ref=e524]: Theological
+                    - generic [ref=e525]: Theological Dictionary of the New Testament
+                    - img [ref=e526]
+                - paragraph [ref=e529]: Micro-commentary provides focused insights on context, key words, historical background, and theological significance.
+            - generic [ref=e530]:
+              - button "Generate" [ref=e531] [cursor=pointer]
+              - generic [ref=e532]:
+                - generic [ref=e533]:
+                  - img [ref=e534]
+                  - heading "Structural Analysis" [level=3] [ref=e538]
+                - generic [ref=e539]:
+                  - generic [ref=e540]:
+                    - paragraph [ref=e541]: Literary Genre
+                    - paragraph [ref=e542]: Epístola
+                  - generic [ref=e543]:
+                    - paragraph [ref=e544]: Passage Structure
+                    - generic [ref=e545]:
+                      - generic [ref=e546]:
+                        - generic [ref=e547]:
+                          - generic [ref=e548]: Verses 1-2
+                          - generic [ref=e549]: introducción
+                        - paragraph [ref=e550]: Presentación del estado de los creyentes antes de la salvación
+                      - generic [ref=e551]:
+                        - generic [ref=e552]:
+                          - generic [ref=e553]: Verses 3-4
+                          - generic [ref=e554]: desarrollo
+                        - paragraph [ref=e555]: Explicación de la condición humana y el contraste con la misericordia divina
+                      - generic [ref=e556]:
+                        - generic [ref=e557]:
+                          - generic [ref=e558]: Verses 5-7
+                          - generic [ref=e559]: clímax
+                        - paragraph [ref=e560]: Revelación de la vida nueva y el poder de Cristo
+                      - generic [ref=e561]:
+                        - generic [ref=e562]:
+                          - generic [ref=e563]: Verses 8-9
+                          - generic [ref=e564]: conclusión
+                        - paragraph [ref=e565]: Afirmación de la gracia como fundamento de la salvación y advertencia contra las obras
+                      - generic [ref=e566]:
+                        - generic [ref=e567]:
+                          - generic [ref=e568]: Verses 10
+                          - generic [ref=e569]: conclusión
+                        - paragraph [ref=e570]: Llamado a vivir en las buenas obras preparadas por Dios
+                  - button "Chiastic Structure A-B-C-B'-A'" [ref=e572] [cursor=pointer]:
+                    - generic [ref=e573]:
+                      - generic [ref=e574]: Chiastic Structure
+                      - generic [ref=e575]: A-B-C-B'-A'
+                    - img [ref=e576]
+                  - paragraph [ref=e579]:
+                    - generic [ref=e580]: "Data source: llm-generated"
+                    - text: • Structural analysis reveals the literary design and flow of the passage.
+            - generic [ref=e581]:
+              - button "Generate" [ref=e582] [cursor=pointer]
+              - generic [ref=e583]:
+                - generic [ref=e584]:
+                  - img [ref=e585]
+                  - heading "Interpretive Challenges" [level=3] [ref=e587]
+                - generic [ref=e588]:
+                  - paragraph [ref=e589]: Challenge
+                  - paragraph [ref=e590]: El significado de la frase "nos dio vida juntamente con Cristo" y su relación con la doctrina de la regeneración, la justificación por gracia y la obra redentora de Cristo.
+                - generic [ref=e591]:
+                  - paragraph [ref=e592]: Different Interpretive Views
+                  - generic [ref=e593]:
+                    - button "Regeneración como nuevo nacimiento" [ref=e595] [cursor=pointer]:
+                      - generic [ref=e597]: Regeneración como nuevo nacimiento
+                      - img [ref=e598]
+                    - button "Justificación por fe sin regeneración explícita" [ref=e601] [cursor=pointer]:
+                      - generic [ref=e603]: Justificación por fe sin regeneración explícita
+                      - img [ref=e604]
+                    - button "Regeneración y justificación como un solo acto" [ref=e607] [cursor=pointer]:
+                      - generic [ref=e609]: Regeneración y justificación como un solo acto
+                      - img [ref=e610]
+                    - button "Regeneración como proceso continuo" [ref=e613] [cursor=pointer]:
+                      - generic [ref=e615]: Regeneración como proceso continuo
+                      - img [ref=e616]
+                - button "SDA Perspective" [ref=e619] [cursor=pointer]:
+                  - generic [ref=e620]:
+                    - img [ref=e621]
+                    - generic [ref=e623]: SDA Perspective
+                  - img [ref=e624]
+                - paragraph [ref=e627]:
+                  - generic [ref=e628]: "Data source: llm-generated"
+                  - text: • Understanding different interpretive views helps develop balanced, well-informed sermons.
+            - generic [ref=e629]:
+              - button "Generate" [ref=e630] [cursor=pointer]
+              - generic [ref=e631]:
+                - generic [ref=e632]:
+                  - img [ref=e633]
+                  - heading "Canonical Theme Tracing" [level=3] [ref=e638]
+                  - generic [ref=e639]: AI-Generated
+                - generic [ref=e640]:
+                  - button "Gracia PRIMARY El favor inmerecido de Dios que salva y transforma. gracia 3 verses" [ref=e642] [cursor=pointer]:
+                    - generic [ref=e643]:
+                      - generic [ref=e644]:
+                        - heading "Gracia" [level=4] [ref=e645]
+                        - generic [ref=e646]: PRIMARY
+                      - paragraph [ref=e647]: El favor inmerecido de Dios que salva y transforma.
+                      - generic [ref=e648]:
+                        - generic [ref=e649]: gracia
+                        - generic [ref=e650]: 3 verses
+                    - img [ref=e651]
+                  - button "Redención El acto de rescatar a la humanidad del pecado y su consecuencia. gospel 4 verses" [ref=e654] [cursor=pointer]:
+                    - generic [ref=e655]:
+                      - heading "Redención" [level=4] [ref=e657]
+                      - paragraph [ref=e658]: El acto de rescatar a la humanidad del pecado y su consecuencia.
+                      - generic [ref=e659]:
+                        - generic [ref=e660]: gospel
+                        - generic [ref=e661]: 4 verses
+                    - img [ref=e662]
+                  - button "Unión de Gentiles y Judíos La inclusión de los no judíos en la comunidad de salvación. gospel 3 verses" [ref=e665] [cursor=pointer]:
+                    - generic [ref=e666]:
+                      - heading "Unión de Gentiles y Judíos" [level=4] [ref=e668]
+                      - paragraph [ref=e669]: La inclusión de los no judíos en la comunidad de salvación.
+                      - generic [ref=e670]:
+                        - generic [ref=e671]: gospel
+                        - generic [ref=e672]: 3 verses
+                    - img [ref=e673]
+                  - button "Espíritu Santo El poder divino que guía, fortalece y transforma a los creyentes. gospel 4 verses" [ref=e676] [cursor=pointer]:
+                    - generic [ref=e677]:
+                      - heading "Espíritu Santo" [level=4] [ref=e679]
+                      - paragraph [ref=e680]: El poder divino que guía, fortalece y transforma a los creyentes.
+                      - generic [ref=e681]:
+                        - generic [ref=e682]: gospel
+                        - generic [ref=e683]: 4 verses
+                    - img [ref=e684]
+                - paragraph [ref=e687]: Canonical themes trace how biblical ideas develop across Scripture, showing God's plan unfolding from foundation to fulfillment.
+            - generic [ref=e688]:
+              - generic [ref=e689]:
+                - img [ref=e690]
+                - heading "🕊 Spirit of Prophecy" [level=3] [ref=e692]
+                - generic [ref=e693]: 5 insights
+              - generic [ref=e694]:
+                - 'button "El Ministerio de Curación es_MC 6.53 Directly comments on this verse El infundirá vida al alma de los que “estabais muertos en vuestros delitos.” Efesios 2:1 . Librará al cautivo que está sujeto por la debilidad, la des... Related to: Efesios 2:1 Click to read full quote" [ref=e695] [cursor=pointer]':
+                  - generic [ref=e696]:
+                    - generic [ref=e697]:
+                      - generic [ref=e698]:
+                        - generic [ref=e699]: El Ministerio de Curación
+                        - generic [ref=e700]: es_MC 6.53
+                      - text: Directly comments on this verse
+                    - img [ref=e701]
+                  - paragraph [ref=e705]: El infundirá vida al alma de los que “estabais muertos en vuestros delitos.” Efesios 2:1 . Librará al cautivo que está sujeto por la debilidad, la des...
+                  - paragraph [ref=e706]: "Related to: Efesios 2:1"
+                  - generic [ref=e707]:
+                    - generic [ref=e708]: Click to read full quote
+                    - img [ref=e709]
+                - 'button "Mensajes para los Jóvenes es_MJ 36.3 Directly comments on this verse Él infundirá vida al ser de los que están “muertos en [sus] delitos y pecados”. 2 Librará al cautivo que está sujeto por la debilidad, la desgracia y ... Related to: Efesios 2:1 Click to read full quote" [ref=e711] [cursor=pointer]':
+                  - generic [ref=e712]:
+                    - generic [ref=e713]:
+                      - generic [ref=e714]:
+                        - generic [ref=e715]: Mensajes para los Jóvenes
+                        - generic [ref=e716]: es_MJ 36.3
+                      - text: Directly comments on this verse
+                    - img [ref=e717]
+                  - paragraph [ref=e721]: Él infundirá vida al ser de los que están “muertos en [sus] delitos y pecados”. 2 Librará al cautivo que está sujeto por la debilidad, la desgracia y ...
+                  - paragraph [ref=e722]: "Related to: Efesios 2:1"
+                  - generic [ref=e723]:
+                    - generic [ref=e724]: Click to read full quote
+                    - img [ref=e725]
+                - 'button "Testimonios para la Iglesia Tomo 6 es_6TPI 38.42 Directly comments on this verse Efesios 2:4-6 . Nuestra gran necesidad es la unidad, perfecta unión en la obra de Dios. Los que no pueden apreciar la importancia y la fuerza de la ob... Related to: Efesios 2:4-6 Click to read full quote" [ref=e727] [cursor=pointer]':
+                  - generic [ref=e728]:
+                    - generic [ref=e729]:
+                      - generic [ref=e730]:
+                        - generic [ref=e731]: Testimonios para la Iglesia Tomo 6
+                        - generic [ref=e732]: es_6TPI 38.42
+                      - text: Directly comments on this verse
+                    - img [ref=e733]
+                  - paragraph [ref=e737]: Efesios 2:4-6 . Nuestra gran necesidad es la unidad, perfecta unión en la obra de Dios. Los que no pueden apreciar la importancia y la fuerza de la ob...
+                  - paragraph [ref=e738]: "Related to: Efesios 2:4-6"
+                  - generic [ref=e739]:
+                    - generic [ref=e740]: Click to read full quote
+                    - img [ref=e741]
+                - 'button "Testimonios para los Ministros es_TM 16.241 Directly comments on this verse Lea Efesios 2:4-22 . Se me ha dado este pasaje para usted. Léalo cuidadosamente, como nunca antes lo ha leído. Está lleno de instrucción. El que Crist... Related to: Efesios 2:4-22 Click to read full quote" [ref=e743] [cursor=pointer]':
+                  - generic [ref=e744]:
+                    - generic [ref=e745]:
+                      - generic [ref=e746]:
+                        - generic [ref=e747]: Testimonios para los Ministros
+                        - generic [ref=e748]: es_TM 16.241
+                      - text: Directly comments on this verse
+                    - img [ref=e749]
+                  - paragraph [ref=e753]: Lea Efesios 2:4-22 . Se me ha dado este pasaje para usted. Léalo cuidadosamente, como nunca antes lo ha leído. Está lleno de instrucción. El que Crist...
+                  - paragraph [ref=e754]: "Related to: Efesios 2:4-22"
+                  - generic [ref=e755]:
+                    - generic [ref=e756]: Click to read full quote
+                    - img [ref=e757]
+                - 'button "Joyas de los Testimonios Tomo 2 es_2JT 45.3 Directly comments on this verse y juntamente nos resucitó, y asimismo nos hizo sentar en los cielos con Cristo Jesús, para mostrar en los siglos venideros las abundantes riquezas de ... Related to: Efesios 2:4-7 Click to read full quote" [ref=e759] [cursor=pointer]':
+                  - generic [ref=e760]:
+                    - generic [ref=e761]:
+                      - generic [ref=e762]:
+                        - generic [ref=e763]: Joyas de los Testimonios Tomo 2
+                        - generic [ref=e764]: es_2JT 45.3
+                      - text: Directly comments on this verse
+                    - img [ref=e765]
+                  - paragraph [ref=e769]: y juntamente nos resucitó, y asimismo nos hizo sentar en los cielos con Cristo Jesús, para mostrar en los siglos venideros las abundantes riquezas de ...
+                  - paragraph [ref=e770]: "Related to: Efesios 2:4-7"
+                  - generic [ref=e771]:
+                    - generic [ref=e772]: Click to read full quote
+                    - img [ref=e773]
+              - button "View More Insights (25 total)" [ref=e775] [cursor=pointer]
+              - paragraph [ref=e777]: All quotes preserved verbatim from original sources. Spirit of Prophecy insights complement but do not replace Scripture study.
+            - generic [ref=e778]:
+              - button "Generate" [ref=e779] [cursor=pointer]
+              - generic [ref=e780]:
+                - generic [ref=e781]:
+                  - img [ref=e782]
+                  - heading "Study Synthesis" [level=3] [ref=e784]
+                  - generic [ref=e785]: Interpretive Summary
+                - paragraph [ref=e786]: "After analyzing the passage through multiple lenses, here is the theological synthesis:"
+                - generic [ref=e787]:
+                  - heading "Central Claim" [level=4] [ref=e790]
+                  - paragraph [ref=e792]: El Señor, por su inmensa misericordia y gracia, nos resucita de la muerte del pecado y nos hace parte de su obra redentora, no por nuestras obras sino por la fe en Cristo.
+                - generic [ref=e793]:
+                  - generic [ref=e794]:
+                    - img [ref=e795]
+                    - heading "Canonical Significance" [level=4] [ref=e797]
+                  - paragraph [ref=e799]: Efesios 2:1‑10 resume la obra de Cristo como mediador entre el pecado y la salvación, mostrando que la redención es un regalo divino que transforma a los creyentes en instrumentos de buenas obras. Este pasaje conecta la promesa del Antiguo Testamento de un nuevo pacto con la realidad concreta de la vida cristiana, subrayando que la gracia es el fundamento de toda relación con Dios y con los demás.
+                - generic [ref=e800]:
+                  - generic [ref=e801]:
+                    - img [ref=e802]
+                    - heading "Pastoral Takeaway" [level=4] [ref=e804]
+                  - paragraph [ref=e806]: Los creyentes deben vivir en la certeza de que su salvación es un don, no una conquista; por ello, deben responder con obediencia y servicio. La fe auténtica se manifiesta en buenas obras que reflejan la gracia recibida, evitando el orgullo y recordando siempre que somos creados para glorificar a Dios.
+                - generic [ref=e807]:
+                  - heading "Preaching Focus" [level=4] [ref=e810]
+                  - paragraph [ref=e812]: Enfatizar la paradoja de que somos salvos por gracia, pero llamados a vivir en obras que evidencian esa gracia; la predicación debe animar a los fieles a confiar plenamente en Cristo y a responder con una vida de servicio transformado.
+                - paragraph [ref=e814]: This synthesis integrates structural, contextual, canonical, and interpretive insights to provide a unified theological understanding.
+    - button "Keyboard shortcuts" [ref=e815] [cursor=pointer]:
+      - img [ref=e816]

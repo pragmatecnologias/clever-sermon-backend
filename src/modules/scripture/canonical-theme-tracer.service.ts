@@ -54,7 +54,7 @@ export class CanonicalThemeTracerService {
         userId || 'system',
         {
           temperature: 0.4,
-          maxTokens: 2500,
+          maxTokens: 1600,
         }
       );
 
@@ -72,18 +72,8 @@ export class CanonicalThemeTracerService {
 
   private buildPrompt(reference: string, passageText: string, language?: string): string {
     const languageInstruction = language === 'es'
-      ? `CRITICAL INSTRUCTIONS:
-1. You MUST respond ONLY in Spanish. Every field in the JSON must be in Spanish.
-2. Do NOT use any English words in theme names, descriptions, explanations, or snippets.
-3. Return ONLY the JSON object - no explanations, no markdown code blocks, no extra text.
-
-INSTRUCCIONES CRÍTICAS:
-1. Debes responder ÚNICAMENTE en español. Todos los campos del JSON deben estar en español.
-2. NO uses NINGUNA palabra en inglés en nombres de temas, descripciones, explicaciones o fragmentos.
-3. Devuelve SOLAMENTE el objeto JSON - sin explicaciones, sin bloques de código markdown, sin texto adicional.
-
-`
-      : 'Return ONLY the JSON object - no markdown, no extra text.\n\n';
+      ? 'Responde únicamente en español. Todos los campos del JSON deben estar en español. Devuelve solo JSON válido.\n\n'
+      : 'Respond in English and return only valid JSON.\n\n';
 
     return `${languageInstruction}You are a biblical scholar identifying canonical themes that trace through Scripture.
 
@@ -92,31 +82,9 @@ Passage Reference: ${reference}
 Passage Text:
 ${passageText || 'Text not available'}
 
-Analyze this passage and identify 3-6 major theological themes that appear in this passage and trace their development across the Bible.
+Identify 3-4 major theological themes in this passage and trace them across Scripture.
 
-For each theme, provide:
-
-1. **Theme Name** (e.g., "Divine Kingship", "Covenant Faithfulness", "Spirit Empowerment")
-2. **Description** (1 sentence: what this theme is about)
-3. **Explanation** (2-3 sentences: how this theme develops across Scripture)
-4. **Canonical Movement** (e.g., "Genesis → Prophets → Gospels → Revelation")
-5. **Category** (one of: covenant, sanctuary, kingdom, sacrifice, sabbath, remnant, prophecy, gospel, spirit, election, kingship, redemption, judgment, worship, faith, grace)
-6. **Verses** (4-8 key passages showing the theme's development):
-   - **reference**: Bible reference
-   - **snippet**: Brief description of what happens
-   - **explanation**: How this verse contributes to the theme
-   - **stage**: foundation | expansion | echo | fulfillment
-   - **testament**: OT | NT
-   - **era**: Torah | History | Wisdom | Prophets | Gospels | Acts | Epistles | Revelation
-
-**CRITICAL REQUIREMENTS:**
-- Themes must be **theologically meaningful** (not generic like "Faith" or "God")
-- Themes must show **canonical progression** (how the idea develops from OT to NT)
-- Include the **current passage** in the verse list with "YOU ARE HERE" marker
-- Verses should show **clear theological development**, not random associations
-- Stage labels: foundation (earliest appearance), expansion (development), echo (later reaffirmation), fulfillment (NT realization)
-
-Format your response as JSON:
+JSON format:
 {
   "themes": [
     {
@@ -139,7 +107,11 @@ Format your response as JSON:
   ]
 }
 
-Be theologically rigorous and show real canonical development.`;
+Rules:
+- Use 4-6 verses per theme.
+- Include the current passage in one verse list entry with "YOU ARE HERE".
+- Keep themes theologically meaningful and canonically progressive.
+- No markdown or extra text.`;
   }
 
   private parseResponse(response: string, reference: string): CanonicalThemesResponse {

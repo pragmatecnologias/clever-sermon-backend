@@ -139,8 +139,21 @@ export class WorkspaceHelpers {
             canonicalThemes: WorkspaceHelpers.asStringArray(point?.canonicalThemes || point?.themes, 8),
             crossReferences: WorkspaceHelpers.asStringArray(point?.crossReferences || point?.crossRefs, 10),
             subpoints: WorkspaceHelpers.asStringArray(point?.subpoints || point?.children, 10),
+            applications: WorkspaceHelpers.asStringArray(point?.applications || point?.applicationIdeas, 8),
+            discussionQuestions: WorkspaceHelpers.asStringArray(point?.discussionQuestions || point?.questions, 8),
             illustrationIdeas: WorkspaceHelpers.asStringArray(point?.illustrationIdeas || point?.illustrations, 6),
             mediaSuggestions: WorkspaceHelpers.asStringArray(point?.mediaSuggestions || point?.media, 6),
+            egwSupport: Array.isArray(point?.egwSupport)
+              ? point.egwSupport
+                  .map((item: any) => ({
+                    citation: typeof item?.citation === 'string' ? item.citation.trim() : '',
+                    quote: typeof item?.quote === 'string' ? item.quote.trim() : '',
+                    relevance: typeof item?.relevance === 'string' ? item.relevance.trim() : '',
+                  }))
+                  .filter((item: any) => item.citation || item.quote || item.relevance)
+                  .slice(0, 6)
+              : [],
+            references: WorkspaceHelpers.asStringArray(point?.references || point?.explorationReferences, 8),
             notes: typeof point?.notes === 'string' ? point.notes.trim() : '',
           }))
           .filter((point: any) => point.title)
