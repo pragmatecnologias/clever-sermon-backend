@@ -56,7 +56,9 @@ export class SermonIntegrityService {
     applications: string[];
     citations: Array<{ statement: string; verseReferences: string[] }>;
     crossReferences?: string[];
+    language?: string;
   }): Promise<IntegrityReport> {
+    const isSpanish = String(sermonData.language || '').toLowerCase().startsWith('es');
     const issues: IntegrityIssue[] = [];
     const strengths: string[] = [];
     const recommendations: string[] = [];
@@ -64,17 +66,19 @@ export class SermonIntegrityService {
     // Analyze outline points
     const pointAnalysis = await this.analyzeOutlinePoints(
       sermonData.mainPassage,
-      sermonData.outlinePoints
+      sermonData.outlinePoints,
+      isSpanish,
     );
 
     // Analyze applications
     const applicationAnalysis = await this.analyzeApplications(
       sermonData.mainPassage,
-      sermonData.applications
+      sermonData.applications,
+      isSpanish,
     );
 
     // Analyze citations
-    const citationAnalysis = await this.analyzeCitations(sermonData.citations);
+    const citationAnalysis = await this.analyzeCitations(sermonData.citations, isSpanish);
 
     // Collect issues
     pointAnalysis.forEach(p => {
@@ -82,14 +86,18 @@ export class SermonIntegrityService {
         issues.push({
           severity: 'critical',
           category: 'textual_support',
-          message: `Outline point lacks clear textual support: "${p.point.substring(0, 50)}..."`,
+          message: isSpanish
+            ? `El punto del bosquejo no muestra apoyo textual claro: "${p.point.substring(0, 50)}..."`
+            : `Outline point lacks clear textual support: "${p.point.substring(0, 50)}..."`,
           affectedItem: p.point
         });
       } else if (p.supportScore < 0.5) {
         issues.push({
           severity: 'warning',
           category: 'textual_support',
-          message: `Weak textual support for point: "${p.point.substring(0, 50)}..."`,
+          message: isSpanish
+            ? `Apoyo textual débil para el punto: "${p.point.substring(0, 50)}..."`
+            : `Weak textual support for point: "${p.point.substring(0, 50)}..."`,
           affectedItem: p.point
         });
       }
@@ -100,7 +108,9 @@ export class SermonIntegrityService {
         issues.push({
           severity: 'warning',
           category: 'application',
-          message: `Application may not be clearly tied to passage: "${a.application.substring(0, 50)}..."`,
+          message: isSpanish
+            ? `La aplicación podría no estar claramente conectada al pasaje: "${a.application.substring(0, 50)}..."`
+            : `Application may not be clearly tied to passage: "${a.application.substring(0, 50)}..."`,
           affectedItem: a.application
         });
       }
@@ -111,14 +121,18 @@ export class SermonIntegrityService {
         issues.push({
           severity: 'critical',
           category: 'citation',
-          message: `Citation not supported by verse text: ${c.verseReference}`,
+          message: isSpanish
+            ? `La cita no está respaldada por el texto bíblico: ${c.verseReference}`
+            : `Citation not supported by verse text: ${c.verseReference}`,
           affectedItem: c.statement
         });
       } else if (c.supportLevel === 'weak') {
         issues.push({
           severity: 'warning',
           category: 'citation',
-          message: `Weak citation support: ${c.verseReference}`,
+          message: isSpanish
+            ? `Respaldo débil de la cita: ${c.verseReference}`
+            : `Weak citation support: ${c.verseReference}`,
           affectedItem: c.statement
         });
       }
@@ -127,30 +141,54 @@ export class SermonIntegrityService {
     // Identify strengths
     const wellSupportedPoints = pointAnalysis.filter(p => p.supportScore >= 0.7).length;
     if (wellSupportedPoints > 0) {
-      strengths.push(`${wellSupportedPoints} outline points have strong textual support`);
+      strengths.push(
+        isSpanish
+          ? `${wellSupportedPoints} puntos del bosquejo tienen fuerte apoyo textual`
+          : `${wellSupportedPoints} outline points have strong textual support`,
+      );
     }
 
     const verifiedCitations = citationAnalysis.filter(c => c.supportLevel === 'supported').length;
     if (verifiedCitations > 0) {
-      strengths.push(`${verifiedCitations} citations are well-supported by Scripture`);
+      strengths.push(
+        isSpanish
+          ? `${verifiedCitations} citas están bien respaldadas por la Escritura`
+          : `${verifiedCitations} citations are well-supported by Scripture`,
+      );
     }
 
     const tiedApplications = applicationAnalysis.filter(a => a.tiedToPassage).length;
     if (tiedApplications > 0) {
-      strengths.push(`${tiedApplications} applications are clearly tied to the passage`);
+      strengths.push(
+        isSpanish
+          ? `${tiedApplications} aplicaciones están claramente conectadas al pasaje`
+          : `${tiedApplications} applications are clearly tied to the passage`,
+      );
     }
 
     // Generate recommendations
     if (issues.some(i => i.category === 'textual_support')) {
-      recommendations.push('Review outline points to ensure they emerge from the text rather than being imposed on it');
+      recommendations.push(
+        isSpanish
+          ? 'Revisa los puntos del bosquejo para asegurar que surjan del texto y no sean impuestos sobre él'
+          : 'Review outline points to ensure they emerge from the text rather than being imposed on it',
+      );
     }
 
     if (issues.some(i => i.category === 'citation')) {
-      recommendations.push('Verify all Scripture citations to ensure accuracy and proper context');
+      recommendations.push(
+        isSpanish
+          ? 'Verifica todas las citas bíblicas para asegurar precisión y contexto adecuado'
+          : 'Verify all Scripture citations to ensure accuracy and proper context',
+      );
     }
 
     if (issues.some(i => i.category === 'application')) {
-      recommendations.push('Strengthen the connection between applications and the main passage');
+      recommendations.push(
+        isSpanish
+          ? 'Fortalece la conexión entre las aplicaciones y el pasaje principal'
+          : 'Strengthen the connection between applications and the main passage',
+      );
     }
 
     // Calculate overall score
@@ -179,7 +217,8 @@ export class SermonIntegrityService {
 
   private async analyzeOutlinePoints(
     mainPassage: string,
-    points: string[]
+    points: string[],
+    isSpanish: boolean,
   ): Promise<PointIntegrity[]> {
     const results: PointIntegrity[] = [];
     
@@ -196,7 +235,9 @@ export class SermonIntegrityService {
           textSupported,
           supportingVerses: [mainPassage],
           supportScore,
-          issues: textSupported ? [] : ['Point does not clearly emerge from the passage text']
+          issues: textSupported
+            ? []
+            : [isSpanish ? 'El punto no surge claramente del texto del pasaje' : 'Point does not clearly emerge from the passage text']
         });
       }
     } catch (error) {
@@ -207,7 +248,7 @@ export class SermonIntegrityService {
           textSupported: false,
           supportingVerses: [],
           supportScore: 0,
-          issues: ['Could not verify textual support']
+          issues: [isSpanish ? 'No se pudo verificar el apoyo textual' : 'Could not verify textual support']
         });
       }
     }
@@ -217,7 +258,8 @@ export class SermonIntegrityService {
 
   private async analyzeApplications(
     mainPassage: string,
-    applications: string[]
+    applications: string[],
+    isSpanish: boolean,
   ): Promise<ApplicationIntegrity[]> {
     const results: ApplicationIntegrity[] = [];
     
@@ -233,7 +275,9 @@ export class SermonIntegrityService {
           application: app,
           tiedToPassage,
           relevanceScore,
-          issues: tiedToPassage ? [] : ['Application connection to passage is unclear']
+          issues: tiedToPassage
+            ? []
+            : [isSpanish ? 'La conexión de la aplicación con el pasaje no es clara' : 'Application connection to passage is unclear']
         });
       }
     } catch (error) {
@@ -242,7 +286,7 @@ export class SermonIntegrityService {
           application: app,
           tiedToPassage: false,
           relevanceScore: 0,
-          issues: ['Could not verify passage connection']
+          issues: [isSpanish ? 'No se pudo verificar la conexión con el pasaje' : 'Could not verify passage connection']
         });
       }
     }
@@ -251,7 +295,8 @@ export class SermonIntegrityService {
   }
 
   private async analyzeCitations(
-    citations: Array<{ statement: string; verseReferences: string[] }>
+    citations: Array<{ statement: string; verseReferences: string[] }>,
+    isSpanish: boolean,
   ): Promise<CitationIntegrity[]> {
     const results: CitationIntegrity[] = [];
 
@@ -267,7 +312,14 @@ export class SermonIntegrityService {
           verseReference: ref,
           verified: validation.supportLevel === 'supported',
           supportLevel: validation.supportLevel,
-          issues: validation.supportLevel === 'supported' ? [] : [validation.explanation]
+          issues:
+            validation.supportLevel === 'supported'
+              ? []
+              : [
+                  isSpanish
+                    ? this.translateCitationExplanation(validation.explanation)
+                    : validation.explanation,
+                ],
         });
       }
     }
@@ -297,5 +349,16 @@ export class SermonIntegrityService {
   private calculateRelevance(application: string, passageText: string): number {
     // Similar to textual support but with lower threshold
     return this.calculateTextualSupport(application, passageText) * 0.8;
+  }
+
+  private translateCitationExplanation(explanation: string): string {
+    const value = String(explanation || '').trim();
+    if (!value) return 'La cita necesita verificación adicional.';
+
+    if (/not supported/i.test(value)) return 'La cita no está respaldada por el texto bíblico citado.';
+    if (/weak/i.test(value)) return 'La cita muestra un respaldo débil y requiere revisión.';
+    if (/context/i.test(value)) return 'La cita requiere una revisión de contexto.';
+    if (/could not/i.test(value) || /unable/i.test(value)) return 'No se pudo verificar la cita con los datos disponibles.';
+    return value;
   }
 }

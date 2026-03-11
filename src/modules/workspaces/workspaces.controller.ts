@@ -171,7 +171,8 @@ export class WorkspacesController {
       mainPassage: workspace.mainPassage,
       outlinePoints,
       applications,
-      citations
+      citations,
+      language: workspace.language || 'en',
     });
   }
 
