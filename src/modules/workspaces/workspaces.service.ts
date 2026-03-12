@@ -805,18 +805,30 @@ Return ONLY valid JSON in this exact shape:
 {
   "mediaSuggestions": [
     {
-      "type": "Presentación|Visual Principal|Audio / Voz|Canto Tema|Video|Social / Promoción",
+      "type": "Image · Hero|Image · Point 1|Image · Point 2|Image · Point 3|Image · Application|Image · Closing|Video · Intro Loop|Video · Transition|Voice · Opening Reflection|Voice · Closing Appeal|Music · Theme Song|Music · Instrumental Bed|Social · Instagram Post|Social · Instagram Story|Social · Facebook Post|Social · WhatsApp Status|Social · YouTube Thumbnail|Social · X Post",
       "intent": "short intent label",
+      "useCase": "where and how the pastor should use this asset during sermon delivery",
       "prompt": "final production prompt"
     }
   ]
 }
 
 Rules:
-- Generate 5-8 suggestions total.
+- Generate 12-18 suggestions total.
+- Required minimums:
+  - Images: at least 6 (Hero, each major point, Application, Closing).
+  - Video: at least 2 (Intro Loop, Transition).
+  - Voice: at least 2 (Opening Reflection, Closing Appeal).
+  - Music: at least 2 (Theme Song, Instrumental Bed).
+  - Social: at least 4 (Instagram Post, Instagram Story, Facebook Post, WhatsApp Status).
 - Every suggestion must be concrete and usable as a prompt, not abstract advice.
 - Prompts must be context-grounded in the passage, theological focus, and audience.
-- Prefer one suggestion per core media type: slides, image, narration/audio, song, video, social promo.
+- Do NOT generate slide/presentation prompts.
+- Prioritize deliverable assets: images, videos, song audio, pastor voice audio, social promo.
+- For "Voz Pastoral", "useCase" must explain practical sermon usage (opening reflection, transition narration, closing appeal recap, etc.).
+- For image/video prompts, include visual direction details (subject, environment, symbolism, camera/framing, lighting, style, color palette).
+- For music prompts, include mode/genre/tempo/mood/instrumentation and use-case constraints.
+- For social prompts, include platform-specific framing and wording that fits each network format.
 - Keep "intent" short (2-6 words).
 - No markdown, no prose outside JSON, no code fences.`;
   }
@@ -1230,9 +1242,9 @@ Rules:
     };
   }
 
-  private normalizeMediaSuggestionCards(value: any, limit = 8): Array<{ type: string; intent: string; prompt: string }> {
+  private normalizeMediaSuggestionCards(value: any, limit = 24): Array<{ type: string; intent: string; useCase?: string; prompt: string }> {
     if (!Array.isArray(value)) return [];
-    const cards: Array<{ type: string; intent: string; prompt: string }> = [];
+    const cards: Array<{ type: string; intent: string; useCase?: string; prompt: string }> = [];
     for (const item of value) {
       if (typeof item === 'string') {
         const prompt = this.asString(item);
@@ -1245,12 +1257,23 @@ Rules:
         continue;
       }
       const type = this.asString(item?.type || item?.label || item?.name);
+      const lowerType = type.toLowerCase();
+      if (
+        lowerType.includes('presentación') ||
+        lowerType.includes('presentation') ||
+        lowerType.includes('slide') ||
+        lowerType.includes('deck')
+      ) {
+        continue;
+      }
       const intent = this.asString(item?.intent || item?.category || item?.purpose);
+      const useCase = this.asString(item?.useCase || item?.usage || item?.howToUse);
       const prompt = this.asString(item?.prompt || item?.text || item?.content || item?.description);
       if (!prompt) continue;
       cards.push({
         type: type || 'Media',
         intent: intent || 'Study prompt',
+        ...(useCase ? { useCase } : {}),
         prompt,
       });
     }
@@ -1348,9 +1371,9 @@ Rules:
 
     const mediaSuggestionCards = this.normalizeMediaSuggestionCards(
       categorySource?.mediaSuggestionCards || source?.mediaSuggestionCards || categorySource?.mediaSuggestions || source?.mediaSuggestions,
-      12,
+      24,
     );
-    const mediaSuggestions = this.asStringArray(categorySource?.mediaSuggestions || categorySource?.media || source?.mediaSuggestions, 12);
+    const mediaSuggestions = this.asStringArray(categorySource?.mediaSuggestions || categorySource?.media || source?.mediaSuggestions, 24);
 
     return {
       movementAssets,
@@ -1358,7 +1381,7 @@ Rules:
         applications: this.asStringArray(categorySource?.applications || source?.applications, 12),
         discussionQuestions: this.asStringArray(categorySource?.discussionQuestions || categorySource?.questions || source?.discussionQuestions, 12),
         illustrationIdeas: this.asStringArray(categorySource?.illustrationIdeas || categorySource?.illustrations || source?.illustrationIdeas, 12),
-        mediaSuggestions: mediaSuggestions.length ? mediaSuggestions : mediaSuggestionCards.map((item) => item.prompt).slice(0, 12),
+        mediaSuggestions: mediaSuggestions.length ? mediaSuggestions : mediaSuggestionCards.map((item) => item.prompt).slice(0, 24),
         mediaSuggestionCards,
         egwSupport: normalizedEgw.slice(0, 10),
         references: normalizedReferences,
@@ -2071,13 +2094,13 @@ Rules:
       workspace,
     );
 
-    const existingPrompts = this.asStringArray(existingAssets?.categoryAssets?.mediaSuggestions, 12);
+    const existingPrompts = this.asStringArray(existingAssets?.categoryAssets?.mediaSuggestions, 24);
     const prompt =
       promptOverride ||
       this.buildMediaSuggestionsPrompt(workspace, passageText, studyInputs, normalizedSections, existingPrompts);
     const response = await this.llmService.generateCompletion(prompt, userId, {
       temperature: 0.35,
-      maxTokens: 1800,
+      maxTokens: 2600,
     });
     this.logLlmOutput('media-suggestions', response);
 
@@ -2090,7 +2113,7 @@ Rules:
           ? parsed.suggestions
           : [];
 
-    let mediaSuggestionCards = this.normalizeMediaSuggestionCards(rawSuggestions, 12);
+    let mediaSuggestionCards = this.normalizeMediaSuggestionCards(rawSuggestions, 24);
     if (!mediaSuggestionCards.length) {
       mediaSuggestionCards = this.parseListFromResponse(response)
         .map((item) => ({
@@ -2099,7 +2122,7 @@ Rules:
           prompt: this.asString(item),
         }))
         .filter((item) => item.prompt)
-        .slice(0, 12);
+        .slice(0, 24);
     }
 
     const mergedAssets = {
@@ -2107,7 +2130,7 @@ Rules:
       categoryAssets: {
         ...(existingAssets?.categoryAssets || {}),
         mediaSuggestionCards,
-        mediaSuggestions: mediaSuggestionCards.map((item) => item.prompt).slice(0, 12),
+        mediaSuggestions: mediaSuggestionCards.map((item) => item.prompt).slice(0, 24),
       },
     };
 

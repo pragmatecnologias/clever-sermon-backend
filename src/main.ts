@@ -4,6 +4,8 @@ import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { RetryInterceptor } from './common/interceptors/retry.interceptor';
 import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
+import * as express from 'express';
+import * as path from 'path';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -27,6 +29,8 @@ async function bootstrap() {
   // Global interceptors for resilience
   app.useGlobalInterceptors(new RetryInterceptor());
   app.useGlobalInterceptors(new TimeoutInterceptor());
+
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
   
   app.setGlobalPrefix('api/v1');
   

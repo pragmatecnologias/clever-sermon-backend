@@ -18,6 +18,7 @@ import { SearchModule } from './modules/search/search.module';
 import { VisualizationModule } from './modules/visualization/visualization.module';
 import { EGWModule } from './modules/egw/egw.module';
 import { AnalysisModule } from './modules/analysis/analysis.module';
+import { ChurchSettingsModule } from './modules/church-settings/church-settings.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { AnalysisModule } from './modules/analysis/analysis.module';
     VisualizationModule,
     EGWModule,
     AnalysisModule,
+    ChurchSettingsModule,
   ],
 })
 export class AppModule {}

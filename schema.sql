@@ -67,6 +67,24 @@ CREATE TABLE IF NOT EXISTS users (
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS church_settings (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  "userId" uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  "churchName" text,
+  "addressLine1" text,
+  "addressLine2" text,
+  city text,
+  state text,
+  "postalCode" text,
+  country text,
+  phone text,
+  website text,
+  "logoUrl" text,
+  "defaultTimezone" text,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS bible_translations (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   code text NOT NULL UNIQUE,

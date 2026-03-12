@@ -15,6 +15,7 @@ DROP TABLE IF EXISTS sermon_applications CASCADE;
 DROP TABLE IF EXISTS sermon_manuscripts CASCADE;
 DROP TABLE IF EXISTS sermon_outlines CASCADE;
 DROP TABLE IF EXISTS sermon_workspaces CASCADE;
+DROP TABLE IF EXISTS church_settings CASCADE;
 DROP TABLE IF EXISTS bible_translations CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 

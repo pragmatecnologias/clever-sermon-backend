@@ -21,6 +21,7 @@ import { AiConversation, AiMode } from '../entities/ai-conversation.entity';
 import { LlmRequest } from '../entities/llm-request.entity';
 import { LlmProvider } from '../entities/enums/llm-provider.enum';
 import { SermonDnaAnalysis } from '../entities/sermon-dna-analysis.entity';
+import { ChurchSettings } from '../entities/church-settings.entity';
 
 config();
 
@@ -74,6 +75,7 @@ async function seed() {
   const aiConversationRepository = dataSource.getRepository(AiConversation);
   const llmRequestRepository = dataSource.getRepository(LlmRequest);
   const dnaRepository = dataSource.getRepository(SermonDnaAnalysis);
+  const churchSettingsRepository = dataSource.getRepository(ChurchSettings);
 
   let adminUser = await userRepository.findOne({ where: { email: 'admin@example.com' } });
   if (!adminUser) {
@@ -92,6 +94,27 @@ async function seed() {
     await userRepository.save(adminUser);
     console.log('✅ Created admin user: admin@example.com / password123');
   }
+
+  let churchSettings = await churchSettingsRepository.findOne({ where: { userId: adminUser.id } });
+  if (!churchSettings) {
+    churchSettings = churchSettingsRepository.create({ userId: adminUser.id });
+  }
+  Object.assign(churchSettings, {
+    userId: adminUser.id,
+    churchName: 'Iglesia Adventista Metropolitana de Atlanta',
+    addressLine1: '5990 Oakbrook Pkwy',
+    addressLine2: null,
+    city: 'Norcross',
+    state: 'GA',
+    postalCode: '30093-1704',
+    country: 'USA',
+    phone: '770-242-5860',
+    website: 'https://atlantametropolitanhispanicga.adventistchurch.org/',
+    logoUrl: null,
+    defaultTimezone: 'America/New_York',
+  });
+  await churchSettingsRepository.save(churchSettings);
+  console.log('✅ Upserted church settings defaults');
 
   const translations = [
     { code: 'KJV', name: 'King James Version', language: 'en', apiId: null, isPublicDomain: true },
