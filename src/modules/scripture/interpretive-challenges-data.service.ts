@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 
@@ -25,6 +25,7 @@ export interface SDAPerspective {
 
 @Injectable()
 export class InterpretiveChallengesDataService {
+  private readonly logger = new Logger(InterpretiveChallengesDataService.name);
   private challengeIndex: Map<string, InterpretiveChallenge> = new Map();
 
   constructor(
@@ -35,6 +36,11 @@ export class InterpretiveChallengesDataService {
   }
 
   async getInterpretiveChallenge(passage: string, language?: string): Promise<InterpretiveChallenge | null> {
+    if (!passage || !passage.trim()) {
+      this.logger.warn(`Missing passage parameter for interpretive challenge request (language=${language || 'en'})`);
+      return this.buildUnavailableChallenge(passage || '', language || 'en', 'missing_passage');
+    }
+
     const normalized = this.normalizePassage(passage);
     const challenge = this.challengeIndex.get(normalized);
     
@@ -45,10 +51,18 @@ export class InterpretiveChallengesDataService {
     // Generate interpretive challenges using LLM
     try {
       const generated = await this.generateInterpretiveChallenge(passage, language || 'en');
+      if (!generated || !Array.isArray(generated.views) || generated.views.length === 0) {
+        this.logger.warn(`Interpretive challenge unavailable for "${passage}" (language=${language || 'en'}): empty generated views`);
+        return this.buildUnavailableChallenge(passage, language || 'en', 'empty_views');
+      }
       return generated;
     } catch (error) {
-      console.error('Failed to generate interpretive challenge:', error);
-      return null;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Failed to generate interpretive challenge for "${passage}" (language=${language || 'en'}): ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      return this.buildUnavailableChallenge(passage, language || 'en', 'generation_failed');
     }
   }
 
@@ -62,7 +76,10 @@ export class InterpretiveChallengesDataService {
         passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
       }
     } catch (error) {
-      console.error('Failed to fetch passage text for interpretive challenges:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to fetch passage text for interpretive challenges (${passage}, ${analysisTranslation}): ${message}`,
+      );
     }
 
     const languageInstruction = language === 'es'
@@ -105,14 +122,19 @@ Reglas:
       maxTokens: 800,
     });
 
+    if (!response || !response.trim()) {
+      throw new Error('LLM returned empty response');
+    }
+
     let parsed: any;
     try {
       parsed = this.parseInterpretiveChallengeJson(response);
     } catch (error) {
-      console.error('Failed to parse interpretive challenge response:', error);
-      console.error('Raw response:', response);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Failed to parse interpretive challenge JSON for "${passage}": ${message}`);
       const salvaged = this.salvageInterpretiveChallengeFromRaw(response);
       if (salvaged) {
+        this.logger.warn(`Using salvaged interpretive challenge payload for "${passage}"`);
         parsed = salvaged;
       } else {
         throw new Error('Invalid JSON response from LLM');
@@ -133,7 +155,7 @@ Reglas:
     }));
 
     if (!challenge || normalizedViews.length === 0) {
-      return null;
+      throw new Error('LLM response missing required challenge/views content');
     }
 
     // Normalize SDA perspective (handle Spanish field names)
@@ -308,5 +330,20 @@ Reglas:
 
   getAllAvailablePassages(): string[] {
     return Array.from(this.challengeIndex.keys());
+  }
+
+  private buildUnavailableChallenge(passage: string, language: string, reason: string): InterpretiveChallenge {
+    const fallbackChallenge =
+      language === 'es'
+        ? 'No se identificaron desafíos interpretativos confiables para este pasaje.'
+        : 'No reliable interpretive challenges were identified for this passage.';
+
+    return {
+      passage,
+      challenge: fallbackChallenge,
+      views: [],
+      dataSource: 'unavailable',
+      sdaPerspective: undefined,
+    };
   }
 }

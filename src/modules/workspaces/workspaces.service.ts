@@ -621,44 +621,165 @@ Rules:
       .replace(/>/g, '&gt;');
   }
 
+  private formatManuscriptInline(value: string) {
+    let output = this.escapeHtml(value);
+    output = output.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    output = output.replace(/(^|[\s(])\*(.+?)\*(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+    output = output.replace(/(^|[\s(])_(.+?)_(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+    return output;
+  }
+
   private markdownLikeToHtml(rawText: string) {
     const text = String(rawText || '').replace(/\r\n/g, '\n').trim();
     if (!text) return '<p></p>';
-    const blocks = text.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean);
+    const lines = text.split('\n');
     const htmlBlocks: string[] = [];
+    let paragraphBuffer: string[] = [];
+    let listBuffer: { type: 'ul' | 'ol'; items: string[] } | null = null;
+    let scriptureBuffer: string[] = [];
+    let inBlockquote = false;
+    let lastSectionWasHeading = false;
 
-    for (const block of blocks) {
-      const headingMatch = block.match(/^(#{1,3})\s+(.+)$/);
-      if (headingMatch) {
-        const level = Math.min(3, Math.max(1, headingMatch[1].length));
-        const headingTag = level === 1 ? 'h2' : level === 2 ? 'h3' : 'h4';
-        htmlBlocks.push(`<${headingTag}>${this.escapeHtml(headingMatch[2])}</${headingTag}>`);
+    const flushParagraph = () => {
+      if (!paragraphBuffer.length) return;
+      const paragraph = paragraphBuffer.join(' ').replace(/\s+/g, ' ').trim();
+      if (paragraph) {
+        htmlBlocks.push(`<p>${this.formatManuscriptInline(paragraph)}</p>`);
+      }
+      paragraphBuffer = [];
+    };
+
+    const flushList = () => {
+      if (!listBuffer || !listBuffer.items.length) {
+        listBuffer = null;
+        return;
+      }
+      const items = listBuffer.items
+        .map((item) => `<li>${this.formatManuscriptInline(item)}</li>`)
+        .join('');
+      htmlBlocks.push(`<${listBuffer.type}>${items}</${listBuffer.type}>`);
+      listBuffer = null;
+    };
+
+    const flushScripture = () => {
+      if (!scriptureBuffer.length) return;
+      const content = scriptureBuffer
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => `<p>${this.formatManuscriptInline(item)}</p>`)
+        .join('');
+      if (content) {
+        htmlBlocks.push(`<blockquote>${content}</blockquote>`);
+      }
+      scriptureBuffer = [];
+      inBlockquote = false;
+    };
+
+    const sectionHeadingPattern =
+      /^(introducci[oó]n|lectura del pasaje principal|lectura b[ií]blica|contexto(?: literario| hist[oó]rico| literario y hist[oó]rico)?|trasfondo(?: hist[oó]rico)?|movimiento \d+|punto \d+|aplicaci[oó]n(?: pr[aá]ctica)?|ilustraci[oó]n|conclusi[oó]n|llamado(?: final)?|invitaci[oó]n|oraci[oó]n final|preguntas de reflexi[oó]n|explicaci[oó]n|transici[oó]n)$/i;
+    const scriptureReferencePattern =
+      /^([1-3]?\s?[A-Za-zÁÉÍÓÚÑáéíóúñ.]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ.]+)*)\s+\d+:\d+(?:[-–]\d+)?(?:\s*\([^)]+\))?$/;
+    const numberedHeadingPattern = /^\d+[\.\)]\s+.+$/;
+    const scriptureLinePattern = /^\d+\s+.+/;
+    const labelPattern = /^(Explicaci[oó]n|Aplicaci[oó]n|Ilustraci[oó]n|Transici[oó]n|Conclusi[oó]n|Invitaci[oó]n|Oraci[oó]n final)\s*:\s*(.+)$/i;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+
+      if (!line) {
+        flushParagraph();
+        flushList();
+        flushScripture();
+        lastSectionWasHeading = false;
         continue;
       }
-      const listLines = block
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-      const isUnordered = listLines.length > 1 && listLines.every((line) => /^[-*]\s+/.test(line));
-      const isOrdered = listLines.length > 1 && listLines.every((line) => /^\d+[\.\)]\s+/.test(line));
 
-      if (isUnordered || isOrdered) {
-        const tag = isOrdered ? 'ol' : 'ul';
-        const items = listLines
-          .map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[\.\)]\s+/, ''))
-          .map((line) => `<li>${this.escapeHtml(line)}</li>`)
-          .join('');
-        htmlBlocks.push(`<${tag}>${items}</${tag}>`);
-      } else {
-        const paragraph = this.escapeHtml(block).replace(/\n/g, '<br />');
-        htmlBlocks.push(`<p>${paragraph}</p>`);
+      const markdownHeading = line.match(/^(#{1,3})\s+(.+)$/);
+      if (markdownHeading) {
+        flushParagraph();
+        flushList();
+        flushScripture();
+        const level = Math.min(3, Math.max(1, markdownHeading[1].length));
+        const headingTag = level === 1 ? 'h2' : level === 2 ? 'h3' : 'h4';
+        htmlBlocks.push(`<${headingTag}>${this.formatManuscriptInline(markdownHeading[2])}</${headingTag}>`);
+        lastSectionWasHeading = true;
+        continue;
       }
+
+      if (sectionHeadingPattern.test(line)) {
+        flushParagraph();
+        flushList();
+        flushScripture();
+        htmlBlocks.push(`<h2>${this.formatManuscriptInline(line)}</h2>`);
+        lastSectionWasHeading = true;
+        continue;
+      }
+
+      if (numberedHeadingPattern.test(line)) {
+        flushParagraph();
+        flushList();
+        flushScripture();
+        htmlBlocks.push(`<h3>${this.formatManuscriptInline(line)}</h3>`);
+        lastSectionWasHeading = true;
+        continue;
+      }
+
+      const scriptureReference = line.match(scriptureReferencePattern);
+      if (scriptureReference) {
+        flushParagraph();
+        flushList();
+        flushScripture();
+        htmlBlocks.push(`<p><em>${this.formatManuscriptInline(line)}</em></p>`);
+        lastSectionWasHeading = false;
+        continue;
+      }
+
+      const labelMatch = line.match(labelPattern);
+      if (labelMatch) {
+        flushParagraph();
+        flushList();
+        flushScripture();
+        htmlBlocks.push(
+          `<p><strong>${this.formatManuscriptInline(labelMatch[1])}:</strong> ${this.formatManuscriptInline(labelMatch[2])}</p>`,
+        );
+        lastSectionWasHeading = false;
+        continue;
+      }
+
+      if (/^[-*]\s+/.test(line) || /^\d+[\.\)]\s+/.test(line)) {
+        flushParagraph();
+        flushScripture();
+        const nextType = /^\d+[\.\)]\s+/.test(line) ? 'ol' : 'ul';
+        const itemText = line.replace(/^[-*]\s+/, '').replace(/^\d+[\.\)]\s+/, '').trim();
+        if (!listBuffer || listBuffer.type !== nextType) {
+          flushList();
+          listBuffer = { type: nextType, items: [] };
+        }
+        listBuffer.items.push(itemText);
+        lastSectionWasHeading = false;
+        continue;
+      }
+
+      if (scriptureLinePattern.test(line) && (inBlockquote || lastSectionWasHeading || htmlBlocks.at(-1)?.includes('<em>'))) {
+        flushParagraph();
+        flushList();
+        inBlockquote = true;
+        scriptureBuffer.push(line);
+        lastSectionWasHeading = false;
+        continue;
+      }
+
+      flushList();
+      flushScripture();
+      paragraphBuffer.push(line);
+      lastSectionWasHeading = false;
     }
 
-    return htmlBlocks
-      .join('\n')
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/(^|[\s>])\*(.*?)\*/g, '$1<em>$2</em>');
+    flushParagraph();
+    flushList();
+    flushScripture();
+
+    return htmlBlocks.join('\n');
   }
 
   private sanitizeCueObject(raw: any) {
@@ -685,10 +806,34 @@ Rules:
     return cues;
   }
 
+  private stripModelTransportArtifacts(value: string) {
+    return String(value || '')
+      .replace(/<\|[^|>]+?\|>/g, ' ')
+      .replace(/^\s*(assistant|final|response)\s*[:\-]\s*/i, '')
+      .replace(/\r\n/g, '\n')
+      .trim();
+  }
+
+  private normalizeGeneratedManuscriptText(text: string) {
+    let normalized = this.stripModelTransportArtifacts(text)
+      .replace(/\\n/g, '\n')
+      .trim();
+
+    const embedded = this.parseJsonSafe(normalized);
+    if (embedded && typeof embedded === 'object' && typeof embedded.text === 'string') {
+      normalized = this.stripModelTransportArtifacts(String(embedded.text || ''))
+        .replace(/\\n/g, '\n')
+        .trim();
+    }
+
+    return normalized;
+  }
+
   private parseGeneratedManuscriptResponse(rawResponse: string, options: Required<ManuscriptGenerationOptions>) {
-    const parsed = this.parseJsonSafe(rawResponse);
+    const cleanedResponse = this.stripModelTransportArtifacts(rawResponse);
+    const parsed = this.parseJsonSafe(cleanedResponse) || this.parseJsonSafe(rawResponse);
     if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
-      const textFromModel = String(parsed.text || '').trim();
+      const textFromModel = this.normalizeGeneratedManuscriptText(String(parsed.text || ''));
       const cueObject = this.sanitizeCueObject(parsed.cues);
       const htmlText = /<\/?(p|h2|h3|h4|ul|ol|li|strong|em|br)\b/i.test(textFromModel)
         ? textFromModel
@@ -703,7 +848,7 @@ Rules:
       };
     }
 
-    const extracted = this.extractCuesFromLegacyText(rawResponse);
+    const extracted = this.extractCuesFromLegacyText(this.normalizeGeneratedManuscriptText(cleanedResponse || rawResponse));
     return {
       text: this.markdownLikeToHtml(extracted.text),
       cues: {
@@ -860,6 +1005,15 @@ Output requirements:
   }
 }
 - In "text", write clean sermon prose content (no [Slide], no [Key Line], no bracket markers).
+- The HTML must read beautifully as a sermon manuscript, not as a raw dump.
+- Use h2 for major sections like Introduction, Passage Reading, Context, Main Point sections, Applications, and Conclusion.
+- Use h3 for numbered sermon points when needed.
+- Write short, readable paragraphs of 2-4 sentences each. Do not collapse entire sections into one giant paragraph.
+- Insert a new <p> for each distinct pastoral thought, transition, or explanation shift.
+- When presenting the main scripture reference, put the reference on its own italicized line using <p><em>...</em></p>.
+- When quoting the passage text itself, use short paragraph blocks and clear separation between verse lines/segments so the reading breathes naturally.
+- For labeled moves like "Explanation", "Application", "Illustration", or "Invitation", start a new paragraph and use <strong>Label:</strong> followed by normal prose.
+- Prefer paragraph rhythm and white space over density. The manuscript should feel easy to read aloud.
 - ${normalizedOptions.includeSlideCues ? 'Populate cues.slide with useful presenter prompts.' : 'Leave cues.slide as an empty array.'}
 - ${normalizedOptions.includeKeyLines ? 'Populate cues.keyLine with memorable preaching statements.' : 'Leave cues.keyLine as an empty array.'}
 - Populate other cue arrays only when helpful; otherwise keep empty arrays.
@@ -2037,7 +2191,8 @@ Rules:
     userId: string,
     promptOverride?: string,
   ): Promise<SermonApplication[]> {
-    const workspace = await this.findOne(workspaceId, userId);
+    let workspace = await this.findOne(workspaceId, userId);
+    workspace = await this.ensureStudyReportForAssetGeneration(workspace, userId);
     await this.applicationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
@@ -2081,7 +2236,8 @@ Rules:
     userId: string,
     promptOverride?: string,
   ): Promise<DiscussionQuestion[]> {
-    const workspace = await this.findOne(workspaceId, userId);
+    let workspace = await this.findOne(workspaceId, userId);
+    workspace = await this.ensureStudyReportForAssetGeneration(workspace, userId);
     await this.questionRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
@@ -2110,7 +2266,8 @@ Rules:
     userId: string,
     promptOverride?: string,
   ): Promise<SermonIllustration[]> {
-    const workspace = await this.findOne(workspaceId, userId);
+    let workspace = await this.findOne(workspaceId, userId);
+    workspace = await this.ensureStudyReportForAssetGeneration(workspace, userId);
     await this.illustrationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
@@ -2240,7 +2397,8 @@ Rules:
     userId: string,
     promptOverride?: string,
   ): Promise<SermonStudyReport> {
-    const workspace = await this.findOne(workspaceId, userId);
+    let workspace = await this.findOne(workspaceId, userId);
+    workspace = await this.ensureStudyReportForAssetGeneration(workspace, userId);
     const mainPassage = await this.scriptureService.getPassage(workspace.mainPassage);
     const passageText = Array.isArray(mainPassage?.verses)
       ? mainPassage.verses.map((verse: any) => `${verse.reference} ${verse.text}`).join('\n')
@@ -2321,6 +2479,18 @@ Rules:
     }
 
     return persistedReport;
+  }
+
+  private async ensureStudyReportForAssetGeneration(
+    workspace: SermonWorkspace,
+    userId: string,
+  ): Promise<SermonWorkspace> {
+    if (Array.isArray(workspace?.studyReports) && workspace.studyReports.length > 0) {
+      return workspace;
+    }
+
+    await this.generateStudyReport(workspace.id, userId);
+    return this.findOne(workspace.id, userId);
   }
 
   async validateCitations(workspaceId: string, userId: string, translationCode: string = 'KJV') {

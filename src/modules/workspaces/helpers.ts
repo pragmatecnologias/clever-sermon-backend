@@ -3,6 +3,54 @@
  */
 
 export class WorkspaceHelpers {
+  private static tryJsonParse(text: string): any {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  private static extractBalancedJsonSegment(text: string): string | null {
+    const source = String(text || '');
+    const startIndex = source.search(/[\{\[]/);
+    if (startIndex < 0) return null;
+
+    const openChar = source[startIndex];
+    const closeChar = openChar === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let index = startIndex; index < source.length; index += 1) {
+      const char = source[index];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (char === openChar) depth += 1;
+      if (char === closeChar) {
+        depth -= 1;
+        if (depth === 0) {
+          return source.slice(startIndex, index + 1);
+        }
+      }
+    }
+
+    return null;
+  }
+
   static pointText(point: any): string {
     if (typeof point === 'string') return point.trim();
     if (!point || typeof point !== 'object') return '';
@@ -35,18 +83,39 @@ export class WorkspaceHelpers {
   }
 
   static parseJsonSafe(text: string): any {
-    try {
-      // Try to extract JSON from markdown code blocks
-      const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[1]);
-      }
-      
-      // Try direct JSON parse
-      return JSON.parse(text);
-    } catch {
-      return null;
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+
+    const candidates = new Set<string>();
+    candidates.add(raw);
+
+    const withoutCodeFence = raw
+      .replace(/```(?:json)?/gi, '')
+      .replace(/```/g, '')
+      .trim();
+    if (withoutCodeFence) candidates.add(withoutCodeFence);
+
+    const withoutModelTags = withoutCodeFence.replace(/<\|[^|>]+?\|>/g, '').trim();
+    if (withoutModelTags) candidates.add(withoutModelTags);
+
+    const withoutPrefixNoise = withoutModelTags
+      .replace(/^\s*(assistant|final|response)\s*[:\-]\s*/i, '')
+      .trim();
+    if (withoutPrefixNoise) candidates.add(withoutPrefixNoise);
+
+    for (const candidate of candidates) {
+      const parsed = WorkspaceHelpers.tryJsonParse(candidate);
+      if (parsed) return parsed;
     }
+
+    for (const candidate of candidates) {
+      const segment = WorkspaceHelpers.extractBalancedJsonSegment(candidate);
+      if (!segment) continue;
+      const parsed = WorkspaceHelpers.tryJsonParse(segment);
+      if (parsed) return parsed;
+    }
+
+    return null;
   }
 
   static parseListFromResponse(text: string): string[] {
