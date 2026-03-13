@@ -570,6 +570,157 @@ Rules:
     };
   }
 
+  private manuscriptCueTemplate() {
+    return {
+      slide: [] as string[],
+      keyLine: [] as string[],
+      transition: [] as string[],
+      pause: [] as string[],
+      read: [] as string[],
+      quote: [] as string[],
+      cta: [] as string[],
+    };
+  }
+
+  private extractCuesFromLegacyText(rawText: string) {
+    const cues = this.manuscriptCueTemplate();
+    const cueMap: Record<string, keyof typeof cues> = {
+      slide: 'slide',
+      keyline: 'keyLine',
+      transition: 'transition',
+      pause: 'pause',
+      read: 'read',
+      quote: 'quote',
+      cta: 'cta',
+      calltoaction: 'cta',
+    };
+
+    const stripped = String(rawText || '').replace(
+      /\[(Slide|Key\s*Line|Transition|Pause|Read|Quote|CTA|Call\s*to\s*Action)\]\s*([^\n]*)/gi,
+      (_match, cueType, cueText) => {
+        const key = String(cueType || '').toLowerCase().replace(/\s+/g, '');
+        const cueBucket = cueMap[key];
+        const cleanText = String(cueText || '').trim();
+        if (cueBucket && cleanText) {
+          cues[cueBucket].push(cleanText);
+        }
+        return cleanText;
+      },
+    );
+
+    return {
+      text: stripped,
+      cues,
+    };
+  }
+
+  private escapeHtml(value: string) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  private markdownLikeToHtml(rawText: string) {
+    const text = String(rawText || '').replace(/\r\n/g, '\n').trim();
+    if (!text) return '<p></p>';
+    const blocks = text.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean);
+    const htmlBlocks: string[] = [];
+
+    for (const block of blocks) {
+      const headingMatch = block.match(/^(#{1,3})\s+(.+)$/);
+      if (headingMatch) {
+        const level = Math.min(3, Math.max(1, headingMatch[1].length));
+        const headingTag = level === 1 ? 'h2' : level === 2 ? 'h3' : 'h4';
+        htmlBlocks.push(`<${headingTag}>${this.escapeHtml(headingMatch[2])}</${headingTag}>`);
+        continue;
+      }
+      const listLines = block
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const isUnordered = listLines.length > 1 && listLines.every((line) => /^[-*]\s+/.test(line));
+      const isOrdered = listLines.length > 1 && listLines.every((line) => /^\d+[\.\)]\s+/.test(line));
+
+      if (isUnordered || isOrdered) {
+        const tag = isOrdered ? 'ol' : 'ul';
+        const items = listLines
+          .map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+[\.\)]\s+/, ''))
+          .map((line) => `<li>${this.escapeHtml(line)}</li>`)
+          .join('');
+        htmlBlocks.push(`<${tag}>${items}</${tag}>`);
+      } else {
+        const paragraph = this.escapeHtml(block).replace(/\n/g, '<br />');
+        htmlBlocks.push(`<p>${paragraph}</p>`);
+      }
+    }
+
+    return htmlBlocks
+      .join('\n')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[\s>])\*(.*?)\*/g, '$1<em>$2</em>');
+  }
+
+  private sanitizeCueObject(raw: any) {
+    const cues = this.manuscriptCueTemplate();
+    if (!raw || typeof raw !== 'object') return cues;
+    const map: Record<string, keyof typeof cues> = {
+      slide: 'slide',
+      keyline: 'keyLine',
+      key_line: 'keyLine',
+      transition: 'transition',
+      pause: 'pause',
+      read: 'read',
+      quote: 'quote',
+      cta: 'cta',
+      calltoaction: 'cta',
+      call_to_action: 'cta',
+    };
+
+    Object.entries(raw).forEach(([key, value]) => {
+      const normalized = map[String(key).toLowerCase().replace(/\s+/g, '')] || map[String(key).toLowerCase()];
+      if (!normalized) return;
+      cues[normalized] = this.asStringArray(value, 20);
+    });
+    return cues;
+  }
+
+  private parseGeneratedManuscriptResponse(rawResponse: string, options: Required<ManuscriptGenerationOptions>) {
+    const parsed = this.parseJsonSafe(rawResponse);
+    if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
+      const textFromModel = String(parsed.text || '').trim();
+      const cueObject = this.sanitizeCueObject(parsed.cues);
+      const htmlText = /<\/?(p|h2|h3|h4|ul|ol|li|strong|em|br)\b/i.test(textFromModel)
+        ? textFromModel
+        : this.markdownLikeToHtml(textFromModel);
+      return {
+        text: htmlText || '<p></p>',
+        cues: {
+          ...cueObject,
+          slide: options.includeSlideCues ? cueObject.slide : [],
+          keyLine: options.includeKeyLines ? cueObject.keyLine : [],
+        },
+      };
+    }
+
+    const extracted = this.extractCuesFromLegacyText(rawResponse);
+    return {
+      text: this.markdownLikeToHtml(extracted.text),
+      cues: {
+        ...extracted.cues,
+        slide: options.includeSlideCues ? extracted.cues.slide : [],
+        keyLine: options.includeKeyLines ? extracted.cues.keyLine : [],
+      },
+    };
+  }
+
+  private stripHtmlForWordCount(htmlText: string) {
+    return String(htmlText || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   private buildManuscriptContext(workspace: SermonWorkspace, outline: SermonOutline) {
     const cache = workspace.scriptureCache || {};
     const outlineStructure = outline?.structure || {};
@@ -693,18 +844,28 @@ ${selectedPoints.map((point, index) => `${index + 1}. ${point}`).join('\n') || '
 - Keep theological coherence with provided study report + scripture cache.
 - If evidence is missing for a specific detail, avoid fabrication and stay passage-grounded.
 
-Formatting rules:
-- Use markdown headings for each major manuscript section.
-- ${normalizedOptions.includeSlideCues ? 'Add slide cues in this exact format: `[Slide] ...` where helpful.' : 'Do not add `[Slide]` cues.'}
-- ${normalizedOptions.includeKeyLines ? 'Mark strong preaching lines with this exact marker: `[Key Line] ...`.' : 'Do not add `[Key Line]` markers.'}
+Output requirements:
+- Return ONLY valid JSON (no markdown code fences, no prose outside JSON).
+- JSON shape:
+{
+  "text": "<HTML body using only p,h2,h3,ul,ol,li,strong,em,br tags>",
+  "cues": {
+    "slide": ["string"],
+    "keyLine": ["string"],
+    "transition": ["string"],
+    "pause": ["string"],
+    "read": ["string"],
+    "quote": ["string"],
+    "cta": ["string"]
+  }
+}
+- In "text", write clean sermon prose content (no [Slide], no [Key Line], no bracket markers).
+- ${normalizedOptions.includeSlideCues ? 'Populate cues.slide with useful presenter prompts.' : 'Leave cues.slide as an empty array.'}
+- ${normalizedOptions.includeKeyLines ? 'Populate cues.keyLine with memorable preaching statements.' : 'Leave cues.keyLine as an empty array.'}
+- Populate other cue arrays only when helpful; otherwise keep empty arrays.
 - ${normalizedOptions.format === 'notes'
-  ? 'Output concise preaching notes: bullets under each section, short speaking cues, no long paragraphs.'
-  : 'Output full spoken manuscript prose with smooth transitions and natural oral cadence.'}
-- End with a short metadata block:
-  - Estimated Delivery Time: <number> minutes
-  - Audience Focus: <text>
-  - Tone: <text>
-  - Format: Full Manuscript|Preaching Notes.`;
+  ? 'Use concise preaching-note style inside HTML (short bullets/brief paragraphs).'
+  : 'Use full spoken manuscript style inside HTML with smooth transitions.'}`;
   }
 
   buildApplicationsPrompt(workspace: SermonWorkspace, mainPoints: string[], audienceType: string, seededApplications: string[] = []) {
@@ -1844,21 +2005,26 @@ Rules:
     await this.manuscriptRepository.delete({ workspaceId, outlineId });
     const normalizedOptions = this.normalizeManuscriptOptions(workspace, manuscriptOptions);
     const prompt = promptOverride || this.buildManuscriptPrompt(workspace, outline, normalizedOptions);
-    const manuscriptText = await this.llmService.generateCompletion(prompt, userId);
-    this.logLlmOutput('manuscript', manuscriptText);
-    const wordCount = manuscriptText.split(/\s+/).filter(Boolean).length;
+    const manuscriptResponse = await this.llmService.generateCompletion(prompt, userId);
+    this.logLlmOutput('manuscript', manuscriptResponse);
+    const parsedManuscript = this.parseGeneratedManuscriptResponse(manuscriptResponse, normalizedOptions);
+    const plainText = this.stripHtmlForWordCount(parsedManuscript.text);
+    const wordCount = plainText.split(/\s+/).filter(Boolean).length;
     const estimatedMinutes = Math.max(1, Math.ceil(wordCount / 145));
 
     const manuscript = this.manuscriptRepository.create({
       workspaceId,
       outlineId,
       content: {
-        text: manuscriptText,
+        formatVersion: 'v2',
+        text: parsedManuscript.text,
+        cues: parsedManuscript.cues,
         metadata: {
           options: normalizedOptions,
           generatedFromOutlineId: outlineId,
         },
       },
+      contentFormat: 'html',
       wordCount,
       estimatedMinutes,
     });
@@ -2353,10 +2519,18 @@ Rules:
       updatePayload.transitions = dto.transitions;
     }
     const text = typeof dto?.content === 'string' ? dto.content : dto?.content?.text;
-    if (text) {
-      updatePayload.content = typeof dto.content === 'string' ? { text } : dto.content;
-      updatePayload.wordCount = text.split(' ').filter(Boolean).length;
+    if (typeof text === 'string') {
+      const incomingContent = typeof dto.content === 'string' ? { text } : dto.content;
+      const safeContent = {
+        ...(incomingContent || {}),
+        formatVersion: incomingContent?.formatVersion || manuscript?.content?.formatVersion || 'v2',
+        cues: this.sanitizeCueObject(incomingContent?.cues || manuscript?.content?.cues),
+      };
+      updatePayload.content = safeContent;
+      const plainText = this.stripHtmlForWordCount(text);
+      updatePayload.wordCount = plainText.split(' ').filter(Boolean).length;
       updatePayload.estimatedMinutes = Math.ceil(updatePayload.wordCount / 150);
+      updatePayload.contentFormat = safeContent.formatVersion === 'v2' ? 'html' : manuscript.contentFormat;
     }
     await this.manuscriptRepository.update({ id }, updatePayload);
     return this.manuscriptRepository.findOne({ where: { id } });
