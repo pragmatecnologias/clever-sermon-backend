@@ -59,6 +59,7 @@ export class LlmService {
       model?: string;
       temperature?: number;
       maxTokens?: number;
+      timeoutMs?: number;
     } = {},
   ): Promise<string> {
     const provider = options.provider || LlmProvider.LOCAL;
@@ -147,6 +148,8 @@ export class LlmService {
     const lmStudioUrl = this.configService.get('LM_STUDIO_URL');
     const model = options.model || this.configService.get('LLM_MODEL_NAME') || 'local-model';
     const baseMaxTokens = options.maxTokens || 2000;
+    // Use custom timeout if provided, otherwise scale timeout based on token count
+    const timeoutMs = options.timeoutMs || Math.max(LlmService.LOCAL_TIMEOUT_MS, baseMaxTokens * 30);
     let lastError: any;
 
     for (let attempt = 1; attempt <= LlmService.LOCAL_MAX_ATTEMPTS; attempt++) {
@@ -161,9 +164,12 @@ export class LlmService {
             messages: [{ role: 'user', content: prompt }],
             temperature: options.temperature || 0.7,
             max_tokens: maxTokens,
+            frequency_penalty: 1.2,
+            presence_penalty: 0.6,
+            repeat_penalty: 1.3,
           },
           {
-            timeout: LlmService.LOCAL_TIMEOUT_MS,
+            timeout: timeoutMs,
             headers: {
               'Content-Type': 'application/json',
             },

@@ -238,7 +238,30 @@ Be concise, practical, and pastor-focused. Highlight differences that affect int
         throw new Error('No JSON found in LLM response');
       }
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      // Clean up malformed JSON - fix unquoted string values
+      let jsonStr = jsonMatch[0];
+      // Fix unquoted values after colons (common LLM error)
+      jsonStr = jsonStr.replace(/:\s*([A-Za-z][A-Za-z0-9áéíóúñüÁÉÍÓÚÑÜ\s\-\.]+)(?=[,\}\]])/g, (match, value) => {
+        // Don't quote if it's already a valid JSON value
+        if (['true', 'false', 'null'].includes(value.trim())) return match;
+        return `: "${value.trim()}"`;
+      });
+
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (parseErr) {
+        console.error('JSON parse error, returning empty result:', parseErr);
+        return {
+          keyDifferences: [],
+          analysis: {
+            verbDifferences: [],
+            theologicalTermDifferences: [],
+            literalVsDynamic: [],
+            overallAssessment: 'Unable to parse translation analysis'
+          }
+        };
+      }
 
       const result = {
         keyDifferences: Array.isArray(parsed.keyDifferences) 

@@ -32,6 +32,7 @@ type ManuscriptGenerationOptions = {
   audienceMode?: string;
   includeSlideCues?: boolean;
   includeKeyLines?: boolean;
+  includeStudyInsights?: boolean; // When true, includes deep study data (word studies, interpretive challenges, etc.)
 };
 
 @Injectable()
@@ -568,6 +569,7 @@ Rules:
       audienceMode: audienceMode || 'general congregation',
       includeSlideCues: options?.includeSlideCues !== false,
       includeKeyLines: options?.includeKeyLines !== false,
+      includeStudyInsights: options?.includeStudyInsights !== false, // Default to true for deep sermons
     };
   }
 
@@ -906,32 +908,166 @@ Rules:
     const outlineStructure = outline?.structure || {};
     const outlinePoints = this.extractOutlinePointTexts(outlineStructure).slice(0, 8);
     const pointNodes = Array.isArray(outlineStructure?.pointNodes) ? outlineStructure.pointNodes.slice(0, 8) : [];
-    const studyReport = workspace.studyReports?.[0]?.sections || {};
+    
+    // ============================================
+    // STUDY REPORT - The core intelligence layer
+    // ============================================
+    const studyReportRaw = workspace.studyReports?.[0]?.sections || {};
+    const studyReport = {
+      // Passage understanding
+      passageOverview: this.asString(studyReportRaw.passageOverview || ''),
+      literaryContext: this.asString(studyReportRaw.literaryContext || ''),
+      historicalContext: this.asString(studyReportRaw.historicalContext || ''),
+      canonicalContext: this.asString(studyReportRaw.canonicalContext || ''),
+      
+      // Exegetical insights
+      exegeticalFlow: this.asStringArray(studyReportRaw.exegeticalFlow || [], 8),
+      exegeticalSummary: this.asString(studyReportRaw.exegeticalSummary || ''),
+      mainTheologicalClaim: this.asString(studyReportRaw.mainTheologicalClaim || ''),
+      
+      // Structure and terms
+      structureOfPassage: Array.isArray(studyReportRaw.structureOfPassage) 
+        ? studyReportRaw.structureOfPassage.slice(0, 6) 
+        : [],
+      keyTerms: Array.isArray(studyReportRaw.keyTerms) 
+        ? studyReportRaw.keyTerms.slice(0, 8) 
+        : [],
+      
+      // Theological depth
+      theologicalThemes: this.asStringArray(studyReportRaw.theologicalThemes || [], 8),
+      interpretiveChallenges: Array.isArray(studyReportRaw.interpretiveChallenges) 
+        ? studyReportRaw.interpretiveChallenges.slice(0, 5) 
+        : [],
+      
+      // Pastoral implications (for applications)
+      pastoralImplications: studyReportRaw.pastoralImplications || {},
+    };
+
+    // ============================================
+    // STUDY ASSETS - Preaching material
+    // ============================================
+    const studyAssets = studyReportRaw.studyAssets || {};
+    const categoryAssets = studyAssets.categoryAssets || {};
+    const movementAssets = Array.isArray(studyAssets.movementAssets) ? studyAssets.movementAssets : [];
+    
+    // Collect applications from all sources
     const pointApplications = pointNodes.flatMap((point: any) => this.asStringArray(point?.applications, 4));
-    const pointIllustrations = pointNodes.flatMap((point: any) => this.asStringArray(point?.illustrationIdeas, 4));
+    const studyApplications = this.asStringArray(categoryAssets.applications, 12);
+    const movementApplications = movementAssets.flatMap((m: any) => this.asStringArray(m?.applications, 4));
+    const workspaceApplications = (workspace.applications || [])
+      .slice(0, 12)
+      .map((item: any) => this.asString(item?.content || item?.text))
+      .filter(Boolean);
     const applications = Array.from(
-      new Set([
-        ...pointApplications,
-        ...(workspace.applications || [])
-          .slice(0, 12)
-          .map((item: any) => this.asString(item?.content || item?.text))
-          .filter(Boolean),
-      ]),
-    ).slice(0, 12);
+      new Set([...studyApplications, ...movementApplications, ...pointApplications, ...workspaceApplications]),
+    ).slice(0, 16);
+
+    // Collect illustrations from all sources
+    const pointIllustrations = pointNodes.flatMap((point: any) => this.asStringArray(point?.illustrationIdeas, 4));
+    const studyIllustrations = this.asStringArray(categoryAssets.illustrationIdeas, 12);
+    const movementIllustrations = movementAssets.flatMap((m: any) => this.asStringArray(m?.illustrationIdeas, 4));
+    const workspaceIllustrations = (workspace.illustrations || [])
+      .slice(0, 12)
+      .map((item: any) => this.asString(item?.description || item?.content || item?.scenario))
+      .filter(Boolean);
     const illustrations = Array.from(
-      new Set([
-        ...pointIllustrations,
-        ...(workspace.illustrations || [])
-          .slice(0, 12)
-          .map((item: any) => this.asString(item?.description || item?.content || item?.scenario))
-          .filter(Boolean),
-      ]),
-    ).slice(0, 12);
-    const cachedCrossReferences = Array.isArray(cache?.crossReferences?.ranked)
-      ? cache.crossReferences.ranked.slice(0, 16)
+      new Set([...studyIllustrations, ...movementIllustrations, ...pointIllustrations, ...workspaceIllustrations]),
+    ).slice(0, 16);
+
+    // Collect discussion questions
+    const studyQuestions = this.asStringArray(categoryAssets.discussionQuestions, 12);
+    const movementQuestions = movementAssets.flatMap((m: any) => this.asStringArray(m?.discussionQuestions, 4));
+    const workspaceQuestions = (workspace.discussionQuestions || [])
+      .slice(0, 8)
+      .map((q: any) => this.asString(q?.question || q?.text || q))
+      .filter(Boolean);
+    const discussionQuestions = Array.from(
+      new Set([...studyQuestions, ...movementQuestions, ...workspaceQuestions]),
+    ).slice(0, 10);
+
+    // ============================================
+    // CROSS REFERENCES - Biblical connections
+    // ============================================
+    const studyCrossRefs = Array.isArray(studyReportRaw.crossReferences) 
+      ? studyReportRaw.crossReferences.slice(0, 12) 
+      : [];
+    const cachedCrossRefs = Array.isArray(cache?.crossReferences?.ranked)
+      ? cache.crossReferences.ranked.slice(0, 12)
+      : [];
+    // Merge and dedupe by reference
+    const crossRefMap = new Map<string, any>();
+    [...studyCrossRefs, ...cachedCrossRefs].forEach((ref: any) => {
+      const key = this.asString(ref?.reference || ref?.verse || '');
+      if (key && !crossRefMap.has(key)) {
+        crossRefMap.set(key, {
+          reference: key,
+          connection: this.asString(ref?.connection || ref?.explanation || ref?.reason || ''),
+          category: this.asString(ref?.category || 'thematic'),
+        });
+      }
+    });
+    const crossReferences = Array.from(crossRefMap.values()).slice(0, 16);
+
+    // ============================================
+    // WORD STUDIES - Original language insights
+    // ============================================
+    const wordStudyData = (cache as any)?.wordStudy || (cache as any)?.wordStudies || [];
+    const keyTermsFromStudy = studyReport.keyTerms || [];
+    const wordStudies = [
+      ...keyTermsFromStudy.map((kt: any) => ({
+        word: this.asString(kt?.term || kt?.word || ''),
+        originalLanguage: this.asString(kt?.language || ''),
+        transliteration: this.asString(kt?.transliteration || ''),
+        meaning: this.asString(kt?.definition || kt?.meaning || ''),
+        significance: this.asString(kt?.nuance || kt?.significance || ''),
+      })),
+      ...(Array.isArray(wordStudyData) ? wordStudyData.slice(0, 6).map((ws: any) => ({
+        word: this.asString(ws?.word || ws?.originalWord || ''),
+        originalLanguage: this.asString(ws?.language || ''),
+        transliteration: this.asString(ws?.transliteration || ''),
+        meaning: this.asString(ws?.meaning || ws?.definition || ''),
+        significance: this.asString(ws?.significance || ws?.theologicalSignificance || ''),
+      })) : []),
+    ].filter((ws) => ws.word).slice(0, 10);
+
+    // ============================================
+    // EGW SUPPORT - Ellen White references
+    // ============================================
+    const egwQuotesData = (cache as any)?.egwQuotes || (cache as any)?.egwSupport || [];
+    const egwQuotes = Array.isArray(egwQuotesData)
+      ? egwQuotesData.slice(0, 6).map((q: any) => ({
+          text: this.asString(q?.text || q?.quote || q?.content || ''),
+          source: this.asString(q?.source || q?.reference || q?.book || ''),
+          theme: this.asString(q?.theme || q?.topic || ''),
+        })).filter((q: any) => q.text)
       : [];
 
+    // ============================================
+    // CITATIONS - External references
+    // ============================================
+    const citations = (workspace.citations || [])
+      .slice(0, 8)
+      .map((c: any) => ({
+        source: this.asString(c?.source || c?.author || ''),
+        quote: this.asString(c?.quote || c?.text || c?.content || ''),
+        context: this.asString(c?.context || ''),
+      }))
+      .filter((c: any) => c.quote);
+
+    // ============================================
+    // PREACHING INSIGHTS - From scripture cache
+    // ============================================
+    const cacheAny = cache as any;
+    const preachingInsights = {
+      passageSummary: this.asString(cache?.passageSummary || ''),
+      studySynthesis: this.asString(cache?.studySynthesis || ''),
+      narrativeFlow: cacheAny?.narrativeFlow || null,
+      structuralAnalysis: cache?.structuralAnalysis || null,
+      verseCommentary: cache?.verseCommentary || null,
+    };
+
     return {
+      // Sermon structure
       outline: {
         title: this.asString(outline?.title),
         introduction: this.asString(outlineStructure?.introduction),
@@ -940,23 +1076,28 @@ Rules:
         conclusion: this.asString(outlineStructure?.conclusion),
         callToAction: this.asString(outlineStructure?.callToAction),
       },
-      scripture: {
-        mainPassage: workspace.mainPassage,
-        additionalPassages: workspace.additionalPassages || [],
-        passageSummary: cache?.passageSummary || null,
-        verseContext: cache?.perVerseContext || null,
-        structuralAnalysis: cache?.structuralAnalysis || null,
-        interpretiveChallenges: cache?.interpretiveChallenges || null,
-        canonicalThemes: cache?.canonicalThemes || null,
-        studySynthesis: cache?.studySynthesis || null,
-        translationComparison: cache?.translationComparison || null,
-        verseCommentary: cache?.verseCommentary || null,
+      
+      // Passage data
+      passage: {
+        main: workspace.mainPassage,
+        additional: workspace.additionalPassages || [],
       },
-      studyReport: studyReport || null,
-      crossReferences: cachedCrossReferences,
+      
+      // Study intelligence (THE KEY DATA)
+      studyReport,
+      preachingInsights,
+      
+      // Preaching assets
+      crossReferences,
+      wordStudies,
       applications,
       illustrations,
-      workspace: {
+      discussionQuestions,
+      egwQuotes,
+      citations,
+      
+      // Workspace settings
+      settings: {
         title: workspace.title,
         seriesTitle: workspace.seriesTitle || '',
         theme: workspace.theme || '',
@@ -964,6 +1105,7 @@ Rules:
         audienceProfile: workspace.audienceProfile || '',
         storyArc: workspace.storyArc || '',
         theologicalLens: workspace.theologicalLens || '',
+        style: workspace.style || '',
       },
     };
   }
@@ -978,51 +1120,118 @@ Rules:
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
     const normalizedOptions = this.normalizeManuscriptOptions(workspace, options);
     const manuscriptContext = this.buildManuscriptContext(workspace, outline);
-    const contextJson = this.compactJsonForPrompt(manuscriptContext, 14000);
+    // Increase context limit for richer manuscripts
+    const contextJson = this.compactJsonForPrompt(manuscriptContext, 24000);
     const selectedPoints = manuscriptContext?.outline?.points || [];
 
     return `${doctrinalContext}
 
-Generate a sermon manuscript that is fully synchronized with the provided outline and study inputs.
+You are writing a DEEP, SCHOLARLY sermon manuscript. You have been given extensive study research - USE ALL OF IT.
 
+=== SERMON METADATA ===
 Title: ${workspace.title}
 Series: ${workspace.seriesTitle || 'N/A'}
 Main Passage: ${workspace.mainPassage}
-Additional Passages: ${workspace.additionalPassages?.length
-      ? workspace.additionalPassages.join(', ')
-      : 'None'}
+Additional Passages: ${workspace.additionalPassages?.length ? workspace.additionalPassages.join(', ') : 'None'}
 Theme: ${workspace.theme || 'N/A'}
 Audience: ${workspace.audienceProfile || 'N/A'}
 Sermon Goals: ${workspace.sermonGoals || 'N/A'}
 Style: ${workspace.style || 'N/A'}
 Story Arc: ${workspace.storyArc || 'N/A'}
-Requested Tone: ${normalizedOptions.tone}
-Requested Delivery Length: ${normalizedOptions.targetMinutes} minutes
-Requested Format: ${normalizedOptions.format === 'notes' ? 'Preaching Notes' : 'Full Manuscript'}
-Requested Audience Focus: ${normalizedOptions.audienceMode}
-Include Slide Cues: ${normalizedOptions.includeSlideCues ? 'Yes' : 'No'}
-Highlight Key Preaching Statements: ${normalizedOptions.includeKeyLines ? 'Yes' : 'No'}
+Tone: ${normalizedOptions.tone}
+Target Length: ${normalizedOptions.targetMinutes} minutes (~${Math.round(normalizedOptions.targetMinutes * 145)} words)
+Format: ${normalizedOptions.format === 'notes' ? 'Preaching Notes' : 'Full Manuscript'}
 
-Primary Data Inputs (must be used as source material):
+=== COMPLETE STUDY DATA (YOU MUST USE ALL OF THIS) ===
 ${contextJson}
 
-Write in ${languageLabel}.
+=== LANGUAGE ===
+Write entirely in ${languageLabel}.
 
-Hard constraints:
-- The manuscript must follow this sequence:
-  1) Introduction
-  2) Passage Reading (${workspace.mainPassage})
-  3) Context Explanation (literary + historical)
-  4) Main Points (one section for each canonical outline point, same order)
-  5) Applications (point-tied)
-  6) Conclusion with invitation/call to action
-- Use these exact outline point anchors in order:
-${selectedPoints.map((point, index) => `${index + 1}. ${point}`).join('\n') || '1. Use outline points from provided context'}
-- For each main point section include: explanation, one illustration, one practical application.
-- Integrate scripture references naturally and explicitly.
-- Do not invent a different outline flow.
-- Keep theological coherence with provided study report + scripture cache.
-- If evidence is missing for a specific detail, avoid fabrication and stay passage-grounded.
+=== HOW TO USE THE STUDY DATA ===
+
+**studyReport** contains the exegetical foundation:
+- passageOverview → Use in your introduction to set the scene
+- literaryContext → Explain the literary setting in your context section
+- historicalContext → Add historical background to enrich understanding
+- exegeticalFlow → Follow this flow in your explanation
+- mainTheologicalClaim → This is your sermon's central truth - weave it throughout
+- theologicalThemes → These are your theological anchors - reference them in each point
+- interpretiveChallenges → Address these honestly - show scholarly depth
+- pastoralImplications → Transform these into your applications
+
+**wordStudies** contains original language insights:
+- For each key term, explain the Greek/Hebrew meaning
+- Show how the original language enriches the English translation
+- Use transliterations when helpful for teaching
+
+**crossReferences** contains biblical connections:
+- Weave these throughout to show Scripture interprets Scripture
+- Use them to support your main points
+- Quote or reference them explicitly
+
+**illustrations** are ready-to-use stories and examples:
+- Use at least one illustration per main point
+- Integrate them naturally into your explanation
+- They should illuminate the biblical truth
+
+**applications** are practical action steps:
+- Include ALL of them - distribute across your points
+- Make them specific to the audience
+- Connect each to the biblical text
+
+**egwQuotes** are Ellen White references:
+- Include these with proper attribution
+- Use them to reinforce biblical truths
+
+**discussionQuestions** reveal key tensions:
+- Use these to create rhetorical questions in your sermon
+- They show what the audience is wondering
+
+=== SERMON STRUCTURE ===
+Follow this exact sequence:
+
+1. INTRODUCTION
+   - Hook the audience with a compelling opening
+   - Preview the theme using studyReport.passageOverview
+   - State the main theological claim
+
+2. PASSAGE READING
+   - Present ${workspace.mainPassage}
+   - Brief transition into the context
+
+3. LITERARY & HISTORICAL CONTEXT
+   - Use studyReport.literaryContext and historicalContext
+   - Explain the passage's setting
+   - Address any interpretiveChallenges
+
+4. MAIN POINTS (follow outline exactly):
+${selectedPoints.map((point, index) => `   ${index + 1}. ${point}
+      - Deep explanation using exegeticalFlow
+      - Word study insight from wordStudies
+      - Cross-reference support
+      - Illustration from the provided list
+      - Theological theme connection
+      - Practical application`).join('\n') || '   Use outline points from provided context'}
+
+5. SYNTHESIS & APPLICATION
+   - Bring all points together
+   - Use pastoralImplications
+   - Include remaining applications
+
+6. CONCLUSION & INVITATION
+   - Restate the mainTheologicalClaim
+   - Clear call to action
+   - Memorable closing
+
+=== QUALITY REQUIREMENTS ===
+- The manuscript must be SUBSTANTIAL (${normalizedOptions.targetMinutes} minutes)
+- Every section should have depth, not just surface-level content
+- Use the study data explicitly - don't just summarize, integrate it
+- The sermon should feel like it came from hours of study (because it did)
+- Address interpretive challenges honestly
+- Make theological themes practical
+- Every illustration should connect to a biblical truth
 
 Output requirements:
 - Return ONLY valid JSON (no markdown code fences, no prose outside JSON).
@@ -2194,7 +2403,14 @@ Rules:
     await this.manuscriptRepository.delete({ workspaceId, outlineId });
     const normalizedOptions = this.normalizeManuscriptOptions(workspace, manuscriptOptions);
     const prompt = promptOverride || this.buildManuscriptPrompt(workspace, outline, normalizedOptions);
-    const manuscriptResponse = await this.llmService.generateCompletion(prompt, userId);
+    // Manuscripts need much higher token limits - calculate based on target minutes
+    // For comprehensive manuscripts: ~145 words/minute * 1.5 (for HTML overhead) * 1.33 tokens/word ≈ 290 tokens/minute
+    // Add 50% buffer for rich content with illustrations, word studies, cross-references
+    const targetTokens = Math.max(6000, Math.ceil((normalizedOptions.targetMinutes || 22) * 450));
+    const manuscriptResponse = await this.llmService.generateCompletion(prompt, userId, {
+      maxTokens: targetTokens,
+      temperature: 0.65, // Slightly lower for more coherent long-form content
+    });
     this.logLlmOutput('manuscript', manuscriptResponse);
     const parsedManuscript = this.parseGeneratedManuscriptResponse(manuscriptResponse, normalizedOptions);
     const plainText = this.stripHtmlForWordCount(parsedManuscript.text);

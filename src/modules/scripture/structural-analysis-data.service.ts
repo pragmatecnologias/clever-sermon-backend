@@ -174,12 +174,31 @@ Guidelines:
       throw new Error(`JSON parse failed after retries: ${lastParseError?.message || 'unknown error'}`);
     }
 
-    // Handle Spanish field names
+    // Handle Spanish field names and normalize structure elements
+    const rawStructure = parsed.structure || parsed.estructura || [];
+    const normalizedStructure = Array.isArray(rawStructure) ? rawStructure.map((el: any) => ({
+      verses: el.verses || el.versículos || el.versiculos || '',
+      type: el.type || el.tipo || 'body',
+      description: el.description || el.descripción || el.descripcion || '',
+    })) : [];
+
+    const rawChiasm = parsed.chiasm || parsed.quiasmo;
+    const normalizedChiasm = rawChiasm ? {
+      pattern: rawChiasm.pattern || rawChiasm.patrón || rawChiasm.patron || '',
+      elements: Array.isArray(rawChiasm.elements || rawChiasm.elementos) 
+        ? (rawChiasm.elements || rawChiasm.elementos).map((el: any) => ({
+            label: el.label || el.etiqueta || '',
+            verses: el.verses || el.versículos || el.versiculos || '',
+            content: el.content || el.contenido || '',
+          }))
+        : [],
+    } : undefined;
+
     return {
       passage,
       literaryGenre: parsed.literaryGenre || parsed.géneroLiterario || parsed.generoLiterario || 'Unknown',
-      structure: parsed.structure || parsed.estructura || [],
-      chiasm: parsed.chiasm || parsed.quiasmo,
+      structure: normalizedStructure,
+      chiasm: normalizedChiasm,
       parallelism: (parsed.parallelism || parsed.paralelismo) && (parsed.parallelism || parsed.paralelismo).length > 0 ? (parsed.parallelism || parsed.paralelismo) : undefined,
       dataSource: 'llm-generated',
     };
