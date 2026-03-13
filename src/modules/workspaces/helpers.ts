@@ -51,6 +51,128 @@ export class WorkspaceHelpers {
     return null;
   }
 
+  private static stripTransportNoise(text: string): string {
+    return String(text || '')
+      .replace(/```(?:json)?/gi, '')
+      .replace(/```/g, '')
+      .replace(/<\|[^|>]+?\|>/g, ' ')
+      .replace(/^\s*(assistant|final|response)\s*[:\-]\s*/i, '')
+      .replace(/\r\n/g, '\n')
+      .trim();
+  }
+
+  private static decodeSerializedText(text: string): string {
+    return String(text || '')
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\\//g, '/')
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'")
+      .replace(/\\\\/g, '\\')
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_match, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .trim();
+  }
+
+  private static extractQuotedJsonStringField(
+    text: string,
+    key: string,
+  ): { value: string; closed: boolean } | null {
+    const source = WorkspaceHelpers.stripTransportNoise(text);
+    if (!source) return null;
+
+    const keyPattern = new RegExp(`"${key}"\\s*:\\s*"`, 'i');
+    const match = keyPattern.exec(source);
+    if (!match) return null;
+
+    let index = match.index + match[0].length;
+    let escaped = false;
+    let output = '';
+
+    while (index < source.length) {
+      const char = source[index];
+
+      if (escaped) {
+        output += `\\${char}`;
+        escaped = false;
+        index += 1;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        index += 1;
+        continue;
+      }
+
+      if (char === '"') {
+        return { value: WorkspaceHelpers.decodeSerializedText(output), closed: true };
+      }
+
+      output += char;
+      index += 1;
+    }
+
+    return { value: WorkspaceHelpers.decodeSerializedText(output), closed: false };
+  }
+
+  private static extractLeadingHtmlFragment(text: string): string | null {
+    const source = WorkspaceHelpers.decodeSerializedText(WorkspaceHelpers.stripTransportNoise(text));
+    if (!source) return null;
+
+    const tagMatch = source.match(/<(h2|h3|h4|p|ul|ol|li|blockquote|strong|em|br)\b/i);
+    if (!tagMatch || typeof tagMatch.index !== 'number') return null;
+
+    let fragment = source.slice(tagMatch.index).trim();
+    fragment = fragment.replace(/(?:["']?\s*,\s*["']cues["']\s*:)[\s\S]*$/i, '').trim();
+    fragment = fragment.replace(/["'}\]]+\s*$/, '').trim();
+
+    return /<\/?(h2|h3|h4|p|ul|ol|li|blockquote|strong|em|br)\b/i.test(fragment) ? fragment : null;
+  }
+
+  static extractMalformedManuscriptPayload(
+    text: string,
+  ): { text: string; source: 'text-field' | 'html-fragment' | 'plain-text' } | null {
+    const source = WorkspaceHelpers.stripTransportNoise(text);
+    if (!source) return null;
+
+    const extractedTextField = WorkspaceHelpers.extractQuotedJsonStringField(source, 'text');
+    if (extractedTextField?.value) {
+      const value = extractedTextField.value.trim();
+      if (value.length >= 24 || /<\/?(h2|h3|p|ul|ol|li|strong|em|br)\b/i.test(value)) {
+        return {
+          text: value,
+          source: 'text-field',
+        };
+      }
+    }
+
+    const htmlFragment = WorkspaceHelpers.extractLeadingHtmlFragment(source);
+    if (htmlFragment) {
+      return {
+        text: htmlFragment,
+        source: 'html-fragment',
+      };
+    }
+
+    let plainText = WorkspaceHelpers.decodeSerializedText(source)
+      .replace(/^\s*\{\s*"text"\s*:\s*/i, '')
+      .replace(/^"\s*/, '')
+      .replace(/"\s*,\s*"cues"[\s\S]*$/i, '')
+      .replace(/"\s*\}\s*$/i, '')
+      .replace(/^\s*text\s*:\s*/i, '')
+      .trim();
+
+    if (!plainText || /^[{\[]/.test(plainText)) {
+      return null;
+    }
+
+    return {
+      text: plainText,
+      source: 'plain-text',
+    };
+  }
+
   static pointText(point: any): string {
     if (typeof point === 'string') return point.trim();
     if (!point || typeof point !== 'object') return '';
@@ -83,7 +205,7 @@ export class WorkspaceHelpers {
   }
 
   static parseJsonSafe(text: string): any {
-    const raw = String(text || '').trim();
+    const raw = WorkspaceHelpers.stripTransportNoise(text);
     if (!raw) return null;
 
     const candidates = new Set<string>();

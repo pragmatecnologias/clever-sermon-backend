@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { RetryInterceptor } from './common/interceptors/retry.interceptor';
@@ -33,10 +34,27 @@ async function bootstrap() {
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
   
   app.setGlobalPrefix('api/v1');
+
+  // OpenAPI/Swagger setup for API discovery
+  const config = new DocumentBuilder()
+    .setTitle('Clever Sermon API')
+    .setDescription('API for sermon generation, AI prompts, and Bible resources')
+    .setVersion('1.0')
+    .addTag('sermons', 'Sermon management')
+    .addTag('workspaces', 'Workspace management')
+    .addTag('scripture', 'Bible text and search')
+    .addTag('ai-companion', 'AI assistant features')
+    .addBearerAuth()
+    .build();
   
-  const port = process.env.PORT || 3001;
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api-docs', app, document);
+  
+  const port = process.env.PORT || 4001;
   await app.listen(port);
   console.log(`🚀 Clever Sermon API running on http://localhost:${port}`);
+  console.log(`📚 OpenAPI docs at http://localhost:${port}/api-docs`);
+  console.log(`📄 OpenAPI JSON at http://localhost:${port}/api-docs-json`);
   console.log(`✅ Global error handling enabled`);
   console.log(`✅ Retry mechanism enabled (max 3 attempts)`);
   console.log(`✅ Timeout protection enabled (30s default, 2min for LLM)`);

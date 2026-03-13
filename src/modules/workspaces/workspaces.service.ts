@@ -45,6 +45,7 @@ export class WorkspacesService {
   private parseCitationsFromResponse = WorkspaceHelpers.parseCitationsFromResponse;
   private logLlmOutput = WorkspaceHelpers.logLlmOutput;
   private extractOutlinePointTexts = WorkspaceHelpers.extractOutlinePointTexts;
+  private extractMalformedManuscriptPayload = WorkspaceHelpers.extractMalformedManuscriptPayload;
 
   private buildSocraticCoachPrompt(
     workspace: SermonWorkspace,
@@ -809,9 +810,35 @@ Rules:
   private stripModelTransportArtifacts(value: string) {
     return String(value || '')
       .replace(/<\|[^|>]+?\|>/g, ' ')
+      .replace(/```(?:json)?/gi, '')
+      .replace(/```/g, '')
       .replace(/^\s*(assistant|final|response)\s*[:\-]\s*/i, '')
       .replace(/\r\n/g, '\n')
       .trim();
+  }
+
+  private sanitizeGeneratedManuscriptHtml(htmlText: string) {
+    return String(htmlText || '')
+      .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+      .replace(/\son\w+="[^"]*"/gi, '')
+      .replace(/\son\w+='[^']*'/gi, '')
+      .replace(/\s(href|src)=("|\')\s*javascript:[\s\S]*?\2/gi, '')
+      .trim();
+  }
+
+  private normalizeRecoveredManuscriptContent(text: string) {
+    const normalized = this.normalizeGeneratedManuscriptText(text);
+    if (!normalized) return '<p></p>';
+
+    const htmlText = /<\/?(p|h2|h3|h4|ul|ol|li|blockquote|strong|em|br)\b/i.test(normalized)
+      ? normalized
+      : this.markdownLikeToHtml(normalized);
+
+    return this.sanitizeGeneratedManuscriptHtml(htmlText) || '<p></p>';
+  }
+
+  private logManuscriptRecoveryMode(mode: 'json' | 'text-field' | 'html-fragment' | 'plain-text') {
+    console.info(`[manuscript-parse] recovery_mode=${mode}`);
   }
 
   private normalizeGeneratedManuscriptText(text: string) {
@@ -833,13 +860,11 @@ Rules:
     const cleanedResponse = this.stripModelTransportArtifacts(rawResponse);
     const parsed = this.parseJsonSafe(cleanedResponse) || this.parseJsonSafe(rawResponse);
     if (parsed && typeof parsed === 'object' && typeof parsed.text === 'string') {
-      const textFromModel = this.normalizeGeneratedManuscriptText(String(parsed.text || ''));
+      const textFromModel = this.normalizeRecoveredManuscriptContent(String(parsed.text || ''));
       const cueObject = this.sanitizeCueObject(parsed.cues);
-      const htmlText = /<\/?(p|h2|h3|h4|ul|ol|li|strong|em|br)\b/i.test(textFromModel)
-        ? textFromModel
-        : this.markdownLikeToHtml(textFromModel);
+      this.logManuscriptRecoveryMode('json');
       return {
-        text: htmlText || '<p></p>',
+        text: textFromModel || '<p></p>',
         cues: {
           ...cueObject,
           slide: options.includeSlideCues ? cueObject.slide : [],
@@ -848,9 +873,19 @@ Rules:
       };
     }
 
+    const malformedPayload = this.extractMalformedManuscriptPayload(cleanedResponse || rawResponse);
+    if (malformedPayload?.text) {
+      this.logManuscriptRecoveryMode(malformedPayload.source);
+      return {
+        text: this.normalizeRecoveredManuscriptContent(malformedPayload.text),
+        cues: this.manuscriptCueTemplate(),
+      };
+    }
+
+    this.logManuscriptRecoveryMode('plain-text');
     const extracted = this.extractCuesFromLegacyText(this.normalizeGeneratedManuscriptText(cleanedResponse || rawResponse));
     return {
-      text: this.markdownLikeToHtml(extracted.text),
+      text: this.normalizeRecoveredManuscriptContent(extracted.text),
       cues: {
         ...extracted.cues,
         slide: options.includeSlideCues ? extracted.cues.slide : [],
