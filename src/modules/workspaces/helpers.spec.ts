@@ -6,7 +6,7 @@ describe('WorkspaceHelpers manuscript recovery', () => {
 
     expect(WorkspaceHelpers.extractMalformedManuscriptPayload(payload)).toEqual({
       text: '<h2>Introduction</h2><p>Grace restores us.</p>',
-      source: 'text-field',
+      source: 'html-fragment',
     });
   });
 

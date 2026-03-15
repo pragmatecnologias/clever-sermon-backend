@@ -28,6 +28,7 @@ describe('WorkspacesService manuscript parsing', () => {
       null as any,
       null as any,
       null as any,
+      null as any,
     );
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
   });
@@ -163,5 +164,77 @@ describe('WorkspacesService manuscript parsing', () => {
 
     expect(unusable).toBe(false);
     expect(usable).toBe(true);
+  });
+
+  it('builds a non-empty targeted repair plan from coach questions', () => {
+    const workspace = {
+      language: 'es',
+      mainPassage: 'Efesios 2:1-10',
+      theologicalLens: 'adventist',
+      theme: 'Gracia transformadora',
+      audienceProfile: 'Familias y jóvenes',
+    } as any;
+
+    const questions = [
+      {
+        id: 'Q1',
+        dimension: 'text_fidelity',
+        question: '¿Cómo conecta esta metáfora con Efesios 2:1-10?',
+        severity: 'medium',
+        sourceAnchor: 'Introducción',
+        purpose: 'Alinear con el texto',
+      },
+      {
+        id: 'Q2',
+        dimension: 'application_strength',
+        question: '¿Dónde aterriza esto para familias y jóvenes?',
+        severity: 'high',
+        sourceAnchor: 'Punto 3',
+        purpose: 'Aplicación concreta',
+      },
+    ];
+
+    const plan = (service as any).buildRepairPlanFromCoachQuestions(workspace, questions);
+    expect(Array.isArray(plan)).toBe(true);
+    expect(plan.length).toBeGreaterThan(0);
+    expect(plan[0].issueId).toContain('issue-');
+    expect(plan[0].targetAnchor).toBeTruthy();
+    expect(plan[0].proposedAction).toBeTruthy();
+  });
+
+  it('applies anchored targeted replacements without rewriting full manuscript', () => {
+    const html = '<h2>Introducción</h2><p>Texto original de introducción.</p><h2>Punto 1</h2><p>Contenido punto uno.</p>';
+    const patched = (service as any).applyFirstSnippetReplacement(
+      html,
+      'Introducción',
+      'Texto original de introducción.',
+      '<p>Texto mejorado y más fiel al pasaje.</p>',
+    );
+
+    expect(patched).toContain('<h2>Introducción</h2>');
+    expect(patched).toContain('Texto mejorado y más fiel al pasaje.');
+    expect(patched).toContain('<h2>Punto 1</h2>');
+    expect(patched).toContain('Contenido punto uno.');
+  });
+
+  it('removes duplicated anchor title text from heading-context repair patches', () => {
+    const html =
+      '<h2>Introducción: La noche sin luna</h2><p>Aquí comienza nuestro viaje.</p><h2>Punto 1</h2><p>Contenido punto uno.</p>';
+    const patched = (service as any).applyFirstSnippetReplacement(
+      html,
+      'Introducción: La noche sin luna',
+      'Aquí comienza nuestro viaje.',
+      '<p>Introducción: La noche sin luna Introducción: La noche sin luna Aquí comienza nuestro viaje con claridad.</p>',
+    );
+
+    expect(patched).toContain('<h2>Introducción: La noche sin luna</h2>');
+    expect(patched).toContain('Aquí comienza nuestro viaje con claridad.');
+    expect(patched).not.toContain('Introducción: La noche sin luna Introducción: La noche sin luna');
+    expect(patched).toContain('<h2>Punto 1</h2>');
+  });
+
+  it('flags adventist drift when sunday language appears', () => {
+    expect((service as any).hasAdventistDrift('En este domingo celebramos...')).toBe(true);
+    expect((service as any).hasAdventistDrift('En este sábado adoramos al Señor.')).toBe(false);
   });
 });

@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bull';
 import { WorkspacesService } from './workspaces.service';
 import { WorkspacesController } from './workspaces.controller';
 import { ContentValidatorService } from './content-validator.service';
 import { SermonIntegrityService } from './sermon-integrity.service';
+import { ManuscriptRepairProcessor } from './manuscript-repair.processor';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { SermonOutline } from '../../entities/sermon-outline.entity';
 import { SermonManuscript } from '../../entities/sermon-manuscript.entity';
@@ -28,11 +30,14 @@ import { EGWModule } from '../egw/egw.module';
       SermonCitation,
       SermonStudyReport,
     ]),
+    BullModule.registerQueue({
+      name: 'manuscript-repair',
+    }),
     LlmModule,
     ScriptureModule,
     EGWModule,
   ],
-  providers: [WorkspacesService, ContentValidatorService, SermonIntegrityService],
+  providers: [WorkspacesService, ContentValidatorService, SermonIntegrityService, ManuscriptRepairProcessor],
   controllers: [WorkspacesController],
   exports: [WorkspacesService],
 })

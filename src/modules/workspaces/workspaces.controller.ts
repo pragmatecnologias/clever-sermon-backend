@@ -230,6 +230,32 @@ export class WorkspacesController {
     return this.workspacesService.regenerateManuscriptCues(id, manuscriptId, req.user.userId);
   }
 
+  @Post(':id/manuscripts/:manuscriptId/repair/apply')
+  applyManuscriptRepair(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('manuscriptId') manuscriptId: string,
+    @Body()
+    body: {
+      selectedIssueIds?: string[];
+      doNotTouchAnchors?: string[];
+      conversationSummary?: string;
+      mode?: 'targeted' | string;
+    },
+  ) {
+    return this.workspacesService.enqueueManuscriptRepair(id, manuscriptId, req.user.userId, body || {});
+  }
+
+  @Get(':id/manuscripts/:manuscriptId/repair/jobs/:jobId')
+  getManuscriptRepairStatus(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('manuscriptId') manuscriptId: string,
+    @Param('jobId') jobId: string,
+  ) {
+    return this.workspacesService.getManuscriptRepairJobStatus(id, manuscriptId, jobId, req.user.userId);
+  }
+
   @Patch('applications/:id')
   updateApplication(@Request() req, @Param('id') id: string, @Body() dto: UpdateApplicationDto) {
     return this.workspacesService.updateApplication(req.user.userId, id, dto);

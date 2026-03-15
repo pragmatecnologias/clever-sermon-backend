@@ -54,6 +54,7 @@ export class TimeoutInterceptor implements NestInterceptor {
       '/translation-comparison-enhanced',
       '/sermon-core',
       '/socratic-coach',
+      '/repair/apply',
     ];
 
     if (llmPaths.some(path => request.url.includes(path))) {

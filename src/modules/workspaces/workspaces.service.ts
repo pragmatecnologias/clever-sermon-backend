@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { InjectQueue } from '@nestjs/bull';
+import { Job, Queue } from 'bull';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { SermonOutline } from '../../entities/sermon-outline.entity';
 import { SermonManuscript } from '../../entities/sermon-manuscript.entity';
@@ -44,6 +46,42 @@ type ManuscriptCues = {
   read: string[];
   quote: string[];
   cta: string[];
+};
+
+type CoachRepairIssueType =
+  | 'text_fidelity'
+  | 'structure_flow'
+  | 'application_strength'
+  | 'theological_clarity'
+  | 'language_consistency'
+  | 'gospel_focus';
+
+type CoachRepairPlanItem = {
+  issueId: string;
+  questionId: string;
+  issueType: CoachRepairIssueType;
+  severity: 'high' | 'medium' | 'low';
+  targetAnchor: string;
+  proposedAction: string;
+  expectedOutcome: string;
+  selected?: boolean;
+};
+
+type ManuscriptRepairApplyPayload = {
+  selectedIssueIds?: string[];
+  doNotTouchAnchors?: string[];
+  conversationSummary?: string;
+  mode?: 'targeted' | string;
+};
+
+type ManuscriptRepairQueuePayload = {
+  workspaceId: string;
+  manuscriptId: string;
+  userId: string;
+  selectedIssueIds: string[];
+  doNotTouchAnchors: string[];
+  conversationSummary: string;
+  mode: 'targeted';
 };
 
 @Injectable()
@@ -388,6 +426,77 @@ Rules:
     return extracted;
   }
 
+  private inferRepairIssueTypeFromDimension(dimension: string): CoachRepairIssueType {
+    const normalized = this.asString(dimension).toLowerCase();
+    if (normalized.includes('structure')) return 'structure_flow';
+    if (normalized.includes('application')) return 'application_strength';
+    if (normalized.includes('theolog')) return 'theological_clarity';
+    if (normalized.includes('language')) return 'language_consistency';
+    if (normalized.includes('gospel')) return 'gospel_focus';
+    return 'text_fidelity';
+  }
+
+  private inferRepairAnchor(question: {
+    sourceAnchor?: string;
+    question?: string;
+  }, workspace: SermonWorkspace): string {
+    const explicit = this.cleanCoachText(question?.sourceAnchor || '');
+    if (explicit) return explicit;
+    const q = this.asString(question?.question || '').toLowerCase();
+    if (q.includes('introduc')) return workspace.language === 'es' ? 'Introducción' : 'Introduction';
+    if (q.includes('conclus')) return workspace.language === 'es' ? 'Conclusión' : 'Conclusion';
+    if (q.includes('punto 1') || q.includes('point 1')) return workspace.language === 'es' ? 'Punto 1' : 'Point 1';
+    if (q.includes('punto 2') || q.includes('point 2')) return workspace.language === 'es' ? 'Punto 2' : 'Point 2';
+    if (q.includes('punto 3') || q.includes('point 3')) return workspace.language === 'es' ? 'Punto 3' : 'Point 3';
+    return workspace.mainPassage || 'Manuscript';
+  }
+
+  private buildRepairPlanFromCoachQuestions(
+    workspace: SermonWorkspace,
+    questions: Array<{
+      id: string;
+      dimension: string;
+      question: string;
+      severity: string;
+      sourceAnchor: string;
+      purpose: string;
+    }>,
+  ): CoachRepairPlanItem[] {
+    const plan = (questions || [])
+      .map((question, index) => {
+        const issueType = this.inferRepairIssueTypeFromDimension(question.dimension);
+        const targetAnchor = this.inferRepairAnchor(question, workspace);
+        const baseAction =
+          issueType === 'text_fidelity'
+            ? 'Align this section more directly with the passage argument and immediate context.'
+            : issueType === 'structure_flow'
+              ? 'Add an explicit transition to connect this section with the next movement.'
+              : issueType === 'application_strength'
+                ? 'Add concrete, audience-specific application examples tied to the text.'
+                : issueType === 'theological_clarity'
+                  ? 'Clarify doctrinal statements and remove ambiguous theological language.'
+                  : issueType === 'language_consistency'
+                    ? 'Normalize language and labels to match workspace language.'
+                    : 'Strengthen gospel clarity and Christ-centered emphasis.';
+        const expectedOutcome =
+          workspace.language === 'es'
+            ? 'Mayor claridad, fidelidad bíblica y aplicación práctica sin reescribir todo el manuscrito.'
+            : 'Improved clarity, biblical fidelity, and practical application without rewriting the full manuscript.';
+        return {
+          issueId: `issue-${index + 1}-${this.cleanCoachText(question.id || `Q${index + 1}`)}`,
+          questionId: this.cleanCoachText(question.id || `Q${index + 1}`),
+          issueType,
+          severity: this.normalizeCoachSeverity(question.severity || 'medium') as 'high' | 'medium' | 'low',
+          targetAnchor,
+          proposedAction: baseAction,
+          expectedOutcome,
+          selected: true,
+        } as CoachRepairPlanItem;
+      })
+      .slice(0, 12);
+    return plan;
+  }
+
   async generateSocraticCoach(
     workspaceId: string,
     userId: string,
@@ -474,12 +583,15 @@ Rules:
       }
     }
 
+    const repairPlan = this.buildRepairPlanFromCoachQuestions(workspace, questions);
+
     const coachSession = {
       mode: this.asString(parsed?.mode || payload?.mode || 'refine').toLowerCase(),
       listenerProfile: this.asString(parsed?.listenerProfile || payload?.listenerProfile || 'general_congregation'),
       summary,
       weakAreas,
       questions,
+      repairPlan,
       nextStepSuggestion,
       generatedAt: now,
     };
@@ -492,6 +604,547 @@ Rules:
     };
     await this.workspaceRepository.save(workspace);
     return normalizedCoachSession;
+  }
+
+  async enqueueManuscriptRepair(
+    workspaceId: string,
+    manuscriptId: string,
+    userId: string,
+    payload: ManuscriptRepairApplyPayload,
+  ) {
+    const workspace = await this.findOne(workspaceId, userId);
+    const manuscript = (workspace.manuscripts || []).find((item: any) => item.id === manuscriptId);
+    if (!manuscript) {
+      throw new BadRequestException('Manuscript not found in this workspace.');
+    }
+
+    const mode = payload?.mode === 'targeted' ? 'targeted' : 'targeted';
+    const session = (workspace.metadata as any)?.socraticCoachLastSession || {};
+    const repairPlan = Array.isArray(session?.repairPlan) ? session.repairPlan : [];
+    if (!repairPlan.length) {
+      throw new BadRequestException('No Socratic repair plan found. Generate coach questions first.');
+    }
+
+    const selectedIssueIds = (Array.isArray(payload?.selectedIssueIds) ? payload.selectedIssueIds : [])
+      .map((item) => this.asString(item))
+      .filter(Boolean);
+    const effectiveIssueIds = selectedIssueIds.length
+      ? selectedIssueIds
+      : repairPlan
+          .filter((item: any) => item?.selected !== false)
+          .map((item: any) => this.asString(item?.issueId))
+          .filter(Boolean);
+
+    if (!effectiveIssueIds.length) {
+      throw new BadRequestException('Select at least one repair issue to apply.');
+    }
+
+    const queuePayload: ManuscriptRepairQueuePayload = {
+      workspaceId,
+      manuscriptId,
+      userId,
+      selectedIssueIds: Array.from(new Set(effectiveIssueIds)),
+      doNotTouchAnchors: (Array.isArray(payload?.doNotTouchAnchors) ? payload.doNotTouchAnchors : [])
+        .map((item) => this.cleanCoachText(item))
+        .filter(Boolean),
+      conversationSummary: this.cleanCoachText(payload?.conversationSummary || ''),
+      mode,
+    };
+
+    const job = await this.manuscriptRepairQueue.add('apply-targeted', queuePayload, {
+      attempts: 1,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
+
+    return {
+      jobId: String(job.id),
+      status: 'queued',
+      workspaceId,
+      manuscriptId,
+      mode,
+      selectedIssueIds: queuePayload.selectedIssueIds,
+    };
+  }
+
+  async getManuscriptRepairJobStatus(
+    workspaceId: string,
+    manuscriptId: string,
+    jobId: string,
+    userId: string,
+  ) {
+    await this.findOne(workspaceId, userId);
+    const job = await this.manuscriptRepairQueue.getJob(jobId);
+    if (!job) {
+      throw new BadRequestException('Repair job not found.');
+    }
+    const data = (job.data || {}) as ManuscriptRepairQueuePayload;
+    if (data.workspaceId !== workspaceId || data.manuscriptId !== manuscriptId || data.userId !== userId) {
+      throw new BadRequestException('Repair job does not belong to this manuscript.');
+    }
+
+    const state = await job.getState();
+    const progress = (job.progress() || {}) as { state?: string; message?: string; touchedAnchors?: string[] };
+    if (state === 'completed') {
+      const latestManuscript = await this.manuscriptRepository.findOne({ where: { id: manuscriptId } });
+      return {
+        jobId,
+        status: 'completed',
+        state: 'completed',
+        result: job.returnvalue || null,
+        manuscript: latestManuscript || null,
+      };
+    }
+    if (state === 'failed') {
+      return {
+        jobId,
+        status: 'failed',
+        state: 'failed',
+        error: job.failedReason || 'Repair job failed.',
+      };
+    }
+    return {
+      jobId,
+      status: state === 'active' ? (progress.state || 'patching') : 'queued',
+      state: progress.state || (state === 'active' ? 'patching' : 'queued'),
+      message: progress.message || '',
+      touchedAnchors: progress.touchedAnchors || [],
+    };
+  }
+
+  async processManuscriptRepairJob(
+    payload: ManuscriptRepairQueuePayload,
+    job?: Job<ManuscriptRepairQueuePayload>,
+  ) {
+    const setStage = async (state: string, message: string, touchedAnchors: string[] = []) => {
+      if (job) {
+        await job.progress({ state, message, touchedAnchors });
+      }
+      console.info(
+        '[manuscript-repair]',
+        JSON.stringify({
+          tag: 'manuscript_repair_stage',
+          workspaceId: payload.workspaceId,
+          manuscriptId: payload.manuscriptId,
+          state,
+          message,
+          touchedAnchors,
+        }),
+      );
+    };
+
+    await setStage('planning', 'Preparing targeted repair plan.');
+    const result = await this.applyTargetedManuscriptRepair(payload, setStage);
+    await setStage('completed', 'Targeted repair completed.', result?.touchedAnchors || []);
+    return result;
+  }
+
+  private extractAnchorSnippet(html: string, anchor: string): string {
+    const source = this.asString(html || '');
+    const marker = this.cleanCoachText(anchor || '').toLowerCase();
+    if (!source || !marker) return '';
+    const plain = this.stripHtmlForWordCount(source);
+    const idx = plain.toLowerCase().indexOf(marker);
+    if (idx < 0) return '';
+    const start = Math.max(0, idx - 240);
+    const end = Math.min(plain.length, idx + Math.max(marker.length, 220));
+    const snippet = plain.slice(start, end).replace(/\s+/g, ' ').trim();
+    return snippet;
+  }
+
+  private buildTargetedRepairPatchPrompt(
+    workspace: SermonWorkspace,
+    issue: CoachRepairPlanItem,
+    manuscriptHtml: string,
+    snippet: string,
+    conversationSummary: string,
+  ): string {
+    const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
+    const theologicalLens = normalizeTheologicalLens(workspace.theologicalLens);
+    return `You are repairing a sermon manuscript section with high precision.
+
+Language: ${languageLabel}
+Theological Lens: ${theologicalLens}
+Main Passage: ${workspace.mainPassage}
+Theme: ${workspace.theme || ''}
+Audience: ${workspace.audienceProfile || ''}
+Issue ID: ${issue.issueId}
+Issue Type: ${issue.issueType}
+Severity: ${issue.severity}
+Target Anchor: ${issue.targetAnchor}
+Proposed Action: ${issue.proposedAction}
+Expected Outcome: ${issue.expectedOutcome}
+Conversation Summary: ${conversationSummary || 'N/A'}
+
+Current manuscript HTML (excerpt):
+${this.compactJsonForPrompt({ manuscriptHtml }, 7000)}
+
+Anchor snippet to replace:
+${snippet}
+
+Return ONLY valid JSON:
+{
+  "replacement": "Improved text for this section in ${languageLabel}. Use plain text or simple HTML paragraphs.",
+  "why": "Short rationale for the change."
+}
+
+Rules:
+- Keep biblical fidelity to ${workspace.mainPassage}.
+- Keep Adventist alignment if lens is adventist.
+- Keep same language as workspace.
+- Do not introduce Sunday worship framing.
+- Do not repeat the section title or anchor phrase at the start of the replacement.
+- Do not rewrite the full manuscript; patch only this targeted section.
+- No markdown, no prose outside JSON.`;
+  }
+
+  private hasAdventistDrift(text: string): boolean {
+    const normalized = this.asString(text || '').toLowerCase();
+    return /\bdomingo\b|\bsunday\b/.test(normalized);
+  }
+
+  private stripLeadingDuplicateAnchorTitle(
+    replacementHtml: string,
+    anchorText: string,
+    headingContext = false,
+  ): string {
+    const normalizedAnchor = this.cleanCoachText(anchorText || '');
+    if (!replacementHtml || !normalizedAnchor) return replacementHtml;
+
+    let cleaned = this.asString(replacementHtml);
+    const escapedAnchor = normalizedAnchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    cleaned = cleaned.replace(
+      new RegExp(`^\\s*<h[1-4][^>]*>\\s*${escapedAnchor}\\s*<\\/h[1-4]>\\s*`, 'i'),
+      '',
+    );
+
+    cleaned = cleaned.replace(
+      new RegExp(`^\\s*<p[^>]*>\\s*${escapedAnchor}\\s*[\\.:\\-–—]?\\s*<\\/p>\\s*`, 'i'),
+      '',
+    );
+
+    cleaned = cleaned.replace(
+      new RegExp(`^\\s*<p([^>]*)>\\s*${escapedAnchor}\\s*[\\.:\\-–—]?\\s*`, 'i'),
+      '<p$1>',
+    );
+
+    if (headingContext) {
+      cleaned = cleaned.replace(
+        new RegExp(`^\\s*<p([^>]*)>\\s*(?:${escapedAnchor}\\s*[\\.:\\-–—]?\\s*)+`, 'i'),
+        '<p$1>',
+      );
+      cleaned = cleaned.replace(
+        new RegExp(`^\\s*(?:${escapedAnchor}\\s*[\\.:\\-–—]?\\s*)+`, 'i'),
+        '',
+      );
+    } else {
+      cleaned = cleaned.replace(
+        new RegExp(`^\\s*<p([^>]*)>\\s*(${escapedAnchor}\\s*[\\.:\\-–—]?\\s*)(?:${escapedAnchor}\\s*[\\.:\\-–—]?\\s*)+`, 'i'),
+        '<p$1>$2',
+      );
+      cleaned = cleaned.replace(
+        new RegExp(`^\\s*(${escapedAnchor}\\s*[\\.:\\-–—]?\\s*)(?:${escapedAnchor}\\s*[\\.:\\-–—]?\\s*)+`, 'i'),
+        '$1',
+      );
+    }
+
+    return cleaned.trim() || replacementHtml;
+  }
+
+  private applyFirstSnippetReplacement(html: string, anchor: string, beforeSnippet: string, replacement: string): string {
+    const source = this.asString(html || '');
+    const anchorText = this.cleanCoachText(anchor || '');
+    const before = this.cleanCoachText(beforeSnippet || '');
+    if (!source) return source;
+    const replacementHtml = this.sanitizeGeneratedManuscriptHtml(
+      /<\/?(p|h2|h3|h4|ul|ol|li|blockquote|strong|em|br)\b/i.test(replacement)
+        ? replacement
+        : this.markdownLikeToHtml(replacement),
+    );
+    if (!replacementHtml) return source;
+    const headingMatch =
+      !!anchorText &&
+      new RegExp(`(<h[2-4][^>]*>[\\s\\S]*?${anchorText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?<\\/h[2-4]>)`, 'i')
+        .test(source);
+    const normalizedReplacementHtml = this.stripLeadingDuplicateAnchorTitle(
+      replacementHtml,
+      anchorText,
+      headingMatch,
+    );
+
+    if (anchorText) {
+      const escapedAnchor = anchorText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const headingRegex = new RegExp(`(<h[2-4][^>]*>[\\s\\S]*?${escapedAnchor}[\\s\\S]*?<\\/h[2-4]>)`, 'i');
+      if (headingRegex.test(source)) {
+        return source.replace(headingRegex, `$1\n${normalizedReplacementHtml}`);
+      }
+    }
+
+    const escapedBefore = before.slice(0, 120).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (escapedBefore) {
+      const paragraphRegex = new RegExp(`(<p[^>]*>[\\s\\S]{0,400}?${escapedBefore}[\\s\\S]{0,400}?<\\/p>)`, 'i');
+      if (paragraphRegex.test(source)) {
+        return source.replace(paragraphRegex, normalizedReplacementHtml);
+      }
+    }
+
+    return `${source}\n<h3>Repair · ${anchorText || 'Target Section'}</h3>\n${normalizedReplacementHtml}`.trim();
+  }
+
+  private async applyTargetedManuscriptRepair(
+    payload: ManuscriptRepairQueuePayload,
+    setStage: (state: string, message: string, touchedAnchors?: string[]) => Promise<void>,
+  ) {
+    const workspace = await this.findOne(payload.workspaceId, payload.userId);
+    const manuscript = (workspace.manuscripts || []).find((item: any) => item.id === payload.manuscriptId);
+    if (!manuscript) {
+      throw new BadRequestException('Manuscript not found for targeted repair.');
+    }
+
+    const session = ((workspace.metadata || {}) as any)?.socraticCoachLastSession || {};
+    const repairPlan = (Array.isArray(session?.repairPlan) ? session.repairPlan : []) as CoachRepairPlanItem[];
+    const selectedIssues = repairPlan.filter((item) => payload.selectedIssueIds.includes(this.asString(item?.issueId)));
+    if (!selectedIssues.length) {
+      throw new BadRequestException('No matching repair issues selected.');
+    }
+
+    const lockSet = new Set((payload.doNotTouchAnchors || []).map((item) => this.cleanCoachText(item).toLowerCase()));
+    const touchedAnchors = new Set<string>();
+    const auditTrail: Array<{
+      issueId: string;
+      anchor: string;
+      beforeSnippet: string;
+      afterSnippet: string;
+      result: 'repaired' | 'skipped' | 'locked' | 'failed';
+    }> = [];
+
+    let currentHtml = this.asString(manuscript?.content?.text || '');
+    let repairAttempts = 0;
+    const repairedIssues: string[] = [];
+    const remainingIssues: string[] = [];
+
+    for (const issue of selectedIssues) {
+      const anchor = this.cleanCoachText(issue.targetAnchor || '');
+      if (!anchor) {
+        const fallbackSnippet = 'No target anchor was provided for this repair action.';
+        remainingIssues.push(issue.issueId);
+        auditTrail.push({
+          issueId: issue.issueId,
+          anchor: '',
+          beforeSnippet: fallbackSnippet,
+          afterSnippet: fallbackSnippet,
+          result: 'skipped',
+        });
+        continue;
+      }
+      if (lockSet.has(anchor.toLowerCase())) {
+        const lockedSnippet =
+          this.extractAnchorSnippet(currentHtml, anchor) ||
+          `Anchor "${anchor}" is locked. No manuscript section was modified.`;
+        remainingIssues.push(issue.issueId);
+        auditTrail.push({
+          issueId: issue.issueId,
+          anchor,
+          beforeSnippet: lockedSnippet,
+          afterSnippet: lockedSnippet,
+          result: 'locked',
+        });
+        continue;
+      }
+
+      const beforeSnippet = this.extractAnchorSnippet(currentHtml, anchor);
+      if (!beforeSnippet) {
+        const missingAnchorSnippet = `No manuscript section matched anchor "${anchor}".`;
+        remainingIssues.push(issue.issueId);
+        auditTrail.push({
+          issueId: issue.issueId,
+          anchor,
+          beforeSnippet: missingAnchorSnippet,
+          afterSnippet: missingAnchorSnippet,
+          result: 'skipped',
+        });
+        continue;
+      }
+
+      await setStage('patching', `Repairing ${issue.questionId} (${issue.issueType})`, Array.from(touchedAnchors));
+      let patched = false;
+      let afterSnippet = '';
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        repairAttempts += 1;
+        const patchPrompt = this.buildTargetedRepairPatchPrompt(
+          workspace,
+          issue,
+          currentHtml,
+          beforeSnippet,
+          payload.conversationSummary || '',
+        );
+        const patchResponse = await this.llmService.generateCompletion(patchPrompt, payload.userId, {
+          temperature: 0.2,
+          maxTokens: 1200,
+        });
+        this.logLlmOutput(`manuscript:targeted-repair:${issue.issueId}:${attempt + 1}`, patchResponse);
+        const patchParsed = this.parseJsonSafe(patchResponse) || {};
+        const candidateReplacement = this.cleanCoachText(
+          patchParsed?.replacement || patchParsed?.patch || patchParsed?.text || patchResponse,
+        );
+        if (!candidateReplacement) {
+          continue;
+        }
+        if (normalizeTheologicalLens(workspace.theologicalLens) === 'adventist' && this.hasAdventistDrift(candidateReplacement)) {
+          continue;
+        }
+        const patchedHtml = this.applyFirstSnippetReplacement(currentHtml, anchor, beforeSnippet, candidateReplacement);
+        if (patchedHtml === currentHtml) {
+          continue;
+        }
+        const cues = this.sanitizeCueObject(manuscript?.content?.cues || {});
+        if (workspace.language === 'es' && this.hasEnglishLeakInSpanishManuscript(patchedHtml, cues)) {
+          continue;
+        }
+        currentHtml = patchedHtml;
+        touchedAnchors.add(anchor);
+        afterSnippet = this.extractAnchorSnippet(currentHtml, anchor);
+        patched = true;
+        break;
+      }
+
+      if (patched) {
+        const safeAfterSnippet = afterSnippet || beforeSnippet;
+        repairedIssues.push(issue.issueId);
+        auditTrail.push({
+          issueId: issue.issueId,
+          anchor,
+          beforeSnippet,
+          afterSnippet: safeAfterSnippet,
+          result: 'repaired',
+        });
+      } else {
+        const failedAfterSnippet = this.extractAnchorSnippet(currentHtml, anchor) || beforeSnippet;
+        remainingIssues.push(issue.issueId);
+        auditTrail.push({
+          issueId: issue.issueId,
+          anchor,
+          beforeSnippet,
+          afterSnippet: failedAfterSnippet,
+          result: 'failed',
+        });
+      }
+    }
+
+    await setStage('validating', 'Validating repaired manuscript.', Array.from(touchedAnchors));
+    const normalizedOptions = this.normalizeManuscriptOptions(workspace, manuscript?.content?.metadata?.options || {});
+    let quality = this.assessManuscriptQuality(currentHtml, normalizedOptions);
+    let cues = this.sanitizeCueObject(manuscript?.content?.cues || {});
+    if (touchedAnchors.size > 0) {
+      try {
+        const cuePrompt = this.buildManuscriptCueRefreshPrompt(workspace, currentHtml);
+        const cueResponse = await this.llmService.generateCompletion(cuePrompt, payload.userId, {
+          temperature: 0.2,
+          maxTokens: 1400,
+        });
+        this.logLlmOutput('manuscript:targeted-repair:cues-refresh', cueResponse);
+        const parsedCuePayload = this.parseJsonSafe(cueResponse);
+        cues = this.sanitizeCueObject(parsedCuePayload?.cues || parsedCuePayload || cues);
+        if (workspace.language === 'es') {
+          cues = {
+            slide: cues.slide.map((item) => this.normalizeSpanishManuscriptLabels(item)),
+            keyLine: cues.keyLine.map((item) => this.normalizeSpanishManuscriptLabels(item)),
+            transition: cues.transition.map((item) => this.normalizeSpanishManuscriptLabels(item)),
+            pause: cues.pause.map((item) => this.normalizeSpanishManuscriptLabels(item)),
+            read: cues.read.map((item) => this.normalizeSpanishManuscriptLabels(item)),
+            quote: cues.quote.map((item) => this.normalizeSpanishManuscriptLabels(item)),
+            cta: cues.cta.map((item) => this.normalizeSpanishManuscriptLabels(item)),
+          };
+        }
+      } catch (error) {
+        console.warn(`[manuscript:targeted-repair:cues-refresh] skipped: ${(error as Error)?.message || 'unknown error'}`);
+      }
+    }
+    if (!this.hasUsableManuscriptText(currentHtml)) {
+      throw new BadRequestException('Targeted repair produced unusable manuscript content.');
+    }
+    if (normalizeTheologicalLens(workspace.theologicalLens) === 'adventist' && this.hasAdventistDrift(currentHtml)) {
+      throw new BadRequestException('Targeted repair violated Adventist guardrails.');
+    }
+    if (workspace.language === 'es' && this.hasEnglishLeakInSpanishManuscript(currentHtml, cues)) {
+      throw new BadRequestException('Targeted repair violated Spanish language lock.');
+    }
+
+    const plainText = this.stripHtmlForWordCount(currentHtml);
+    const wordCount = this.countWords(plainText);
+    const estimatedMinutes = Math.max(1, Math.ceil(wordCount / this.manuscriptWpm));
+    const unresolvedQualityIssues = quality.issues.filter((item) => !repairedIssues.includes(item));
+    const metadata = {
+      ...(manuscript?.content?.metadata || {}),
+      quality: {
+        ...(manuscript?.content?.metadata?.quality || {}),
+        wordCount,
+        targetWords: quality.targets.targetWords,
+        minWords: quality.targets.minWords,
+        maxWords: quality.targets.maxWords,
+        finalIssues: quality.issues,
+        status: quality.issues.length ? 'needs_review' : 'ok',
+        repairAttempts,
+        warningMessage: this.buildManuscriptQualityWarningMessage(quality.issues, workspace.language || 'en'),
+        repairedIssues,
+        remainingIssues: Array.from(new Set([...remainingIssues, ...unresolvedQualityIssues])),
+      },
+      repair: {
+        lastRepairedAt: new Date().toISOString(),
+        mode: 'targeted',
+        conversationSummary: payload.conversationSummary || '',
+        touchedAnchors: Array.from(touchedAnchors),
+        cueAnchors: Array.from(touchedAnchors).reduce(
+          (acc, anchor, index) => ({
+            ...acc,
+            [`anchor-${index + 1}`]: anchor,
+          }),
+          {},
+        ),
+        auditTrail,
+      },
+    };
+
+    manuscript.content = {
+      ...(manuscript?.content || {}),
+      formatVersion: manuscript?.content?.formatVersion || 'v2',
+      text: currentHtml,
+      cues,
+      metadata,
+    };
+    manuscript.wordCount = wordCount;
+    manuscript.estimatedMinutes = estimatedMinutes;
+    await this.manuscriptRepository.save(manuscript);
+
+    console.warn(
+      '[manuscript-targeted-repair]',
+      JSON.stringify({
+        tag: 'manuscript_targeted_repair',
+        workspaceId: payload.workspaceId,
+        manuscriptId: payload.manuscriptId,
+        selectedIssues: payload.selectedIssueIds,
+        repairedIssues,
+        remainingIssues: metadata?.quality?.remainingIssues || [],
+        repairAttempts,
+        wordCount,
+      }),
+    );
+
+    return {
+      manuscriptId: manuscript.id,
+      repairedIssues,
+      remainingIssues: metadata?.quality?.remainingIssues || [],
+      touchedAnchors: Array.from(touchedAnchors),
+      repairAttempts,
+      qualityStatus: metadata?.quality?.status || 'needs_review',
+      warningMessage: metadata?.quality?.warningMessage || '',
+      changeSummary:
+        workspace.language === 'es'
+          ? `Se repararon ${repairedIssues.length} elementos y quedaron ${remainingIssues.length} pendientes.`
+          : `Repaired ${repairedIssues.length} items with ${remainingIssues.length} remaining.`,
+    };
   }
 
   private normalizePointTextForSimilarity(text: string): string {
@@ -550,6 +1203,8 @@ Rules:
     private egwService: EGWService,
     private egwStudyReportService: EGWStudyReportIntegrationService,
     private egwSermonBuilderService: EGWSermonBuilderIntegrationService,
+    @InjectQueue('manuscript-repair')
+    private manuscriptRepairQueue: Queue,
   ) {}
 
   async create(userId: string, createDto: CreateWorkspaceDto): Promise<SermonWorkspace> {
@@ -3617,32 +4272,6 @@ Rules:
 
       parsedManuscript = candidateManuscript;
       quality = candidateQuality;
-    }
-
-    let deterministicExpansionAttempt = 0;
-    while (quality.issues.includes('too_short') && deterministicExpansionAttempt < 4) {
-      const currentQuality = quality;
-      const neededWords = Math.max(0, quality.targets.minWords - quality.wordCount);
-      if (neededWords <= 0) break;
-      const expansionHtml = this.buildUnderLengthExpansionBlock(
-        workspace,
-        outline,
-        neededWords,
-        deterministicExpansionAttempt,
-      );
-      const merged = `${parsedManuscript.text}\n${expansionHtml}`.trim();
-      repairAttemptsExecuted += 1;
-      const mergedQuality = this.assessManuscriptQuality(merged, normalizedOptions);
-      if (mergedQuality.wordCount > currentQuality.wordCount && !mergedQuality.issues.includes('too_long')) {
-        parsedManuscript = {
-          ...parsedManuscript,
-          text: merged,
-        };
-        quality = mergedQuality;
-      } else {
-        break;
-      }
-      deterministicExpansionAttempt += 1;
     }
 
     if (!this.hasUsableManuscriptText(parsedManuscript.text)) {
