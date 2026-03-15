@@ -10,8 +10,8 @@ import { catchError, timeout } from 'rxjs/operators';
 
 @Injectable()
 export class TimeoutInterceptor implements NestInterceptor {
-  private readonly defaultTimeout = 60000; // 60 seconds
-  private readonly llmTimeout = 300000; // 5 minutes for LLM operations
+  private readonly defaultTimeout = Number(process.env.API_DEFAULT_TIMEOUT_MS || 120000); // 2 minutes
+  private readonly llmTimeout = Number(process.env.API_LLM_TIMEOUT_MS || 900000); // 15 minutes for LLM operations
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
@@ -37,9 +37,11 @@ export class TimeoutInterceptor implements NestInterceptor {
     const llmPaths = [
       '/study-report',
       '/outline',
+      '/outlines',
       '/manuscript',
       '/applications',
       '/illustrations',
+      '/media-suggestions',
       '/discussion-questions',
       '/citations',
       '/structural-analysis',
@@ -49,7 +51,9 @@ export class TimeoutInterceptor implements NestInterceptor {
       '/study-synthesis',
       '/canonical-themes',
       '/verse-commentary',
-      '/translation-comparison-enhanced'
+      '/translation-comparison-enhanced',
+      '/sermon-core',
+      '/socratic-coach',
     ];
 
     if (llmPaths.some(path => request.url.includes(path))) {

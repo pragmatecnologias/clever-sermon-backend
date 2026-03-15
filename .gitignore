@@ -3,5 +3,6 @@ dist/
 .env
 .env.local
 uploads/
+data/
 *.log
 .DS_Store

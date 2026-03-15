@@ -131,6 +131,18 @@ export class SermonWorkspace {
     addedAt?: string;
   }>;
 
+  @Column({ type: 'jsonb', nullable: true })
+  sermonCore: {
+    bigIdea?: string;
+    fallenCondition?: string;
+    centralTruth?: string;
+    sermonGoal?: string;
+    audienceNeed?: string;
+  };
+
+  @Column({ type: 'boolean', default: false })
+  egwEnabled: boolean;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

@@ -3,6 +3,26 @@
  */
 
 export class WorkspaceHelpers {
+  private static cleanGeneratedString(value: any): string {
+    if (value === null || value === undefined) return '';
+    let cleaned = String(value)
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ')
+      .replace(/\r\n/g, '\n')
+      .trim();
+
+    cleaned = cleaned
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'")
+      .replace(/\\`/g, '`')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    cleaned = cleaned.replace(/^[`"'“”‘’]+/, '').replace(/[`"'“”‘’]+$/, '').trim();
+    cleaned = cleaned.replace(/\\+$/, '').replace(/,\s*$/, '').trim();
+
+    return cleaned;
+  }
+
   private static tryJsonParse(text: string): any {
     try {
       return JSON.parse(text);
@@ -136,6 +156,16 @@ export class WorkspaceHelpers {
     const source = WorkspaceHelpers.stripTransportNoise(text);
     if (!source) return null;
 
+    // Prefer full HTML fragment recovery first. This avoids early truncation when
+    // malformed JSON contains unescaped quotes inside HTML attributes.
+    const htmlFragment = WorkspaceHelpers.extractLeadingHtmlFragment(source);
+    if (htmlFragment) {
+      return {
+        text: htmlFragment,
+        source: 'html-fragment',
+      };
+    }
+
     const extractedTextField = WorkspaceHelpers.extractQuotedJsonStringField(source, 'text');
     if (extractedTextField?.value) {
       const value = extractedTextField.value.trim();
@@ -145,14 +175,6 @@ export class WorkspaceHelpers {
           source: 'text-field',
         };
       }
-    }
-
-    const htmlFragment = WorkspaceHelpers.extractLeadingHtmlFragment(source);
-    if (htmlFragment) {
-      return {
-        text: htmlFragment,
-        source: 'html-fragment',
-      };
     }
 
     let plainText = WorkspaceHelpers.decodeSerializedText(source)
@@ -174,9 +196,9 @@ export class WorkspaceHelpers {
   }
 
   static pointText(point: any): string {
-    if (typeof point === 'string') return point.trim();
+    if (typeof point === 'string') return WorkspaceHelpers.cleanGeneratedString(point);
     if (!point || typeof point !== 'object') return '';
-    return String(point.title || point.text || point.content || '').trim();
+    return WorkspaceHelpers.cleanGeneratedString(point.title || point.text || point.content || '');
   }
 
   static asStringArray(value: any, limit: number = 20): string[] {
@@ -225,6 +247,14 @@ export class WorkspaceHelpers {
       .trim();
     if (withoutPrefixNoise) candidates.add(withoutPrefixNoise);
 
+    // Some providers/models return JSON-like payloads with smart quotes.
+    // Normalize quote punctuation so JSON parsing still succeeds.
+    const smartQuoteNormalized = withoutPrefixNoise
+      .replace(/[\u201c\u201d]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'")
+      .trim();
+    if (smartQuoteNormalized) candidates.add(smartQuoteNormalized);
+
     for (const candidate of candidates) {
       const parsed = WorkspaceHelpers.tryJsonParse(candidate);
       if (parsed) return parsed;
@@ -245,10 +275,23 @@ export class WorkspaceHelpers {
     const items: string[] = [];
     
     for (const line of lines) {
+      const trimmed = line.trim();
+      // Skip obvious JSON/object noise so malformed JSON does not become fake list items.
+      if (/^[\{\}\[\],]+$/.test(trimmed)) continue;
+
       // Match numbered lists: 1. , 1) , or just lines
       const match = line.match(/^\s*(?:\d+[\.\)]\s*)?(.+)$/);
-      if (match && match[1].trim()) {
-        items.push(match[1].trim());
+      const candidate = WorkspaceHelpers.cleanGeneratedString(match?.[1] || '');
+      if (!candidate) continue;
+
+      // Skip JSON-style key/value fragments such as:
+      // "mediaSuggestions": [
+      // "type": "Image"
+      if (trimmed.startsWith('"') && trimmed.includes('":')) continue;
+      if (/^[A-Za-z0-9_]+\s*:\s*[\[{]?\s*$/.test(candidate)) continue;
+
+      if (candidate) {
+        items.push(candidate);
       }
     }
     
@@ -330,10 +373,10 @@ export class WorkspaceHelpers {
             canonicalThemes: WorkspaceHelpers.asStringArray(point?.canonicalThemes || point?.themes, 8),
             crossReferences: WorkspaceHelpers.asStringArray(point?.crossReferences || point?.crossRefs, 10),
             subpoints: WorkspaceHelpers.asStringArray(point?.subpoints || point?.children, 10),
-            applications: WorkspaceHelpers.asStringArray(point?.applications || point?.applicationIdeas, 8),
-            discussionQuestions: WorkspaceHelpers.asStringArray(point?.discussionQuestions || point?.questions, 8),
-            illustrationIdeas: WorkspaceHelpers.asStringArray(point?.illustrationIdeas || point?.illustrations, 6),
-            mediaSuggestions: WorkspaceHelpers.asStringArray(point?.mediaSuggestions || point?.media, 6),
+            applications: WorkspaceHelpers.asStringArray(point?.applications || point?.applicationIdeas, 16),
+            discussionQuestions: WorkspaceHelpers.asStringArray(point?.discussionQuestions || point?.questions, 16),
+            illustrationIdeas: WorkspaceHelpers.asStringArray(point?.illustrationIdeas || point?.illustrations, 16),
+            mediaSuggestions: WorkspaceHelpers.asStringArray(point?.mediaSuggestions || point?.media, 16),
             egwSupport: Array.isArray(point?.egwSupport)
               ? point.egwSupport
                   .map((item: any) => ({

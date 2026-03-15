@@ -147,9 +147,9 @@ async function seed() {
     workspace = workspaceRepository.create({
       userId: adminUser.id,
       title: 'Faith Under Fire',
-      seriesTitle: 'Hope in the Wilderness',
-      mainPassage: 'Daniel 3:16-28',
-      additionalPassages: ['Isaiah 43:1-3', '1 Peter 1:6-7'],
+      seriesTitle: 'Courageous Faith',
+      mainPassage: 'Daniel 3:13-28',
+      additionalPassages: ['Isaiah 43:2', '1 Peter 1:7'],
       references: [
         {
           reference: 'Daniel 3:25',
@@ -158,12 +158,20 @@ async function seed() {
         },
       ],
       theme: 'God meets us in adversity with presence and power.',
-      audienceProfile: 'Sunday morning congregation, multi-generational.',
-      sermonGoals: 'Call the church to courage, prayer, and public faith.',
+      audienceProfile: 'Saturday worship congregation, multi-generational.',
+      sermonGoals: 'Encourage the church to stay faithful under pressure.',
       style: SermonStyle.EXPOSITORY,
-      storyArc: StoryArc.TENSION_TURN_RESOLUTION,
+      storyArc: StoryArc.PROBLEM_TRUTH_RESPONSE,
       status: WorkspaceStatus.IN_PROGRESS,
       language: 'en',
+      egwEnabled: true,
+      sermonCore: {
+        bigIdea: 'Faithfulness to God shines brightest in the fire.',
+        fallenCondition: 'We often compromise when pressured by fear or opposition.',
+        centralTruth: 'God’s presence sustains His people when they stand for Him.',
+        sermonGoal: 'Call the congregation to courageous loyalty to Christ.',
+        audienceNeed: 'Believers need assurance that God is with them in trials.'
+      },
     });
     await workspaceRepository.save(workspace);
     console.log('✅ Created English sermon workspace');
@@ -176,7 +184,7 @@ async function seed() {
   if (!workspaceEs) {
     workspaceEs = workspaceRepository.create({
       userId: adminUser.id,
-      title: 'La Gracia Transformadora',
+      title: 'Vida en Cristo',
       seriesTitle: 'Viviendo en Cristo',
       mainPassage: 'Efesios 2:1-10',
       additionalPassages: ['Romanos 5:8', 'Tito 3:4-7'],
@@ -194,6 +202,14 @@ async function seed() {
       storyArc: StoryArc.PROBLEM_TRUTH_RESPONSE,
       status: WorkspaceStatus.IN_PROGRESS,
       language: 'es',
+      egwEnabled: true,
+      sermonCore: {
+        bigIdea: 'La gracia de Dios nos rescata de la muerte espiritual.',
+        fallenCondition: 'El pecado nos separa de Dios y nos deja sin vida espiritual.',
+        centralTruth: 'En Cristo somos vivificados y reconciliados con Dios.',
+        sermonGoal: 'Invitar a la congregación a vivir en la nueva vida de Cristo.',
+        audienceNeed: 'La iglesia necesita esperanza de transformación real.'
+      },
     });
     await workspaceRepository.save(workspaceEs);
     console.log('✅ Created Spanish sermon workspace');

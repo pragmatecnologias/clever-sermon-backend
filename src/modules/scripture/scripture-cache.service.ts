@@ -63,6 +63,28 @@ export class ScriptureCacheService {
     return `bible:audio:${audioBibleId}:${chapterId}`;
   }
 
+  private getWordStudyKey(word: string, language: string, responseLanguage: string): string {
+    return `scripture:word-study:${String(language || 'greek').toLowerCase()}:${String(responseLanguage || 'en').toLowerCase()}:${encodeURIComponent(String(word || '').trim().toLowerCase())}`;
+  }
+
+  private getWordStudyInsightsKey(
+    word: string,
+    language: string,
+    context: string,
+    responseLanguage: string,
+  ): string {
+    return `scripture:word-study-insights:${String(language || 'greek').toLowerCase()}:${String(responseLanguage || 'en').toLowerCase()}:${encodeURIComponent(String(word || '').trim().toLowerCase())}:${encodeURIComponent(String(context || '').trim().toLowerCase())}`;
+  }
+
+  private getWordStudySuggestionsKey(
+    reference: string,
+    translationCode: string,
+    language: string,
+    responseLanguage: string,
+  ): string {
+    return `scripture:word-study-suggestions:${String(translationCode || 'KJV').toUpperCase()}:${String(language || 'greek').toLowerCase()}:${String(responseLanguage || 'en').toLowerCase()}:${encodeURIComponent(String(reference || '').trim().toLowerCase())}`;
+  }
+
   /**
    * Get cached passage
    */
@@ -186,6 +208,113 @@ export class ScriptureCacheService {
       console.log(`[Cache] SET: ${key}`);
     } catch (error) {
       console.error('[Cache] Set error:', error.message);
+    }
+  }
+
+  async getWordStudy(word: string, language: string, responseLanguage: string): Promise<any | null> {
+    if (!this.enabled || !this.redis) return null;
+
+    try {
+      const key = this.getWordStudyKey(word, language, responseLanguage);
+      const cached = await this.redis.get(key);
+      if (!cached) return null;
+      console.log(`[Cache] HIT: ${key}`);
+      return JSON.parse(cached);
+    } catch (error) {
+      console.error('[Cache] WordStudy get error:', error.message);
+      return null;
+    }
+  }
+
+  async setWordStudy(word: string, language: string, responseLanguage: string, data: any): Promise<void> {
+    if (!this.enabled || !this.redis) return;
+
+    try {
+      const key = this.getWordStudyKey(word, language, responseLanguage);
+      // Cache lexicon lookups for 7 days.
+      await this.redis.setex(key, 604800, JSON.stringify(data));
+      console.log(`[Cache] SET: ${key}`);
+    } catch (error) {
+      console.error('[Cache] WordStudy set error:', error.message);
+    }
+  }
+
+  async getWordStudyInsights(
+    word: string,
+    language: string,
+    context: string,
+    responseLanguage: string,
+  ): Promise<any | null> {
+    if (!this.enabled || !this.redis) return null;
+
+    try {
+      const key = this.getWordStudyInsightsKey(word, language, context, responseLanguage);
+      const cached = await this.redis.get(key);
+      if (!cached) return null;
+      console.log(`[Cache] HIT: ${key}`);
+      return JSON.parse(cached);
+    } catch (error) {
+      console.error('[Cache] WordStudyInsights get error:', error.message);
+      return null;
+    }
+  }
+
+  async setWordStudyInsights(
+    word: string,
+    language: string,
+    context: string,
+    responseLanguage: string,
+    data: any,
+  ): Promise<void> {
+    if (!this.enabled || !this.redis) return;
+
+    try {
+      const key = this.getWordStudyInsightsKey(word, language, context, responseLanguage);
+      // Cache LLM insights for 3 days.
+      await this.redis.setex(key, 259200, JSON.stringify(data));
+      console.log(`[Cache] SET: ${key}`);
+    } catch (error) {
+      console.error('[Cache] WordStudyInsights set error:', error.message);
+    }
+  }
+
+  async getWordStudySuggestions(
+    reference: string,
+    translationCode: string,
+    language: string,
+    responseLanguage: string,
+  ): Promise<any[] | null> {
+    if (!this.enabled || !this.redis) return null;
+
+    try {
+      const key = this.getWordStudySuggestionsKey(reference, translationCode, language, responseLanguage);
+      const cached = await this.redis.get(key);
+      if (!cached) return null;
+      console.log(`[Cache] HIT: ${key}`);
+      const parsed = JSON.parse(cached);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (error) {
+      console.error('[Cache] WordStudySuggestions get error:', error.message);
+      return null;
+    }
+  }
+
+  async setWordStudySuggestions(
+    reference: string,
+    translationCode: string,
+    language: string,
+    responseLanguage: string,
+    data: any[],
+  ): Promise<void> {
+    if (!this.enabled || !this.redis) return;
+
+    try {
+      const key = this.getWordStudySuggestionsKey(reference, translationCode, language, responseLanguage);
+      // Cache suggestion extraction for 12 hours.
+      await this.redis.setex(key, 43200, JSON.stringify(Array.isArray(data) ? data : []));
+      console.log(`[Cache] SET: ${key}`);
+    } catch (error) {
+      console.error('[Cache] WordStudySuggestions set error:', error.message);
     }
   }
 

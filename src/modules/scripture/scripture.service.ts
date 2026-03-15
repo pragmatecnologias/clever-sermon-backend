@@ -492,6 +492,10 @@ Rules:
     const occurrenceEntry = occurrences?.[key];
     const distributionByBook = this.buildDistributionByBook(occurrenceEntry?.verses || []);
     const targetLanguage = this.resolveResponseLanguage(responseLanguage);
+    const cached = await this.cacheService.getWordStudy(word, language, targetLanguage);
+    if (cached) {
+      return cached;
+    }
     if (entry) {
       const originalScript = this.resolveOriginalScript(entry?.lemma || key, word, language);
       const transliteration = this.resolveTransliteration(
@@ -514,7 +518,9 @@ Rules:
         verseOccurrences: occurrenceEntry?.verses || [],
         distributionByBook,
       };
-      return this.localizeWordStudyResult(baseResult, targetLanguage);
+      const localized = this.localizeWordStudyResult(baseResult, targetLanguage);
+      await this.cacheService.setWordStudy(word, language, targetLanguage, localized);
+      return localized;
     }
 
     const fallbackResult = {
@@ -531,11 +537,18 @@ Rules:
       verseOccurrences: occurrenceEntry?.verses || [],
       distributionByBook,
     };
-    return this.localizeWordStudyResult(fallbackResult, targetLanguage);
+    const localizedFallback = this.localizeWordStudyResult(fallbackResult, targetLanguage);
+    await this.cacheService.setWordStudy(word, language, targetLanguage, localizedFallback);
+    return localizedFallback;
   }
 
   async getWordStudyInsights(word: string, language: string, context?: string, responseLanguage: string = 'en') {
     const targetLanguage = this.resolveResponseLanguage(responseLanguage);
+    const normalizedContext = String(context || '').trim();
+    const cached = await this.cacheService.getWordStudyInsights(word, language, normalizedContext, targetLanguage);
+    if (cached) {
+      return cached;
+    }
     const outputLanguageLabel = targetLanguage === 'es' ? 'Spanish' : 'English';
     const prompt = `Provide advanced word study insights as JSON only.
 
@@ -576,10 +589,14 @@ Rules:
     const wordKey = String(word || '').toLowerCase();
     const partOfSpeech = String(index?.[wordKey]?.partOfSpeech || '').trim();
     if (targetLanguage !== 'es') {
-      return this.ensureGrammarInsights(parsed, partOfSpeech, targetLanguage);
+      const ensured = this.ensureGrammarInsights(parsed, partOfSpeech, targetLanguage);
+      await this.cacheService.setWordStudyInsights(word, language, normalizedContext, targetLanguage, ensured);
+      return ensured;
     }
     const localized = await this.localizeWordStudyInsights(parsed, targetLanguage);
-    return this.ensureGrammarInsights(localized, partOfSpeech, targetLanguage);
+    const ensuredLocalized = this.ensureGrammarInsights(localized, partOfSpeech, targetLanguage);
+    await this.cacheService.setWordStudyInsights(word, language, normalizedContext, targetLanguage, ensuredLocalized);
+    return ensuredLocalized;
   }
 
   async getWordStudySuggestions(
@@ -588,6 +605,17 @@ Rules:
     language: string = 'greek',
     responseLanguage: string = 'en',
   ): Promise<Array<{ term: string; transliteration?: string; gloss?: string; reason?: string; language: string }>> {
+    const targetLanguage = this.resolveResponseLanguage(responseLanguage);
+    const cached = await this.cacheService.getWordStudySuggestions(
+      reference,
+      translationCode,
+      language,
+      targetLanguage,
+    );
+    if (cached) {
+      return cached as Array<{ term: string; transliteration?: string; gloss?: string; reason?: string; language: string }>;
+    }
+
     const passage = await this.getPassage(reference, translationCode);
     const passageText = this.getPassageText(passage);
     if (!passageText) {
@@ -598,7 +626,6 @@ Rules:
     }
 
     const sourceLanguage = String(language || 'greek').toLowerCase();
-    const targetLanguage = this.resolveResponseLanguage(responseLanguage);
     const outputLanguageLabel = targetLanguage === 'es' ? 'Spanish' : 'English';
     const sourceLanguageLabel = sourceLanguage === 'hebrew' ? 'Hebrew' : sourceLanguage === 'aramaic' ? 'Aramaic' : 'Greek';
 
@@ -634,7 +661,7 @@ Rules:
       this.logWordStudyLlmOutput('word-study-suggestions', response);
       const parsed = this.safeJson(response, []);
       if (!Array.isArray(parsed)) return [];
-      return parsed
+      const normalized = parsed
         .map((item: any) => ({
           term: String(item?.term || '').trim(),
           transliteration: String(item?.transliteration || '').trim(),
@@ -644,6 +671,14 @@ Rules:
         }))
         .filter((item: any) => item.term)
         .slice(0, 8);
+      await this.cacheService.setWordStudySuggestions(
+        reference,
+        translationCode,
+        language,
+        targetLanguage,
+        normalized,
+      );
+      return normalized;
     } catch (error) {
       console.error('[WordStudySuggestions] Failed:', error?.message || error);
       return [];

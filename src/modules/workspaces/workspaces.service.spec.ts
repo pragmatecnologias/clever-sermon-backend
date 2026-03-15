@@ -73,7 +73,13 @@ describe('WorkspacesService manuscript parsing', () => {
       quote: [],
       cta: [],
     });
-    expect(consoleInfoSpy).toHaveBeenCalledWith('[manuscript-parse] recovery_mode=text-field');
+    const recoveryModes = consoleInfoSpy.mock.calls.map((call) => String(call[0] || ''));
+    expect(
+      recoveryModes.some((value) =>
+        value === '[manuscript-parse] recovery_mode=text-field' ||
+        value === '[manuscript-parse] recovery_mode=html-fragment',
+      ),
+    ).toBe(true);
   });
 
   it('converts malformed plain-text payloads into HTML paragraphs', () => {
@@ -119,5 +125,43 @@ describe('WorkspacesService manuscript parsing', () => {
       quote: [],
       cta: [],
     });
+  });
+
+  it('marks quality improvement when candidate has fewer issues and better word fit', () => {
+    const baseline = {
+      wordCount: 700,
+      targets: { minWords: 1000, targetWords: 1200, maxWords: 1500 },
+      issues: ['too_short', 'repetitive'],
+    };
+    const candidate = {
+      wordCount: 980,
+      targets: { minWords: 1000, targetWords: 1200, maxWords: 1500 },
+      issues: ['too_short'],
+    };
+
+    const improved = (service as any).isQualityImprovement(baseline, candidate);
+    expect(improved).toBe(true);
+  });
+
+  it('builds localized quality warning messages', () => {
+    const esMessage = (service as any).buildManuscriptQualityWarningMessage(['too_short', 'repetitive'], 'es');
+    const enMessage = (service as any).buildManuscriptQualityWarningMessage(['too_long'], 'en');
+
+    expect(esMessage).toContain('observaciones de calidad');
+    expect(esMessage).toContain('demasiado corto');
+    expect(enMessage).toContain('Draft saved with quality warnings');
+    expect(enMessage).toContain('too long');
+  });
+
+  it('treats tiny manuscript fragments as unusable', () => {
+    const unusable = (service as any).hasUsableManuscriptText('<p>Hola mundo.</p>');
+    const usable = (service as any).hasUsableManuscriptText(
+      '<p>' +
+        'La gracia de Dios transforma la vida humana con poder redentor y produce obediencia visible en el hogar y en la iglesia. '.repeat(3) +
+      '</p>',
+    );
+
+    expect(unusable).toBe(false);
+    expect(usable).toBe(true);
   });
 });

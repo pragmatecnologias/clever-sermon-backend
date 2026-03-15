@@ -127,6 +127,14 @@ export class WorkspacesController {
     return this.workspacesService.generateStudyReport(id, req.user.userId);
   }
 
+  @Post(':id/sermon-core')
+  async generateSermonCore(
+    @Param('id') id: string,
+    @Req() req,
+  ) {
+    return this.workspacesService.generateSermonCore(id, req.user.userId);
+  }
+
   @Post(':id/media-suggestions')
   generateMediaSuggestions(
     @Request() req,
@@ -211,6 +219,15 @@ export class WorkspacesController {
   @Patch('manuscripts/:id')
   updateManuscript(@Request() req, @Param('id') id: string, @Body() dto: UpdateManuscriptDto) {
     return this.workspacesService.updateManuscript(req.user.userId, id, dto);
+  }
+
+  @Post(':id/manuscripts/:manuscriptId/cues/regenerate')
+  regenerateManuscriptCues(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('manuscriptId') manuscriptId: string,
+  ) {
+    return this.workspacesService.regenerateManuscriptCues(id, manuscriptId, req.user.userId);
   }
 
   @Patch('applications/:id')

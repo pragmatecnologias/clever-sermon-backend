@@ -34,30 +34,6 @@ IMPORTANT TONE GUIDELINES:
 
 export const THEOLOGICAL_LENS_CONTEXTS = {
   adventist: SDA_DOCTRINAL_CONTEXT,
-  
-  evangelical: `
-You are generating content for an evangelical Bible study application.
-
-Guidelines:
-1. Maintain biblical authority and inerrancy
-2. Emphasize personal relationship with Christ
-3. Focus on grace through faith
-4. Use contemporary worship language
-5. Be respectful of denominational differences
-6. Ground all insights in Scripture
-`,
-  
-  neutral: `
-You are generating academic biblical content.
-
-Guidelines:
-1. Present multiple scholarly interpretations when relevant
-2. Clearly label theological positions
-3. Maintain academic objectivity
-4. Cite traditions and scholars when making interpretive claims
-5. Avoid asserting any single tradition as normative
-6. Ground all analysis in textual evidence
-`
 };
 
 export interface ContentScanResult {
@@ -228,7 +204,7 @@ export class SDAAlignmentService {
   /**
    * Get theological lens context for LLM prompts
    */
-  static getLensContext(lens: 'adventist' | 'evangelical' | 'neutral' = 'adventist'): string {
-    return THEOLOGICAL_LENS_CONTEXTS[lens];
+  static getLensContext(_lens: 'adventist' = 'adventist'): string {
+    return THEOLOGICAL_LENS_CONTEXTS.adventist;
   }
 }

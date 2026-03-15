@@ -22,6 +22,26 @@ export class SearchService {
     private manuscriptRepository: Repository<SermonManuscript>,
   ) {}
 
+  private stripHtml(value: string): string {
+    return String(value || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private buildSnippet(source: string, query: string, maxLength = 180): string {
+    const text = this.stripHtml(source);
+    if (!text) return '';
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return text.slice(0, maxLength);
+    const index = text.toLowerCase().indexOf(q);
+    if (index < 0) return text.slice(0, maxLength);
+    const start = Math.max(0, index - 50);
+    const end = Math.min(text.length, index + q.length + 100);
+    const snippet = text.slice(start, end).trim();
+    return `${start > 0 ? '…' : ''}${snippet}${end < text.length ? '…' : ''}`;
+  }
+
   async search(userId: string, query: string) {
     if (!query) return [];
     const like = ILike(`%${query}%`);
@@ -79,14 +99,14 @@ export class SearchService {
         type: 'note',
         id: item.id,
         title: item.title || 'Note',
-        snippet: item.content?.slice(0, 160) || '',
+        snippet: this.buildSnippet(item.content || '', query, 180),
         workspaceId: item.workspaceId || null,
       })),
       ...knowledge.map((item) => ({
         type: 'knowledge',
         id: item.id,
         title: item.title,
-        snippet: item.extractedText?.slice(0, 160) || '',
+        snippet: this.buildSnippet(item.extractedText || '', query, 180),
       })),
       ...outlineMatches.map((item) => ({
         type: 'outline',
@@ -99,7 +119,7 @@ export class SearchService {
         type: 'manuscript',
         id: item.id,
         title: item.workspace?.title || 'Manuscript',
-        snippet: item.content?.text?.slice(0, 160) || '',
+        snippet: this.buildSnippet(item.content?.text || '', query, 220),
         workspaceId: item.workspaceId,
       })),
     ];

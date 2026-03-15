@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS sermon_workspaces (
   language text NOT NULL DEFAULT 'en',
   metadata jsonb DEFAULT '{}',
   "scriptureCache" jsonb,
+  "sermonCore" jsonb,
   "references" jsonb DEFAULT '[]',
+  "egwEnabled" boolean NOT NULL DEFAULT false,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );

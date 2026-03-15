@@ -39,6 +39,151 @@ export class TranslationComparisonEnhancedService {
     private llmService: LlmService
   ) {}
 
+  private tryJsonParse(text: string): any {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  private stripTransportNoise(text: string): string {
+    return String(text || '')
+      .replace(/```(?:json)?/gi, '')
+      .replace(/```/g, '')
+      .replace(/<\|[^|>]+?\|>/g, ' ')
+      .replace(/\r\n/g, '\n')
+      .trim();
+  }
+
+  private extractBalancedJsonSegment(text: string): string | null {
+    const source = this.stripTransportNoise(text);
+    const startIndex = source.search(/[\{\[]/);
+    if (startIndex < 0) return null;
+
+    const openChar = source[startIndex];
+    const closeChar = openChar === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let index = startIndex; index < source.length; index += 1) {
+      const char = source[index];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (char === openChar) depth += 1;
+      if (char === closeChar) {
+        depth -= 1;
+        if (depth === 0) {
+          return source.slice(startIndex, index + 1);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private parseComparisonPayload(rawResponse: string): any | null {
+    const cleaned = this.stripTransportNoise(rawResponse);
+    if (!cleaned) return null;
+
+    const direct = this.tryJsonParse(cleaned);
+    if (direct) return direct;
+
+    const balanced = this.extractBalancedJsonSegment(cleaned);
+    if (balanced) {
+      const parsedBalanced = this.tryJsonParse(balanced);
+      if (parsedBalanced) return parsedBalanced;
+    }
+
+    const objectMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (objectMatch) {
+      const parsedMatch = this.tryJsonParse(objectMatch[0]);
+      if (parsedMatch) return parsedMatch;
+    }
+
+    return null;
+  }
+
+  private async repairComparisonPayload(
+    rawResponse: string,
+    isSpanish: boolean,
+    userId?: string,
+  ): Promise<any | null> {
+    const prompt = isSpanish
+      ? `Convierte la siguiente respuesta en JSON VÁLIDO con esta forma exacta.
+No inventes contenido. Si falta algo, usa arreglos vacíos y una oración breve en overallAssessment.
+Devuelve SOLO JSON.
+
+{
+  "keyDifferences": [
+    {
+      "category": "theological_term",
+      "translations": [],
+      "difference": "",
+      "explanation": "",
+      "significance": "medium"
+    }
+  ],
+  "analysis": {
+    "verbDifferences": [],
+    "theologicalTermDifferences": [],
+    "literalVsDynamic": [],
+    "overallAssessment": ""
+  }
+}
+
+RESPUESTA ORIGINAL:
+${rawResponse}`
+      : `Convert the following response into VALID JSON with this exact shape.
+Do not invent content. If data is missing, use empty arrays and a short overallAssessment sentence.
+Return ONLY JSON.
+
+{
+  "keyDifferences": [
+    {
+      "category": "theological_term",
+      "translations": [],
+      "difference": "",
+      "explanation": "",
+      "significance": "medium"
+    }
+  ],
+  "analysis": {
+    "verbDifferences": [],
+    "theologicalTermDifferences": [],
+    "literalVsDynamic": [],
+    "overallAssessment": ""
+  }
+}
+
+ORIGINAL RESPONSE:
+${rawResponse}`;
+
+    try {
+      const repaired = await this.llmService.generateCompletion(prompt, userId || 'system', {
+        temperature: 0.1,
+        maxTokens: 1200,
+      });
+      return this.parseComparisonPayload(repaired);
+    } catch {
+      return null;
+    }
+  }
+
   async getEnhancedComparison(reference: string, language: string = 'en', userId?: string): Promise<EnhancedTranslationComparison | null> {
     try {
       // Select translations based on language
@@ -232,35 +377,12 @@ Be concise, practical, and pastor-focused. Highlight differences that affect int
         }
       );
 
-      // Parse JSON response
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('No JSON found in LLM response');
+      let parsed = this.parseComparisonPayload(response);
+      if (!parsed) {
+        parsed = await this.repairComparisonPayload(response, isSpanish, userId);
       }
-
-      // Clean up malformed JSON - fix unquoted string values
-      let jsonStr = jsonMatch[0];
-      // Fix unquoted values after colons (common LLM error)
-      jsonStr = jsonStr.replace(/:\s*([A-Za-z][A-Za-z0-9áéíóúñüÁÉÍÓÚÑÜ\s\-\.]+)(?=[,\}\]])/g, (match, value) => {
-        // Don't quote if it's already a valid JSON value
-        if (['true', 'false', 'null'].includes(value.trim())) return match;
-        return `: "${value.trim()}"`;
-      });
-
-      let parsed;
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch (parseErr) {
-        console.error('JSON parse error, returning empty result:', parseErr);
-        return {
-          keyDifferences: [],
-          analysis: {
-            verbDifferences: [],
-            theologicalTermDifferences: [],
-            literalVsDynamic: [],
-            overallAssessment: 'Unable to parse translation analysis'
-          }
-        };
+      if (!parsed) {
+        throw new Error('Unable to parse translation-comparison JSON payload');
       }
 
       const result = {
@@ -286,6 +408,12 @@ Be concise, practical, and pastor-focused. Highlight differences that affect int
           overallAssessment: String(parsed.analysis?.overallAssessment || '').substring(0, 500)
         }
       };
+
+      if (!result.analysis.overallAssessment) {
+        result.analysis.overallAssessment = isSpanish
+          ? 'Se identificaron diferencias de traduccion relevantes para la predicacion.'
+          : 'Relevant translation differences were identified for preaching and interpretation.';
+      }
 
       if (isSpanish) {
         return this.ensureSpanishResult(result, userId);

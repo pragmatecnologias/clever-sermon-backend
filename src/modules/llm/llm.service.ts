@@ -9,7 +9,7 @@ import { LlmProvider } from '../../entities/enums/llm-provider.enum';
 @Injectable()
 export class LlmService {
   private static readonly LOCAL_TIMEOUT_MS = 45000;
-  private static readonly LOCAL_MAX_ATTEMPTS = 2;
+  private static readonly LOCAL_MAX_ATTEMPTS = 3;
 
   constructor(
     private configService: ConfigService,
@@ -60,6 +60,7 @@ export class LlmService {
       temperature?: number;
       maxTokens?: number;
       timeoutMs?: number;
+      localMaxAttempts?: number;
     } = {},
   ): Promise<string> {
     const provider = options.provider || LlmProvider.LOCAL;
@@ -152,16 +153,25 @@ export class LlmService {
     const timeoutMs = options.timeoutMs || Math.max(LlmService.LOCAL_TIMEOUT_MS, baseMaxTokens * 30);
     let lastError: any;
 
-    for (let attempt = 1; attempt <= LlmService.LOCAL_MAX_ATTEMPTS; attempt++) {
+    const maxAttempts = Math.max(1, Math.min(3, Number(options?.localMaxAttempts || LlmService.LOCAL_MAX_ATTEMPTS)));
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const maxTokens =
-        attempt === 1 ? baseMaxTokens : Math.max(400, Math.floor(baseMaxTokens * 0.7));
+        attempt === 1
+          ? baseMaxTokens
+          : attempt === 2
+            ? Math.max(350, Math.floor(baseMaxTokens * 0.65))
+            : Math.max(280, Math.floor(baseMaxTokens * 0.5));
+      const promptLimit =
+        attempt === 1 ? prompt.length : attempt === 2 ? Math.floor(prompt.length * 0.85) : Math.floor(prompt.length * 0.7);
+      const attemptPrompt = promptLimit < prompt.length ? `${prompt.slice(0, promptLimit)}\n\n[Prompt truncated for transport safety]` : prompt;
 
       try {
         const response = await axios.post(
           `${lmStudioUrl}/chat/completions`,
           {
             model,
-            messages: [{ role: 'user', content: prompt }],
+            messages: [{ role: 'user', content: attemptPrompt }],
             temperature: options.temperature || 0.7,
             max_tokens: maxTokens,
             frequency_penalty: 1.2,
@@ -187,7 +197,7 @@ export class LlmService {
         };
       } catch (error: any) {
         lastError = error;
-        if (!this.shouldRetryLocalLlm(error) || attempt === LlmService.LOCAL_MAX_ATTEMPTS) {
+        if (!this.shouldRetryLocalLlm(error) || attempt === maxAttempts) {
           break;
         }
       }
@@ -199,8 +209,21 @@ export class LlmService {
   private shouldRetryLocalLlm(error: any): boolean {
     const status = error?.response?.status;
     const code = error?.code;
+    const bodyText =
+      typeof error?.response?.data === 'string'
+        ? error.response.data.toLowerCase()
+        : JSON.stringify(error?.response?.data || '').toLowerCase();
+    const retryable400 =
+      status === 400 &&
+      (
+        bodyText.includes('context') ||
+        bodyText.includes('max token') ||
+        bodyText.includes('too long') ||
+        bodyText.includes('invalid request')
+      );
     return (
       status >= 500 ||
+      retryable400 ||
       code === 'ECONNABORTED' ||
       code === 'ETIMEDOUT' ||
       code === 'ECONNRESET'
