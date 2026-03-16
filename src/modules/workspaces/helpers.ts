@@ -367,6 +367,7 @@ export class WorkspaceHelpers {
             id: String(point?.id || `point-${idx + 1}`),
             level: Number(point?.level) || 1,
             title: WorkspaceHelpers.pointText(point),
+            slideTitle: typeof point?.slideTitle === 'string' ? point.slideTitle.replace(/^"|"$/g, '').trim() : '',
             summary: typeof point?.summary === 'string' ? point.summary.trim() : '',
             movement: typeof point?.movement === 'string' ? point.movement.trim() : '',
             supportingVerses: WorkspaceHelpers.asStringArray(point?.supportingVerses || point?.verses, 10),

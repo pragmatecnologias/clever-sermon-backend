@@ -1407,7 +1407,8 @@ Return ONLY valid JSON with this exact top-level shape:
   "points": ["Point 1", "Point 2", "Point 3"],
   "pointNodes": [
     {
-      "title": "string",
+      "title": "string (full point description)",
+      "slideTitle": "string (SHORT 2-4 word title for slides, max 25 characters)",
       "summary": "string",
       "subpoints": ["string"],
       "supportingVerses": ["Book 1:1"],
@@ -1433,6 +1434,11 @@ Return ONLY valid JSON with this exact top-level shape:
   "callToAction": "string"
 }
 
+CRITICAL for slideTitle:
+- slideTitle must be SHORT and PUNCHY (2-4 words, max 25 characters)
+- Examples: "Muerte espiritual", "Obra redentora", "Nueva vida", "Fe viva"
+- The full point description goes in "title", the short slide-friendly version goes in "slideTitle"
+
 Rules:
 - "points" is required and canonical; it must contain 3-5 concise points.
 - "pointNodes" is optional enrichment aligned by index to "points".
@@ -1441,6 +1447,128 @@ Rules:
 - Ensure each point remains faithful to the passage and avoids drift.
 - In Adventist context, never use Sunday/Domingo worship framing. Use Sabbath/Sábado.
 - Do not include markdown, prose outside JSON, or code fences.`;
+  }
+
+  buildOutlinePointNodesPrompt(workspace: SermonWorkspace, points: string[], reportText?: string) {
+    const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
+    const theologicalLens = normalizeTheologicalLens(workspace.theologicalLens);
+    const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
+
+    return `${doctrinalContext}
+
+Generate point metadata for this sermon outline. Keep the canonical point titles exactly as provided.
+
+Title: ${workspace.title}
+Main Passage: ${workspace.mainPassage}
+Theme: ${workspace.theme || 'N/A'}
+Audience: ${workspace.audienceProfile || 'N/A'}
+${reportText ? `\nStudy Report Context:\n${reportText}` : ''}
+
+Canonical Points:
+${points.map((point, index) => `${index + 1}. ${point}`).join('\n')}
+
+Write in ${languageLabel}.
+
+Return ONLY valid JSON as an array aligned by index to the canonical points:
+[
+  {
+    "title": "string (must match the canonical point text exactly)",
+    "slideTitle": "string (SHORT 2-4 word title for slides, max 25 characters)",
+    "summary": "string",
+    "supportingVerses": ["Book 1:1"],
+    "applications": ["string"],
+    "discussionQuestions": ["string"],
+    "illustrationIdeas": ["string"],
+    "references": ["Book 1:1"]
+  }
+]
+
+Rules:
+- Return exactly ${points.length} items in the same order as the canonical points.
+- Do not rewrite or shorten the "title" field; copy the canonical point text exactly.
+- "slideTitle" must be punchy, meaningful, and not a truncation of the first words.
+- Keep all metadata tightly related to its point.
+- If a field is unknown, return an empty string or empty array instead of inventing unrelated content.
+- In Adventist context, never use Sunday/Domingo worship framing. Use Sabbath/Sábado.
+- Do not include markdown, prose outside JSON, or code fences.`;
+  }
+
+  private normalizeGeneratedPointNodes(rawPointNodes: any, points: string[]) {
+    const sourceNodes = Array.isArray(rawPointNodes)
+      ? rawPointNodes
+      : Array.isArray(rawPointNodes?.pointNodes)
+        ? rawPointNodes.pointNodes
+        : [];
+
+    const normalized = this.normalizeOutlineData({
+      points,
+      pointNodes: sourceNodes,
+    });
+
+    const normalizedNodes = Array.isArray(normalized?.pointNodes) ? normalized.pointNodes : [];
+
+    return points.map((point, index) => {
+      const node = normalizedNodes[index] || {};
+      return {
+        id: this.asString(node?.id || `point-${index + 1}`),
+        level: Number(node?.level) || 1,
+        title: this.asString(point),
+        slideTitle: this.asString(node?.slideTitle),
+        summary: this.asString(node?.summary),
+        movement: this.asString(node?.movement),
+        supportingVerses: this.asStringArray(node?.supportingVerses, 10),
+        canonicalThemes: this.asStringArray(node?.canonicalThemes, 8),
+        crossReferences: this.asStringArray(node?.crossReferences, 10),
+        subpoints: this.asStringArray(node?.subpoints, 10),
+        applications: this.asStringArray(node?.applications, 16),
+        discussionQuestions: this.asStringArray(node?.discussionQuestions, 16),
+        illustrationIdeas: this.asStringArray(node?.illustrationIdeas, 16),
+        mediaSuggestions: this.asStringArray(node?.mediaSuggestions, 16),
+        egwSupport: Array.isArray(node?.egwSupport) ? node.egwSupport : [],
+        references: this.asStringArray(node?.references, 8),
+        notes: this.asString(node?.notes),
+      };
+    }).filter((node) => node.title);
+  }
+
+  private async ensureOutlinePointNodes(
+    workspace: SermonWorkspace,
+    userId: string,
+    outlineData: any,
+    reportText?: string,
+  ) {
+    const canonicalPoints = this.extractOutlinePointTexts(outlineData || {});
+    if (!canonicalPoints.length) return outlineData;
+
+    const existingNodes = Array.isArray(outlineData?.pointNodes) ? outlineData.pointNodes : [];
+    const hasAlignedSlideTitles =
+      existingNodes.length === canonicalPoints.length &&
+      existingNodes.every((node: any, index: number) => {
+        const title = this.asString(node?.title || node?.text || node?.content);
+        const slideTitle = this.asString(node?.slideTitle);
+        return title && slideTitle && title === canonicalPoints[index];
+      });
+
+    if (hasAlignedSlideTitles) {
+      return {
+        ...outlineData,
+        pointNodes: this.normalizeGeneratedPointNodes(existingNodes, canonicalPoints),
+      };
+    }
+
+    const pointNodesPrompt = this.buildOutlinePointNodesPrompt(workspace, canonicalPoints, reportText);
+    const pointNodesResponse = await this.llmService.generateCompletion(pointNodesPrompt, userId, {
+      temperature: 0.2,
+      maxTokens: 1100,
+    });
+    const parsedPointNodes = this.parseJsonSafe(pointNodesResponse);
+    const normalizedPointNodes = this.normalizeGeneratedPointNodes(parsedPointNodes, canonicalPoints);
+
+    return {
+      ...(outlineData || {}),
+      points: canonicalPoints,
+      pointNodes: normalizedPointNodes,
+    };
   }
 
   private normalizeManuscriptOptions(
@@ -4101,12 +4229,15 @@ Rules:
         ? `Angle: ${variationData.angle}. Style: ${variationData.style || 'N/A'}. Theological Emphasis: ${variationData.theologicalEmphasis || 'N/A'}. Audience Focus: ${variationData.audienceFocus || 'N/A'}. Structure: ${variationData.sermonStructure || 'N/A'}. Keep this outline distinct in tone and structure.`
         : `Outline variation ${i + 1} with a distinct angle and tone.`;
       const prompt = this.buildOutlineFromPointsPrompt(workspace, points, variation, reportText);
+      console.log('[OUTLINE PROMPT]', prompt.substring(0, 500));
       let response = await this.llmService.generateCompletion(prompt, userId, {
         temperature: 0.9,
         maxTokens: 2200,
       });
+      console.log('[OUTLINE RAW RESPONSE]', response);
       this.logLlmOutput('outline', response);
       let outlineData = this.parseJsonSafe(response);
+      console.log('[OUTLINE PARSED pointNodes]', JSON.stringify(outlineData?.pointNodes?.map((p: any) => ({ title: p?.title?.substring(0, 30), slideTitle: p?.slideTitle })), null, 2));
       outlineData = outlineData ? this.normalizeOutlineData(outlineData) : null;
       if (!outlineData) {
         outlineData = this.parseOutlineFromResponse(response);
@@ -4149,6 +4280,7 @@ Rules:
           currentSignature = this.buildPointSignature(retriedPoints);
         }
       }
+      outlineData = await this.ensureOutlinePointNodes(workspace, userId, outlineData, reportText);
       outlineData = this.attachStudyAssetsToOutline(outlineData, studyContext?.studyAssets);
       outlineData = this.sanitizeOutputForLens(outlineData, workspace);
       if (currentSignature) {
@@ -4180,7 +4312,8 @@ Rules:
     if (!outline) {
       throw new Error('Outline not found');
     }
-    await this.manuscriptRepository.delete({ workspaceId, outlineId });
+    // Keep only the newest manuscript draft per workspace.
+    await this.manuscriptRepository.delete({ workspaceId });
     const normalizedOptions = this.normalizeManuscriptOptions(workspace, manuscriptOptions);
     const prompt = promptOverride || this.buildManuscriptPrompt(workspace, outline, normalizedOptions);
     // Manuscripts need much higher token limits - calculate based on target minutes
