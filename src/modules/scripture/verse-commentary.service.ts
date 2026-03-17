@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EGWService } from '../egw/egw.service';
 import { LlmService } from '../llm/llm.service';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface VerseCommentary {
   verseReference: string;
@@ -72,12 +73,11 @@ export class VerseCommentaryService {
       const languageLabel = language === 'es' ? 'Spanish' : 'English';
       const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
       
-      const prompt = `${languageInstruction} Provide a brief 2-3 sentence contextual overview of ${reference}. Include:
-- What is happening in this passage
-- Where it fits in the book/narrative
-- Key theological significance
-
-Be concise and pastor-focused. Language: ${languageLabel}`;
+      const prompt = ScripturePrompts.verseContextualCommentary({
+        languageInstruction,
+        reference,
+        languageLabel,
+      });
 
       const response = await this.llmService.generateCompletion(
         prompt,
@@ -104,27 +104,11 @@ Be concise and pastor-focused. Language: ${languageLabel}`;
       const languageLabel = language === 'es' ? 'Spanish' : 'English';
       const languageInstruction = language === 'es' ? 'Responde en español.' : 'Respond in English.';
       
-      const prompt = `${languageInstruction} You are a biblical scholar providing verse commentary for pastors.
-
-Analyze ${reference} and provide 3-4 concise commentary notes covering:
-
-1. **Context**: What's happening in this passage? Where does it fit in the book?
-2. **Key Words**: Any significant Greek/Hebrew words or phrases worth noting?
-3. **Historical/Cultural**: Relevant historical or cultural background
-4. **Theological**: Main theological significance or application
-
-Format as JSON:
-{
-  "notes": [
-    {
-      "type": "context" | "word" | "historical" | "theological",
-      "content": "...",
-      "source": "..."
-    }
-  ]
-}
-
-Keep each note to 2-3 sentences. Be practical and pastor-focused. Language: ${languageLabel}`;
+      const prompt = ScripturePrompts.verseLlmCommentary({
+        languageInstruction,
+        reference,
+        languageLabel,
+      });
 
       const response = await this.llmService.generateCompletion(
         prompt,

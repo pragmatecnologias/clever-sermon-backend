@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ScriptureService } from './scripture.service';
 import { LlmService } from '../llm/llm.service';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface EnhancedTranslationComparison {
   reference: string;
@@ -123,55 +124,7 @@ export class TranslationComparisonEnhancedService {
     isSpanish: boolean,
     userId?: string,
   ): Promise<any | null> {
-    const prompt = isSpanish
-      ? `Convierte la siguiente respuesta en JSON VÁLIDO con esta forma exacta.
-No inventes contenido. Si falta algo, usa arreglos vacíos y una oración breve en overallAssessment.
-Devuelve SOLO JSON.
-
-{
-  "keyDifferences": [
-    {
-      "category": "theological_term",
-      "translations": [],
-      "difference": "",
-      "explanation": "",
-      "significance": "medium"
-    }
-  ],
-  "analysis": {
-    "verbDifferences": [],
-    "theologicalTermDifferences": [],
-    "literalVsDynamic": [],
-    "overallAssessment": ""
-  }
-}
-
-RESPUESTA ORIGINAL:
-${rawResponse}`
-      : `Convert the following response into VALID JSON with this exact shape.
-Do not invent content. If data is missing, use empty arrays and a short overallAssessment sentence.
-Return ONLY JSON.
-
-{
-  "keyDifferences": [
-    {
-      "category": "theological_term",
-      "translations": [],
-      "difference": "",
-      "explanation": "",
-      "significance": "medium"
-    }
-  ],
-  "analysis": {
-    "verbDifferences": [],
-    "theologicalTermDifferences": [],
-    "literalVsDynamic": [],
-    "overallAssessment": ""
-  }
-}
-
-ORIGINAL RESPONSE:
-${rawResponse}`;
+    const prompt = ScripturePrompts.translationComparisonRepair({ rawResponse, isSpanish });
 
     try {
       const repaired = await this.llmService.generateCompletion(prompt, userId || 'system', {
@@ -293,80 +246,11 @@ ${rawResponse}`;
       const translationTexts = translations.map(t => `**${t.code} (${t.name})**:\n${t.text}`).join('\n\n');
       const isSpanish = language === 'es' || language === 'spanish';
 
-      const prompt = isSpanish
-        ? `Responde ÚNICAMENTE en español. No uses inglés en ningún campo de texto (difference, explanation, analysis, overallAssessment, etc.).
-Eres un erudito bíblico que analiza diferencias de traducción para pastores.
-
-**Pasaje**: ${reference}
-
-**Traducciones**:
-${translationTexts}
-
-Analiza las diferencias clave entre estas traducciones y entrega:
-
-1. **Diferencias clave**: 3-5 diferencias significativas (términos teológicos, verbos, adiciones/omisiones, literal vs dinámico)
-2. **Análisis**:
-   - Diferencias verbales
-   - Diferencias de términos teológicos
-   - Enfoque literal vs dinámico
-   - Evaluación general
-
-Formato JSON:
-{
-  "keyDifferences": [
-    {
-      "category": "theological_term" | "verb_difference" | "literal_vs_dynamic" | "addition_omission",
-      "translations": ["RVR1960: texto", "NBLA: texto"],
-      "difference": "Descripción breve en español",
-      "explanation": "Explicación detallada en español",
-      "significance": "high" | "medium" | "low"
-    }
-  ],
-  "analysis": {
-    "verbDifferences": ["diferencia 1"],
-    "theologicalTermDifferences": ["diferencia 1"],
-    "literalVsDynamic": ["observación 1"],
-    "overallAssessment": "Resumen general en español"
-  }
-}
-
-Sé conciso, práctico y pastoral. Devuelve SOLO JSON válido.`
-        : `Respond in English. You are a biblical scholar analyzing translation differences for pastors.
-
-**Passage**: ${reference}
-
-**Translations**:
-${translationTexts}
-
-Analyze the key differences between these translations and provide:
-
-1. **Key Differences**: 3-5 significant differences (theological terms, verb choices, additions/omissions, literal vs dynamic)
-2. **Analysis**:
-   - Verb differences
-   - Theological term differences
-   - Literal vs dynamic translation approaches
-   - Overall assessment
-
-Format as JSON:
-{
-  "keyDifferences": [
-    {
-      "category": "theological_term" | "verb_difference" | "literal_vs_dynamic" | "addition_omission",
-      "translations": ["KJV: text", "NIV: text"],
-      "difference": "Brief description",
-      "explanation": "Detailed explanation",
-      "significance": "high" | "medium" | "low"
-    }
-  ],
-  "analysis": {
-    "verbDifferences": ["difference 1", "difference 2"],
-    "theologicalTermDifferences": ["difference 1"],
-    "literalVsDynamic": ["observation 1"],
-    "overallAssessment": "Summary of main differences and their significance"
-  }
-}
-
-Be concise, practical, and pastor-focused. Highlight differences that affect interpretation or application.`;
+      const prompt = ScripturePrompts.translationComparisonAnalyze({
+        isSpanish,
+        reference,
+        translationTexts,
+      });
 
       const response = await this.llmService.generateCompletion(
         prompt,
@@ -457,12 +341,7 @@ Be concise, practical, and pastor-focused. Highlight differences that affect int
     }
 
     try {
-      const prompt = `Traduce al español TODOS los valores de texto del siguiente JSON.
-No cambies claves, estructura, categorías ni niveles de significancia.
-Devuelve SOLO JSON válido.
-
-JSON:
-${JSON.stringify(result)}`;
+      const prompt = ScripturePrompts.translationComparisonSpanishEnforcer(JSON.stringify(result));
 
       const response = await this.llmService.generateCompletion(prompt, userId || 'system', {
         temperature: 0.1,

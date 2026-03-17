@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface PerVerseContext {
   reference: string;
@@ -86,52 +87,11 @@ export class PerVerseContextService {
       ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
       : 'Respond in English.';
     
-    const prompt = `${languageInstruction} Devuelve solo JSON válido. Eres un erudito bíblico que da contexto histórico, cultural y geográfico.
-
-Reference: ${reference}
-
-Passage Text:
-${passageText || 'Text not available'}
-
-Formato JSON:
-{
-  "historical": [
-    {
-      "note": "Historical fact or background",
-      "period": "Time period (e.g., 'United Monarchy Period', 'c. 1025 BC')",
-      "source": "Biblical reference or historical source (optional)"
-    }
-  ],
-  "cultural": [
-    {
-      "note": "Cultural practice, custom, or belief",
-      "category": "custom|law|practice|belief|social",
-      "source": "Biblical reference (optional)"
-    }
-  ],
-  "geographical": [
-    {
-      "place": "Place name",
-      "description": "Description of the place",
-      "significance": "Biblical or historical significance",
-      "modernLocation": "Modern location (optional)"
-    }
-  ],
-  "timeline": [
-    {
-      "event": "Event name",
-      "date": "Approximate date",
-      "significance": "Why this event matters"
-    }
-  ]
-}
-
-Reglas:
-- 2-3 notas históricas.
-- 2-3 notas culturales.
-- 1-2 notas geográficas.
-- 1-2 eventos cronológicos.
-- Sin markdown ni texto fuera del JSON.`;
+    const prompt = ScripturePrompts.perVerseContext({
+      languageInstruction,
+      reference,
+      passageText: passageText || 'Text not available',
+    });
 
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.3,

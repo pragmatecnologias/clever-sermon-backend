@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface PassageSummaryData {
   passage: string;
@@ -64,32 +65,11 @@ export class PassageSummaryService {
       ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
       : 'Respond in English.';
     
-    return `${languageInstruction} You are a biblical scholar providing interpretive guidance for pastors studying Scripture.
-
-Passage Reference: ${reference}
-
-Passage Text:
-${passageText || 'Text not available'}
-
-Analyze this passage and provide:
-
-1. **Summary** (2-3 sentences): What happens in this passage? What is the basic content?
-
-2. **Passage Movement** (if narrative, 3-5 steps): Break down the flow of the passage step by step. If it's not narrative (e.g., poetry, epistle), skip this section.
-
-3. **Interpretive Center** (1-2 sentences): What is the theological heart of this passage? What is the main claim or truth being communicated?
-
-4. **Main Tension** (1-2 sentences): What is the primary theological or interpretive tension in this passage? What question or difficulty does it raise?
-
-Format your response as JSON:
-{
-  "summary": "...",
-  "movement": ["step 1", "step 2", "step 3"] or [],
-  "interpretiveCenter": "...",
-  "mainTension": "..."
-}
-
-Be concise, theologically precise, and pastor-focused.`;
+    return ScripturePrompts.passageSummary({
+      languageInstruction,
+      reference,
+      passageText: passageText || 'Text not available',
+    });
   }
 
   private parseResponse(response: string, reference: string): PassageSummaryData {

@@ -6,6 +6,7 @@ import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
 import { WorkspaceHelpers } from '../workspaces/helpers';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class DoctrinalPrecisionService {
@@ -40,48 +41,13 @@ export class DoctrinalPrecisionService {
     const outline = workspace.outlines?.[0];
     const outlinePoints = WorkspaceHelpers.extractOutlinePointTexts(outline?.structure || {});
 
-    const prompt = `You are a Seventh-day Adventist theological guard, ensuring doctrinal precision and consistency.
-
-PASSAGE: ${workspace.mainPassage}
-TEXT: ${passageText}
-
-SERMON THEME: ${workspace.theme || 'Not specified'}
-OUTLINE: ${outlinePoints.join('\n')}
-MANUSCRIPT EXCERPT: ${manuscriptText.substring(0, 1200)}
-
-TASK: Check doctrinal consistency in these categories:
-
-1. GRACE - Is it framed as forensic only, or does it include transformative power?
-2. SANCTIFICATION - Is it reduced to moral effort, or properly understood as Spirit-empowered growth?
-3. SABBATH - Is it framed as covenant sign or mere obligation?
-4. STATE OF THE DEAD - Is it consistent with soul sleep and resurrection?
-5. SANCTUARY - If mentioned, is the heavenly sanctuary doctrine clear?
-6. SECOND COMING - Is it presented with biblical urgency and hope?
-7. COVENANT - Is the relationship between old and new covenant clear?
-8. LAW AND GOSPEL - Is the proper relationship maintained?
-
-For each relevant category:
-- isConsistent: true/false
-- concern: What's the issue (if any)
-- recommendation: How to fix it
-- severity: "info" / "warning" / "critical"
-
-Return JSON:
-{
-  "checks": [
-    {
-      "category": "grace",
-      "isConsistent": true,
-      "concern": null,
-      "recommendation": null,
-      "severity": "info"
-    }
-  ],
-  "overallConsistencyScore": 90,
-  "summary": "Brief assessment of doctrinal alignment"
-}
-
-This is not about being theologically correct in general - it's about consistency with SDA doctrinal system.`;
+    const prompt = AnalysisPrompts.doctrinalPrecision({
+      mainPassage: workspace.mainPassage,
+      passageText,
+      theme: workspace.theme || 'Not specified',
+      outline: outlinePoints.join('\n'),
+      manuscriptExcerpt: manuscriptText.substring(0, 1200),
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {

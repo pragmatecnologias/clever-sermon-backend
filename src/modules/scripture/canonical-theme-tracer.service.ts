@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface ThemeThread {
   theme: string;
@@ -99,43 +100,11 @@ export class CanonicalThemeTracerService {
       ? 'Responde únicamente en español. Todos los campos del JSON deben estar en español. Devuelve solo JSON válido.\n\n'
       : 'Respond in English and return only valid JSON.\n\n';
 
-    return `${languageInstruction}You are a biblical scholar identifying canonical themes that trace through Scripture.
-
-Passage Reference: ${reference}
-
-Passage Text:
-${passageText || 'Text not available'}
-
-Identify 3-4 major theological themes in this passage and trace them across Scripture.
-
-JSON format:
-{
-  "themes": [
-    {
-      "theme": "...",
-      "description": "...",
-      "explanation": "...",
-      "canonicalMovement": "...",
-      "category": "...",
-      "verses": [
-        {
-          "reference": "...",
-          "snippet": "...",
-          "explanation": "...",
-          "stage": "...",
-          "testament": "...",
-          "era": "..."
-        }
-      ]
-    }
-  ]
-}
-
-Rules:
-- Use 4-6 verses per theme.
-- Include the current passage in one verse list entry with "YOU ARE HERE".
-- Keep themes theologically meaningful and canonically progressive.
-- No markdown or extra text.`;
+    return ScripturePrompts.canonicalThemes({
+      languageInstruction,
+      reference,
+      passageText: passageText || 'Text not available',
+    });
   }
 
   private parseResponse(response: string, reference: string): CanonicalThemesResponse {

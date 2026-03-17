@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { CrossReferenceNarrative } from '../../entities/cross-reference-narrative.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class CrossReferenceNarrativeService {
@@ -38,46 +39,11 @@ export class CrossReferenceNarrativeService {
       })
     );
 
-    const prompt = `You are a biblical theologian creating NARRATIVE THREADS from cross-references.
-
-SOURCE VERSE: ${verse}
-TEXT: ${verseTextStr}
-
-CROSS-REFERENCES:
-${crossRefTexts.map(cr => `${cr.ref}: ${cr.text.substring(0, 200)}`).join('\n')}
-
-TASK: Instead of presenting cross-references as a list, create THEMATIC CHAINS that tell a story.
-
-Example:
-"Grace transforms identity across covenant history"
-Chain: Ephesians 2:1-10 → Romans 5 → Titus 3 → Ezekiel 36 → Jeremiah 31
-
-For each narrative thread:
-1. Create a compelling narrative title
-2. Describe the story arc
-3. Order the references chronologically or thematically
-4. Show each reference's contribution to the narrative
-5. Identify the redemptive movement
-
-Return JSON array:
-[
-  {
-    "narrativeTitle": "Title of the thematic chain",
-    "narrativeDescription": "The story this chain tells",
-    "chain": [
-      {
-        "reference": "Gen 3:15",
-        "era": "Creation/Fall",
-        "contribution": "What this reference adds to the narrative",
-        "order": 1
-      }
-    ],
-    "thematicThread": "One-sentence summary of the thread",
-    "redemptiveMovement": "How this moves redemptive history forward"
-  }
-]
-
-Create 2-3 narrative threads maximum. Make cross-references tell a story, not just be a database output.`;
+    const prompt = AnalysisPrompts.crossReferenceNarrative({
+      sourceVerse: verse,
+      sourceText: verseTextStr,
+      crossReferencesText: crossRefTexts.map(cr => `${cr.ref}: ${cr.text.substring(0, 200)}`).join('\n'),
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {

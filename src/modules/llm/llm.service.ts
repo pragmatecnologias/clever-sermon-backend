@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import axios from 'axios';
 import { LlmRequest } from '../../entities/llm-request.entity';
 import { LlmProvider } from '../../entities/enums/llm-provider.enum';
+import { LlmPrompts } from './llm-prompts';
 
 @Injectable()
 export class LlmService {
@@ -285,20 +286,12 @@ export class LlmService {
     userId: string,
   ): Promise<any> {
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const prompt = `Generate a sermon outline for the following:
-Passage: ${passage}
-Theme: ${theme}
-Style: ${style}
-
-Write in ${languageLabel}.
-
-Please provide a structured outline with:
-1. Introduction
-2. Main Points (3-5 points)
-3. Conclusion
-4. Call to Action
-
-Format the response as JSON.`;
+    const prompt = LlmPrompts.sermonOutline({
+      passage,
+      theme,
+      style,
+      languageLabel,
+    });
 
     const response = await this.generateCompletion(prompt, userId);
     
@@ -316,14 +309,11 @@ Format the response as JSON.`;
     userId: string,
   ): Promise<string> {
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const prompt = `Generate a full sermon manuscript based on this outline:
-${JSON.stringify(outline, null, 2)}
-
-Passage: ${passage}
-
-Write in ${languageLabel}.
-
-Please write a complete sermon manuscript with smooth transitions between points.`;
+    const prompt = LlmPrompts.manuscript({
+      outlineJson: JSON.stringify(outline, null, 2),
+      passage,
+      languageLabel,
+    });
 
     return this.generateCompletion(prompt, userId);
   }
@@ -336,13 +326,12 @@ Please write a complete sermon manuscript with smooth transitions between points
     userId: string,
   ): Promise<string[]> {
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const prompt = `Generate practical applications for ${audienceType} based on:
-Passage: ${passage}
-Main Points: ${mainPoints.join(', ')}
-
-Write in ${languageLabel}.
-
-Provide 3-5 specific, actionable applications.`;
+    const prompt = LlmPrompts.applications({
+      audienceType,
+      passage,
+      mainPoints: mainPoints.join(', '),
+      languageLabel,
+    });
 
     const response = await this.generateCompletion(prompt, userId);
     
@@ -356,13 +345,11 @@ Provide 3-5 specific, actionable applications.`;
     userId: string,
   ): Promise<string[]> {
     const languageLabel = language === 'es' ? 'Spanish' : 'English';
-    const prompt = `Generate discussion questions for a small group study on:
-Passage: ${passage}
-Theme: ${theme}
-
-Write in ${languageLabel}.
-
-Provide 5-7 thought-provoking questions that encourage deep reflection and application.`;
+    const prompt = LlmPrompts.discussionQuestions({
+      passage,
+      theme,
+      languageLabel,
+    });
 
     const response = await this.generateCompletion(prompt, userId);
     

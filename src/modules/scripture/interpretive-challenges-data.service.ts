@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface InterpretiveChallenge {
   passage: string;
@@ -86,36 +87,11 @@ export class InterpretiveChallengesDataService {
       ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
       : 'Respond in English.';
     
-    const prompt = `${languageInstruction} Devuelve solo JSON válido. Eres un erudito bíblico que identifica tensiones interpretativas y perspectivas teológicas.
-
-Passage Reference: ${passage}
-
-Passage Text:
-${passageText || 'Text not available'}
-
-Formato JSON:
-{
-  "challenge": "Main interpretive question or difficulty",
-  "views": [
-    {
-      "viewName": "Name of interpretive view",
-      "summary": "Brief summary of this view",
-      "proponents": "Optional: who holds this view",
-      "keyArguments": ["Argument 1", "Argument 2", "Argument 3"]
-    }
-  ],
-  "sdaPerspective": {
-    "position": "SDA theological position",
-    "reasoning": "Why SDA theology holds this position",
-    "supportingTexts": ["Reference 1", "Reference 2"]
-  }
-}
-
-Reglas:
-- Devuelve 2-4 perspectivas reales.
-- Cada perspectiva debe tener 2-3 argumentos breves.
-- Si no hay desafío importante, usa null en challenge.
-- No uses markdown ni texto fuera del JSON.`;
+    const prompt = ScripturePrompts.interpretiveChallengesData({
+      languageInstruction,
+      passage,
+      passageText: passageText || 'Text not available',
+    });
 
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.3,

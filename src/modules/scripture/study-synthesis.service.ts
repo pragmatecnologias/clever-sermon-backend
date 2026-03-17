@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface StudySynthesisData {
   passage: string;
@@ -63,32 +64,11 @@ export class StudySynthesisService {
       ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
       : 'Respond in English.';
     
-    return `${languageInstruction} You are a biblical theologian synthesizing study insights for pastors preparing sermons.
-
-Passage Reference: ${reference}
-
-Passage Text:
-${passageText || 'Text not available'}
-
-After analyzing this passage through multiple interpretive lenses (structure, context, themes, challenges), provide a unified theological synthesis:
-
-1. **Central Claim** (1-2 sentences): What is the core theological truth this passage communicates? State it as a clear, declarative claim.
-
-2. **Canonical Significance** (2-3 sentences): How does this passage fit into the larger biblical storyline? What role does it play in God's unfolding revelation?
-
-3. **Pastoral Takeaway** (2-3 sentences): What does this passage mean for God's people today? How should it shape faith and practice?
-
-4. **Preaching Focus** (1-2 sentences): What is the sermon-ready angle? What should a pastor emphasize when preaching this text?
-
-Format your response as JSON:
-{
-  "centralClaim": "...",
-  "canonicalSignificance": "...",
-  "pastoralTakeaway": "...",
-  "preachingFocus": "..."
-}
-
-Be theologically precise, pastorally practical, and sermon-focused.`;
+    return ScripturePrompts.studySynthesis({
+      languageInstruction,
+      reference,
+      passageText: passageText || 'Text not available',
+    });
   }
 
   private parseResponse(response: string, reference: string): StudySynthesisData {

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface StructuralAnalysis {
   passage: string;
@@ -93,53 +94,11 @@ INSTRUCCIONES CRÍTICAS:
 3. Devuelve SOLAMENTE el objeto JSON - sin explicaciones, sin markdown, sin texto adicional.`
       : 'Respond in English. Return ONLY the JSON object - no markdown, no extra text.';
     
-    const prompt = `${languageInstruction}
-
-You are a biblical scholar analyzing the literary structure of scripture passages.
-
-Passage Reference: ${passage}
-
-Passage Text:
-${passageText || 'Text not available - analyze based on reference only'}
-
-Provide a detailed structural analysis in the following JSON format:
-{
-  "literaryGenre": "Genre (e.g., Narrative, Poetry, Apocalyptic, Legal, Wisdom, Gospel, Epistle)",
-  "structure": [
-    {
-      "verses": "verse range",
-      "type": "introduction|body|conclusion|transition|climax|inclusio",
-      "description": "Description of this structural element"
-    }
-  ],
-  "chiasm": {
-    "pattern": "Pattern notation (e.g., A-B-C-B'-A')",
-    "elements": [
-      {
-        "label": "A",
-        "verses": "verse range",
-        "content": "Brief description"
-      }
-    ]
-  },
-  "parallelism": [
-    {
-      "type": "synonymous|antithetic|synthetic|emblematic",
-      "verses": "verse range",
-      "lineA": "First line",
-      "lineB": "Second line"
-    }
-  ]
-}
-
-Guidelines:
-- Identify the literary genre accurately
-- Break down the passage into 3-6 structural elements
-- Note transitions, climaxes, and literary devices
-- ALWAYS create a chiastic structure with at least 3 elements (A-B-A' minimum), even if the passage doesn't have an obvious chiasm - identify thematic or conceptual parallels
-- For poetry, identify parallelism patterns when present
-- Parallelism is optional - only include if clearly present
-- Return ONLY valid JSON, no markdown or extra text`;
+    const prompt = ScripturePrompts.structuralAnalysis({
+      languageInstruction,
+      passage,
+      passageText: passageText || 'Text not available - analyze based on reference only',
+    });
 
     let parsed: any = null;
     let lastParseError: Error | null = null;

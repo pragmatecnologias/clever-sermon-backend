@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface InterpretiveHighlight {
   phrase: string;
@@ -23,38 +24,7 @@ export class InterpretiveHighlightsService {
     verseText: string
   ): Promise<InterpretiveHighlight[]> {
     // Generate highlights using LLM
-    const prompt = `Analyze this Bible verse for interpretive challenges. Return JSON only.
-
-Reference: ${reference}
-Text: ${verseText}
-
-Identify phrases with:
-1. Grammatical ambiguity (unclear syntax or word meaning)
-2. Theological debate (different doctrinal interpretations)
-3. Textual variants (manuscript differences)
-4. Contextual tension (apparent contradictions or difficult passages)
-
-Return JSON array:
-[
-  {
-    "phrase": "exact phrase from text",
-    "type": "grammatical_ambiguity|theological_debate|textual_variant|contextual_tension",
-    "options": [
-      {
-        "view": "interpretation name",
-        "explanation": "brief explanation",
-        "proponents": ["tradition or scholar"]
-      }
-    ],
-    "significance": "why this matters"
-  }
-]
-
-Rules:
-- Only include genuine scholarly debates
-- Be honest about uncertainty
-- Cite specific traditions when possible
-- No markdown, just JSON`;
+    const prompt = ScripturePrompts.interpretiveHighlights({ reference, verseText });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, 'system', {

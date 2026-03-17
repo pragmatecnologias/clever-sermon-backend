@@ -26,6 +26,7 @@ import { EGWService } from '../egw/egw.service';
 import { EGWStudyReportIntegrationService } from '../egw/egw-study-report-integration.service';
 import { EGWSermonBuilderIntegrationService } from '../egw/egw-sermon-builder-integration.service';
 import { WorkspaceHelpers } from './helpers';
+import { WorkspacesPrompts } from './workspaces-prompts';
 import { normalizeTheologicalLens } from './theological-lens.util';
 
 type ManuscriptGenerationOptions = {
@@ -169,73 +170,21 @@ export class WorkspacesService {
     );
 
     if (payload.questionId && payload.answer) {
-      return `You are a Socratic Sermon Coach. Analyze the pastor answer and respond with concise coaching feedback.
-
-Language: ${languageLabel}
-Context:
-${context}
-
-Answered Question ID: ${payload.questionId}
-Pastor Answer:
-${payload.answer}
-
-Return ONLY valid JSON:
-{
-  "questionId": "string",
-  "affirmation": "short encouragement",
-  "coachFeedback": "specific theological/exegetical feedback",
-  "improvementSuggestion": "how to strengthen sermon content",
-  "rewriteHint": "one improved sermon sentence the pastor can reuse",
-  "nextQuestion": "one follow-up Socratic question"
-}
-
-Rules:
-- Be text-faithful to the main passage.
-- If answer drifts from text, say it clearly.
-- Keep all fields short and practical.
-- No markdown, no code fences.`;
+      return WorkspacesPrompts.socraticCoachQuestion({
+        languageLabel,
+        context,
+        questionId: payload.questionId,
+        answer: payload.answer,
+      });
     }
 
-    return `${payload.promptOverride || ''}You are a seminary-level Socratic Sermon Coach.
-
-Language: ${languageLabel}
-Task mode: ${mode}
-Listener simulation profile: ${listenerProfile}
-
-Context:
-${context}
-
-Generate 8 coaching questions that challenge interpretation, structure, theological clarity, application linkage, and gospel focus.
-
-Return ONLY valid JSON:
-{
-  "mode": "refine|self_reflection",
-  "listenerProfile": "string",
-  "summary": "1-2 sentence coaching summary",
-  "weakAreas": ["string"],
-  "questions": [
-    {
-      "id": "Q1",
-      "dimension": "text_fidelity|theological_clarity|audience_relevance|gospel_focus|structure_flow|application_strength|cross_reference_grounding|self_reflection",
-      "question": "string",
-      "purpose": "why this matters",
-      "sourceAnchor": "passage verse or outline/manuscript anchor",
-      "severity": "high|medium|low",
-      "listenerAngle": "how this listener might challenge the sermon",
-      "suggestedFollowUp": "optional follow-up prompt"
-    }
-  ],
-  "nextStepSuggestion": "one concrete refinement step"
-}
-
-Rules:
-- Questions must be specific to provided content, not generic.
-- Include at least 2 text-fidelity checks and 2 application-linkage checks.
-- Use at least 4 distinct dimensions across the 8 questions.
-- For self_reflection mode, include at least 3 spiritual formation questions.
-- Keep question text concise and pastor-friendly.
-- Do not wrap fields in extra quotes.
-- No markdown, no prose outside JSON.`;
+    return WorkspacesPrompts.socraticCoachList({
+      promptOverride: payload.promptOverride || '',
+      languageLabel,
+      mode,
+      listenerProfile,
+      context,
+    });
   }
 
   private buildSocraticCoachRepairPrompt(
@@ -761,41 +710,22 @@ Rules:
   ): string {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     const theologicalLens = normalizeTheologicalLens(workspace.theologicalLens);
-    return `You are repairing a sermon manuscript section with high precision.
-
-Language: ${languageLabel}
-Theological Lens: ${theologicalLens}
-Main Passage: ${workspace.mainPassage}
-Theme: ${workspace.theme || ''}
-Audience: ${workspace.audienceProfile || ''}
-Issue ID: ${issue.issueId}
-Issue Type: ${issue.issueType}
-Severity: ${issue.severity}
-Target Anchor: ${issue.targetAnchor}
-Proposed Action: ${issue.proposedAction}
-Expected Outcome: ${issue.expectedOutcome}
-Conversation Summary: ${conversationSummary || 'N/A'}
-
-Current manuscript HTML (excerpt):
-${this.compactJsonForPrompt({ manuscriptHtml }, 7000)}
-
-Anchor snippet to replace:
-${snippet}
-
-Return ONLY valid JSON:
-{
-  "replacement": "Improved text for this section in ${languageLabel}. Use plain text or simple HTML paragraphs.",
-  "why": "Short rationale for the change."
-}
-
-Rules:
-- Keep biblical fidelity to ${workspace.mainPassage}.
-- Keep Adventist alignment if lens is adventist.
-- Keep same language as workspace.
-- Do not introduce Sunday worship framing.
-- Do not repeat the section title or anchor phrase at the start of the replacement.
-- Do not rewrite the full manuscript; patch only this targeted section.
-- No markdown, no prose outside JSON.`;
+    return WorkspacesPrompts.targetedRepairPatch({
+      languageLabel,
+      theologicalLens,
+      mainPassage: workspace.mainPassage,
+      theme: workspace.theme || '',
+      audience: workspace.audienceProfile || '',
+      issueId: issue.issueId,
+      issueType: issue.issueType,
+      severity: issue.severity,
+      targetAnchor: issue.targetAnchor,
+      proposedAction: issue.proposedAction,
+      expectedOutcome: issue.expectedOutcome,
+      conversationSummary: conversationSummary || 'N/A',
+      manuscriptHtmlJson: this.compactJsonForPrompt({ manuscriptHtml }, 7000),
+      snippet,
+    });
   }
 
   private hasAdventistDrift(text: string): boolean {
@@ -2750,94 +2680,36 @@ Return ONLY valid JSON:
      - Cites EGW if provided above`;
     }).join('\n\n');
 
-    return `${doctrinalContext}
-
-You are writing a sermon manuscript. The OUTLINE is your structural authority - each point carries its own assets.
-
-=== SERMON METADATA ===
-Title: ${workspace.title}
+    return WorkspacesPrompts.manuscriptGeneration({
+      doctrinalContext,
+      metadataBlock: `Title: ${workspace.title}
 Series: ${workspace.seriesTitle || 'N/A'}
 Main Passage: ${workspace.mainPassage}
 Theme: ${workspace.theme || 'N/A'}
 Audience: ${workspace.audienceProfile || 'N/A'}
 Sermon Goals: ${workspace.sermonGoals || 'N/A'}
 Tone: ${normalizedOptions.tone}
-Target Length: ${normalizedOptions.targetMinutes} minutes (~${Math.round(normalizedOptions.targetMinutes * this.manuscriptWpm)} words)
-
-=== STUDY DATA (background context) ===
-${contextJson}
-
-=== LANGUAGE ===
-Write entirely in ${languageLabel}.
-${isSpanish ? 'Spanish-only requirement: do not output any section title, sentence, or cue in English.' : ''}
-
-=== CRITICAL: OUTLINE IS THE AUTHORITY ===
-
-Each sermon point carries its OWN assets. Do NOT mix assets between points.
-Use the applications, illustrations, and cross-references ATTACHED TO EACH POINT.
-
-${pointInstructions || 'Use outline.pointNodes from the study data above.'}
-
-=== SERMON STRUCTURE ===
-
-1. INTRODUCTION
-   - Hook the audience
-   - Use studyReport.passageOverview to set the scene
-   - State the mainTheologicalClaim
-   - Use globalCrossReferences or globalEgwQuotes if helpful
-
-2. PASSAGE READING
-   - Present ${workspace.mainPassage}
-   - Brief transition
-
-3. CONTEXT (Literary & Historical)
-   - Use studyReport.literaryContext and historicalContext
-   - Address interpretiveChallenges if present
-
-4. MAIN POINTS (${pointNodes.length} points - follow outline exactly)
-   - For EACH point, use ONLY the assets attached to that point
-   - Include word study insights from wordStudies where relevant
-   - Each point should be substantial with explanation → illustration → application
-
-5. CONCLUSION & INVITATION
-   - Synthesize the main points
-   - Restate mainTheologicalClaim
-   - Clear call to action from outline.callToAction
-
-=== QUALITY REQUIREMENTS ===
-- Manuscript must be SUBSTANTIAL (${normalizedOptions.targetMinutes} minutes)
-- Length target: ~${wordTargets.targetWords} words (minimum ${wordTargets.minWords}, maximum ${wordTargets.maxWords})
-- Each point uses ITS OWN applications, illustrations, cross-references
-- Do NOT drift - keep assets tied to their points
-- Use word studies to add depth
-- Address interpretive challenges honestly
-- Do not invent Greek/Hebrew/Aramaic words, lexical claims, or historical details.
-- Do not invent Bible references or EGW references/citations.
-- If a detail is uncertain, omit it instead of fabricating.
-
-=== OUTPUT FORMAT ===
-Return ONLY valid JSON:
-{
-  "text": "<HTML using p,h2,h3,ul,ol,li,strong,em,br tags>",
-  "cues": {
-    "slide": ["string"],
-    "keyLine": ["string"],
-    "transition": ["string"],
-    "pause": ["string"],
-    "read": ["string"],
-    "quote": ["string"],
-    "cta": ["string"]
-  }
-}
-
-HTML Guidelines:
-- Use h2 for major sections (${isSpanish ? 'Introducción, Contexto, Punto 1, Punto 2, etc., Conclusión' : 'Introduction, Context, Point 1, Point 2, etc., Conclusion'})
-- Use h3 for subsections within points
-- Short paragraphs (2-4 sentences)
-- Use <strong>Label:</strong> for moves like Explanation, Application, Illustration
-- ${normalizedOptions.includeSlideCues ? 'Populate cues.slide with presenter prompts.' : 'Leave cues.slide empty.'}
-- ${normalizedOptions.includeKeyLines ? 'Populate cues.keyLine with memorable statements.' : 'Leave cues.keyLine empty.'}
-- ${normalizedOptions.format === 'notes' ? 'Use concise preaching-note style.' : 'Use full spoken manuscript style.'}`;
+Target Length: ${normalizedOptions.targetMinutes} minutes (~${Math.round(normalizedOptions.targetMinutes * this.manuscriptWpm)} words)`,
+      contextJson,
+      languageLabel,
+      spanishRule: isSpanish ? 'Spanish-only requirement: do not output any section title, sentence, or cue in English.' : '',
+      pointInstructions: pointInstructions || 'Use outline.pointNodes from the study data above.',
+      mainPassage: workspace.mainPassage,
+      pointCount: pointNodes.length,
+      targetMinutes: normalizedOptions.targetMinutes,
+      wordTarget: wordTargets.targetWords,
+      wordMin: wordTargets.minWords,
+      wordMax: wordTargets.maxWords,
+      includeSlideCuesLine: normalizedOptions.includeSlideCues
+        ? 'Populate cues.slide with presenter prompts.'
+        : 'Leave cues.slide empty.',
+      includeKeyLinesLine: normalizedOptions.includeKeyLines
+        ? 'Populate cues.keyLine with memorable statements.'
+        : 'Leave cues.keyLine empty.',
+      formatLine: normalizedOptions.format === 'notes'
+        ? 'Use concise preaching-note style.'
+        : 'Use full spoken manuscript style.',
+    });
   }
 
   private buildManuscriptCueRefreshPrompt(workspace: SermonWorkspace, manuscriptHtml: string) {
@@ -3011,45 +2883,12 @@ Rules:
       7000,
     );
 
-    return `You are a sermon media director.
-
-Generate high-quality, production-ready media suggestions for sermon preparation.
-
-Language: ${languageLabel}
-Context:
-${contextJson}
-
-Return ONLY valid JSON in this exact shape:
-{
-  "mediaSuggestions": [
-    {
-      "type": "${typeOptions}",
-      "intent": "short intent label",
-      "useCase": "where and how the pastor should use this asset during sermon delivery",
-      "prompt": "final production prompt"
-    }
-  ]
-}
-
-Rules:
-${localeRules}
-- Generate 12-18 suggestions total.
-- Required minimums:
-  - Images: at least 6 (Hero, each major point, Application, Closing).
-  - Video: at least 2 (Intro Loop, Transition).
-  - Voice: at least 2 (Opening Reflection, Closing Appeal).
-  - Music: at least 2 (Theme Song, Instrumental Bed).
-  - Social: at least 4 (Instagram Post, Instagram Story, Facebook Post, WhatsApp Status).
-- Every suggestion must be concrete and usable as a prompt, not abstract advice.
-- Prompts must be context-grounded in the passage, theological focus, and audience.
-- Do NOT generate slide/presentation prompts.
-- Prioritize deliverable assets: images, videos, song audio, pastor voice audio, social promo.
-- For "Voz Pastoral", "useCase" must explain practical sermon usage (opening reflection, transition narration, closing appeal recap, etc.).
-- For image/video prompts, include visual direction details (subject, environment, symbolism, camera/framing, lighting, style, color palette).
-- For music prompts, include mode/genre/tempo/mood/instrumentation and use-case constraints.
-- For social prompts, include platform-specific framing and wording that fits each network format.
-- Keep "intent" short (2-6 words).
-- No markdown, no prose outside JSON, no code fences.`;
+    return WorkspacesPrompts.mediaSuggestions({
+      languageLabel,
+      contextJson,
+      typeOptions,
+      localeRules,
+    });
   }
 
   private compactJsonForPrompt(value: any, maxChars: number = 6000): string {
@@ -4904,43 +4743,18 @@ Rules:
     const theologicalLens = normalizeTheologicalLens(workspace.theologicalLens);
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
 
-    const prompt = `${doctrinalContext}
-
-You are extracting the SERMON CORE - the DNA of the sermon message.
-
-=== CONTEXT ===
-Main Passage: ${workspace.mainPassage}
-Theme: ${workspace.theme || 'N/A'}
-Sermon Goals: ${workspace.sermonGoals || 'N/A'}
-Audience: ${workspace.audienceProfile || 'N/A'}
-
-=== STUDY DATA ===
-Main Theological Claim: ${studyReport.mainTheologicalClaim || 'N/A'}
-Theological Themes: ${JSON.stringify(studyReport.theologicalThemes || [])}
-Pastoral Implications: ${JSON.stringify(studyReport.pastoralImplications || {})}
-Exegetical Summary: ${studyReport.exegeticalSummary || 'N/A'}
-
-=== TASK ===
-Extract the sermon core - the unified message that ties everything together.
-
-Write in ${languageLabel}.
-
-Return ONLY valid JSON:
-{
-  "bigIdea": "The one sentence people should remember (e.g., 'God's grace reconciles what sin has separated.')",
-  "fallenCondition": "The human problem this sermon addresses (e.g., 'Humanity is separated from God because of sin.')",
-  "centralTruth": "The biblical truth that answers the problem (e.g., 'Through Christ we are restored into relationship with God.')",
-  "sermonGoal": "What you want the audience to do (e.g., 'Accept reconciliation through Christ.')",
-  "audienceNeed": "The specific need your audience has (e.g., 'Many feel distant from God and need assurance of His love.')"
-}
-
-Rules:
-- Each field should be 1-2 sentences maximum
-- The bigIdea must be memorable and quotable
-- The fallenCondition must connect to universal human experience
-- The centralTruth must be grounded in the passage
-- The sermonGoal must be actionable
-- The audienceNeed must be specific and pastoral`;
+    const prompt = WorkspacesPrompts.sermonCore({
+      doctrinalContext,
+      mainPassage: workspace.mainPassage,
+      theme: workspace.theme || 'N/A',
+      sermonGoals: workspace.sermonGoals || 'N/A',
+      audienceProfile: workspace.audienceProfile || 'N/A',
+      mainTheologicalClaim: studyReport.mainTheologicalClaim || 'N/A',
+      theologicalThemesJson: JSON.stringify(studyReport.theologicalThemes || []),
+      pastoralImplicationsJson: JSON.stringify(studyReport.pastoralImplications || {}),
+      exegeticalSummary: studyReport.exegeticalSummary || 'N/A',
+      languageLabel,
+    });
 
     const response = await this.llmService.generateCompletion(prompt, userId, {
       temperature: 0.5,

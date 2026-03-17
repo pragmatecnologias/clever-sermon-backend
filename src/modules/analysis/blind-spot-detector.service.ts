@@ -6,6 +6,7 @@ import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
 import { WorkspaceHelpers } from '../workspaces/helpers';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class BlindSpotDetectorService {
@@ -41,43 +42,12 @@ export class BlindSpotDetectorService {
     const applications = workspace.applications || [];
     const applicationTexts = applications.map(a => a.content).join('\n');
 
-    const prompt = `You are a preaching mentor conducting a BLIND SPOT ANALYSIS. This adds intellectual honesty by revealing what the sermon is NOT saying.
-
-PASSAGE: ${workspace.mainPassage}
-TEXT: ${passageText}
-
-SERMON OUTLINE: ${outlinePoints.join('\n')}
-APPLICATIONS: ${applicationTexts.substring(0, 800)}
-
-TASK: Identify what this sermon is NOT addressing:
-
-1. THEMES NOT ADDRESSED - What themes are present in the passage but missing from the sermon?
-2. HARD VERSES AVOIDED - Which difficult/challenging verses in the passage are being skipped?
-3. DOCTRINAL TENSIONS MINIMIZED - What theological tensions are being smoothed over?
-4. APPLICATION IMBALANCE - Are applications skewed toward one category?
-   Categories: personal, communal, missional, doctrinal
-
-Return JSON:
-{
-  "themesNotAddressed": ["Theme 1", "Theme 2"],
-  "hardVersesAvoided": ["Verse ref 1", "Verse ref 2"],
-  "doctrinalTensionsMinimized": [
-    {
-      "tension": "Description of tension",
-      "howMinimized": "How the sermon avoids it"
-    }
-  ],
-  "applicationImbalance": [
-    {
-      "category": "personal",
-      "count": 5,
-      "recommendation": "Too heavy on personal, add communal applications"
-    }
-  ],
-  "overallAssessment": "Summary of blind spots and their impact"
-}
-
-Be honest. This section exists to expose weaknesses, not validate the sermon.`;
+    const prompt = AnalysisPrompts.blindSpotDetector({
+      mainPassage: workspace.mainPassage,
+      passageText,
+      outlinePoints: outlinePoints.join('\n'),
+      applicationTexts: applicationTexts.substring(0, 800),
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {

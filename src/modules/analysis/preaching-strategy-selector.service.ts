@@ -5,6 +5,7 @@ import { PreachingStrategy, PreachingGenre, EmotionalArc } from '../../entities/
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class PreachingStrategySelectorService {
@@ -34,57 +35,13 @@ export class PreachingStrategySelectorService {
       ? passage.verses.map((v: any) => `${v.reference} ${v.text}`).join('\n')
       : '';
 
-    const prompt = `You are a preaching strategist. Help select the optimal PREACHING GENRE and STRATEGY for this sermon.
-
-PASSAGE: ${workspace.mainPassage}
-TEXT: ${passageText}
-
-THEME: ${workspace.theme || 'Not specified'}
-AUDIENCE: ${workspace.audienceProfile || 'General congregation'}
-GOALS: ${workspace.sermonGoals || 'Not specified'}
-
-TASK: Recommend the best preaching approach.
-
-GENRES (choose one):
-- expository: Verse-by-verse explanation
-- narrative: Story-driven, following biblical narrative
-- prophetic: Calling to repentance/action, urgent tone
-- apologetic: Defending faith, answering objections
-- revivalist: Stirring hearts, emotional appeal
-- teaching: Doctrinal instruction, concept-heavy
-- pastoral: Comforting, healing, shepherding
-- evangelistic: Gospel presentation, invitation-focused
-
-EMOTIONAL ARCS (choose one):
-- conviction_to_hope: Start with sin/need, end with grace
-- crisis_to_resolution: Present problem, offer solution
-- question_to_discovery: Raise questions, journey to answers
-- comfort_to_challenge: Start gentle, build to action
-- lament_to_praise: Acknowledge pain, move to worship
-
-Also determine:
-- Tone (e.g., "urgent", "contemplative", "celebratory", "pastoral")
-- Target length in minutes
-- Tension level (0-100, how much discomfort to create)
-- Application density (0-100, how application-heavy)
-- Invitation driven (true/false)
-
-Return JSON:
-{
-  "recommendedGenre": "prophetic",
-  "genreRationale": "Why this genre fits the passage and goals",
-  "emotionalArc": "conviction_to_hope",
-  "tone": "urgent yet hopeful",
-  "targetLengthMinutes": 35,
-  "tensionLevel": 75,
-  "applicationDensity": 60,
-  "invitationDriven": true,
-  "structuralGuidance": {
-    "introduction": "How to open",
-    "bodyStructure": "How to organize the body",
-    "conclusion": "How to close"
-  }
-}`;
+    const prompt = AnalysisPrompts.preachingStrategy({
+      mainPassage: workspace.mainPassage,
+      passageText,
+      theme: workspace.theme || 'Not specified',
+      audience: workspace.audienceProfile || 'General congregation',
+      goals: workspace.sermonGoals || 'Not specified',
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {

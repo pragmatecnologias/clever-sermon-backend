@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { SermonPatternTracker } from '../../entities/sermon-pattern-tracker.entity';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class SermonPatternTrackerService {
@@ -91,40 +92,14 @@ export class SermonPatternTrackerService {
     const allPassages = workspaces.map(w => w.mainPassage).filter(Boolean);
     const allThemes = workspaces.map(w => w.theme).filter(Boolean);
 
-    const prompt = `You are analyzing a pastor's preaching patterns across ${tracker.totalSermons} sermons.
-
-STYLE FREQUENCY: ${JSON.stringify(tracker.styleFrequency)}
-THEME FREQUENCY: ${JSON.stringify(tracker.themeFrequency)}
-APPLICATION BALANCE: ${JSON.stringify(tracker.applicationCategoryBalance)}
-
-RECENT PASSAGES: ${allPassages.slice(0, 10).join(', ')}
-RECENT THEMES: ${allThemes.slice(0, 10).join(', ')}
-
-TASK: Provide growth insights:
-
-1. STRENGTHS - What patterns show maturity?
-2. WEAKNESSES - What patterns reveal blind spots?
-   - Do they overemphasize application?
-   - Underemphasize Christ?
-   - Repeat same structure?
-   - Avoid prophetic tone?
-   - Avoid difficult texts?
-3. RECOMMENDATIONS - Specific growth areas
-
-Return JSON:
-{
-  "avgChristCentrality": 75,
-  "avgApplicationDepth": 65,
-  "avoidedTexts": ["Book or type of text avoided"],
-  "overusedIllustrations": ["Illustration type used too often"],
-  "growthInsights": [
-    {
-      "strength": "Specific strength",
-      "weakness": "Specific weakness",
-      "recommendation": "Actionable next step"
-    }
-  ]
-}`;
+    const prompt = AnalysisPrompts.sermonPatternGrowth({
+      totalSermons: tracker.totalSermons,
+      styleFrequencyJson: JSON.stringify(tracker.styleFrequency),
+      themeFrequencyJson: JSON.stringify(tracker.themeFrequency),
+      applicationBalanceJson: JSON.stringify(tracker.applicationCategoryBalance),
+      recentPassages: allPassages.slice(0, 10).join(', '),
+      recentThemes: allThemes.slice(0, 10).join(', '),
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {

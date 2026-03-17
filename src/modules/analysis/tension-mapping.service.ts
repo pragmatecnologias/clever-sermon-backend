@@ -5,6 +5,7 @@ import { TensionAnalysis } from '../../entities/tension-analysis.entity';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class TensionMappingService {
@@ -37,55 +38,11 @@ export class TensionMappingService {
     const manuscript = workspace.manuscripts?.[0];
     const manuscriptText = manuscript?.content?.text || '';
 
-    const prompt = `You are a preaching mentor specializing in TENSION MAPPING. Preaching thrives on tension, not quick resolution.
-
-PASSAGE: ${workspace.mainPassage}
-TEXT: ${passageText}
-
-MANUSCRIPT EXCERPT: ${manuscriptText.substring(0, 1500)}
-
-TASK:
-Identify TEXTUAL TENSIONS in the passage:
-1. PARADOXES - Apparent contradictions ("dead yet alive", "saved by grace yet created for works")
-2. UNRESOLVED PHRASES - Questions or statements left hanging
-3. THEOLOGICAL FRICTION - Concepts that create productive discomfort
-
-For each tension:
-- Quote the exact text
-- Explain the tension
-- Suggest how to PRESERVE it before resolving
-- Check if the sermon resolves it too quickly
-
-Analyze SERMON TENSION HANDLING:
-- Does the sermon preserve tension before resolving?
-- Does it resolve too quickly?
-- Rate timing: "too_early" / "appropriate" / "unresolved"
-
-Give TENSION PRESERVATION SCORE (0-100).
-
-Return JSON:
-{
-  "tensions": [
-    {
-      "type": "paradox",
-      "text": "Exact quote from passage",
-      "verseReference": "Verse ref",
-      "explanation": "What creates the tension",
-      "preservationStrategy": "How to hold this tension before resolving"
-    }
-  ],
-  "sermonTensionHandling": [
-    {
-      "tension": "The tension being addressed",
-      "isPreserved": false,
-      "resolutionTiming": "too_early",
-      "recommendation": "Specific advice"
-    }
-  ],
-  "tensionPreservationScore": 65
-}
-
-Remember: Tension creates weight. Quick resolution creates shallowness.`;
+    const prompt = AnalysisPrompts.tensionMapping({
+      mainPassage: workspace.mainPassage,
+      passageText,
+      manuscriptExcerpt: manuscriptText.substring(0, 1500),
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {

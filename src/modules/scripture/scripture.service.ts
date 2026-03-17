@@ -9,6 +9,7 @@ import { BibleTranslation } from '../../entities/bible-translation.entity';
 import { LlmService } from '../llm/llm.service';
 import { convertToApiBiblePassageId, formatApiBibleResponse } from './scripture-helpers';
 import { ScriptureCacheService } from './scripture-cache.service';
+import { ScripturePrompts } from './scripture-prompts';
 
 @Injectable()
 export class ScriptureService {
@@ -346,29 +347,10 @@ export class ScriptureService {
     const passageText = Array.isArray(passage?.verses)
       ? passage.verses.map((verse: any) => `${verse.reference} ${verse.text}`).join('\n')
       : JSON.stringify(passage || {});
-    const prompt = `Analyze the passage structure and return JSON only.
-
-Passage: ${reference}
-
-Text:
-${passageText}
-
-Return JSON with keys:
-{
-  "repeatedPhrases": ["..."],
-  "imperatives": ["..."],
-  "promises": ["..."],
-  "conditions": ["..."],
-  "narrativeShifts": ["..."],
-  "literaryMarkers": ["..."],
-  "chiasticStructure": "...",
-  "outline": ["Verse: Summary"]
-}
-
-Rules:
-- Ground all points in verses.
-- If unsure, say so in the relevant field.
-- No markdown.`;
+    const prompt = ScripturePrompts.basicStructuralAnalysis({
+      reference,
+      passageText,
+    });
     try {
       const response = await this.llmService.generateCompletion(prompt, 'system', {
         temperature: 0.3,
@@ -395,28 +377,10 @@ Rules:
     const passageText = Array.isArray(passage?.verses)
       ? passage.verses.map((verse: any) => `${verse.reference} ${verse.text}`).join('\n')
       : JSON.stringify(passage || {});
-    const prompt = `Identify interpretive challenges or debated phrases in this passage.
-
-Passage: ${reference}
-Text:
-${passageText}
-
-Return ONLY JSON:
-{
-  "challenges": [
-    {
-      "phrase": "...",
-      "issue": "...",
-      "views": ["...", "..."],
-      "verses": ["Book 1:1"]
-    }
-  ]
-}
-
-Rules:
-- Include verses for each challenge.
-- If none, return an empty array.
-- No markdown.`;
+    const prompt = ScripturePrompts.basicInterpretiveChallenges({
+      reference,
+      passageText,
+    });
     try {
       const response = await this.llmService.generateCompletion(prompt, 'system', {
         temperature: 0.3,
@@ -550,35 +514,12 @@ Rules:
       return cached;
     }
     const outputLanguageLabel = targetLanguage === 'es' ? 'Spanish' : 'English';
-    const prompt = `Provide advanced word study insights as JSON only.
-
-Word: ${word}
-Language: ${language}
-Context: ${context || 'N/A'}
-Output Language: ${outputLanguageLabel}
-
-Return JSON:
-{
-  "rootWord": "...",
-  "semanticRange": ["..."],
-  "grammarInsights": {
-    "tense": "...",
-    "voice": "...",
-    "mood": "...",
-    "case": "...",
-    "number": "...",
-    "gender": "...",
-    "notes": "..."
-  },
-  "nuanceNotes": ["..."],
-  "commonTranslations": ["..."],
-  "exampleReferences": ["Book 1:1"]
-}
-
-Rules:
-- If unsure, say so in the relevant field.
-- All human-readable values must be written in ${outputLanguageLabel}.
-- No markdown, no extra commentary.`;
+    const prompt = ScripturePrompts.wordStudyInsights({
+      word,
+      language,
+      context: context || 'N/A',
+      outputLanguageLabel,
+    });
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.4,
       maxTokens: 700,
@@ -629,29 +570,13 @@ Rules:
     const outputLanguageLabel = targetLanguage === 'es' ? 'Spanish' : 'English';
     const sourceLanguageLabel = sourceLanguage === 'hebrew' ? 'Hebrew' : sourceLanguage === 'aramaic' ? 'Aramaic' : 'Greek';
 
-    const prompt = `Extract the most important ${sourceLanguageLabel} study words for this Bible passage.
-
-Reference: ${reference}
-Passage Text:
-${passageText.slice(0, 2600)}
-Output language for gloss/reason: ${outputLanguageLabel}
-
-Return JSON only:
-[
-  {
-    "term": "string",
-    "transliteration": "string",
-    "gloss": "string",
-    "reason": "short reason this term matters for interpreting the passage",
-    "language": "${sourceLanguage}"
-  }
-]
-
-Rules:
-- Return 5-8 terms max.
-- Prioritize doctrinally central and structurally central terms.
-- Do not return duplicates.
-- No markdown, no commentary.`;
+    const prompt = ScripturePrompts.wordStudySuggestions({
+      sourceLanguageLabel,
+      reference,
+      passageText: passageText.slice(0, 2600),
+      outputLanguageLabel,
+      sourceLanguage,
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, 'system', {
@@ -1163,14 +1088,7 @@ Rules:
   private async translateTextToSpanish(text: string): Promise<string> {
     const input = String(text || '').trim();
     if (!input) return input;
-    const prompt = `Translate to Spanish.
-
-Rules:
-- Keep Greek/Hebrew words, Strong's identifiers, and Bible references unchanged.
-- Return only the translated text, no quotes, no markdown.
-
-Text:
-${input}`;
+    const prompt = ScripturePrompts.translateTextToSpanish(input);
     try {
       const response = await this.llmService.generateCompletion(prompt, 'system', {
         temperature: 0.1,

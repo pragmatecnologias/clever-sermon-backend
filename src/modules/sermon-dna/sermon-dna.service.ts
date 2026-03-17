@@ -5,6 +5,7 @@ import { SermonDnaAnalysis } from '../../entities/sermon-dna-analysis.entity';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { WorkspaceHelpers } from '../workspaces/helpers';
+import { SermonDnaPrompts } from './sermon-dna-prompts';
 
 @Injectable()
 export class SermonDnaService {
@@ -44,14 +45,12 @@ export class SermonDnaService {
     };
 
     try {
-      const prompt = `Analyze this sermon for its DNA profile.
-Passage: ${workspace.mainPassage}
-Theme: ${workspace.theme}
-Outline Points: ${outlinePoints.join(' | ')}
-Manuscript (excerpt): ${manuscriptText.slice(0, 1200)}
-
-Return JSON with:
-summary (string), themes (array of strings), scores (object with clarity, structure, scriptureFocus, applicationDepth 1-10).`;
+      const prompt = SermonDnaPrompts.analyze({
+        mainPassage: workspace.mainPassage,
+        theme: workspace.theme,
+        outlinePoints: outlinePoints.join(' | '),
+        manuscriptExcerpt: manuscriptText.slice(0, 1200),
+      });
 
       const response = await this.llmService.generateCompletion(prompt, userId);
       const parsed = JSON.parse(response);

@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { HistoricalContextEnhanced } from '../../entities/historical-context-enhanced.entity';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class HistoricalContextEnhancerService {
@@ -26,77 +27,7 @@ export class HistoricalContextEnhancerService {
 
     await this.contextRepository.delete({ workspaceId });
 
-    const prompt = `You are a biblical historian providing SPECIFIC, DEEP historical context - not generic summaries.
-
-PASSAGE: ${workspace.mainPassage}
-
-TASK: Provide historical anchoring with specificity and depth.
-
-1. SOCIAL REALITIES - First-century social structures
-   - Not generic: "Christians in Ephesus..."
-   - Specific: Artemis worship dominance, imperial cult pressure, patronage system, household codes
-
-2. POWER STRUCTURES - Who held power and how
-   - Political dynamics
-   - Religious authority
-   - Economic control
-
-3. ECONOMIC CONTEXT - Money, trade, class
-   - Economic pressures on the audience
-   - Financial realities
-   - Class tensions
-
-4. RELIGIOUS CLIMATE - Spiritual landscape
-   - Competing religious movements
-   - Synagogue dynamics
-   - Pagan influences
-   - Theological debates
-
-5. AUDIENCE PRESSURES - What the original audience faced
-   - External pressures (persecution, social ostracism)
-   - Internal pressures (false teaching, division)
-   - Pastoral response needed
-
-Return JSON:
-{
-  "socialRealities": [
-    {
-      "aspect": "Specific social structure",
-      "description": "Detailed description",
-      "impact": "How this affected the audience"
-    }
-  ],
-  "powerStructures": [
-    {
-      "structure": "Type of power",
-      "dynamics": "How it operated",
-      "relevance": "Why it matters for this passage"
-    }
-  ],
-  "economicContext": [
-    {
-      "factor": "Economic element",
-      "description": "Specific details"
-    }
-  ],
-  "religiousClimate": [
-    {
-      "element": "Religious factor",
-      "description": "Details",
-      "tension": "Conflict or pressure created"
-    }
-  ],
-  "audiencePressures": [
-    {
-      "pressure": "Specific pressure",
-      "source": "Where it came from",
-      "pastoralResponse": "How the text addresses it"
-    }
-  ],
-  "synthesisStatement": "2-3 sentence summary tying it all together"
-}
-
-Be SPECIFIC. Avoid generic historical context. Add gravitas through detail.`;
+    const prompt = AnalysisPrompts.historicalContextEnhancer(workspace.mainPassage);
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {

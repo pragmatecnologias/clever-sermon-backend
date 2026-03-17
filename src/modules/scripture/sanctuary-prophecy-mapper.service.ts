@@ -3,6 +3,7 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { ScriptureCacheService } from './scripture-cache.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
+import { ScripturePrompts } from './scripture-prompts';
 
 export interface SanctuaryConnection {
   sourcePassage: string;
@@ -168,66 +169,12 @@ export class SanctuaryProphecyMapperService {
         ? 'Responde solo en español, con JSON válido y sin markdown.'
         : 'Respond in English only, with valid JSON and no markdown.';
 
-    if (mode === 'sanctuary') {
-      return `${languageInstruction}
-
-You are a Seventh-day Adventist biblical theologian.
-Task: Generate sanctuary connections for the passage below, following Adventist doctrine only.
-Do not use non-Adventist interpretive frameworks.
-Ground every connection in explicit Scripture references.
-
-Passage: ${passage}
-Passage Text:
-${passageText || 'Text not available'}
-
-Return JSON exactly in this shape:
-{
-  "connections": [
-    {
-      "sourcePassage": "Book X:Y-Z",
-      "targetPassages": ["Book A:B-C", "Book D:E-F"],
-      "connectionType": "type_antitype|parallel|fulfillment|thematic",
-      "description": "1-2 sentences, Adventist framing only"
-    }
-  ]
-}
-
-Rules:
-- Return 1 to 5 connections.
-- Keep description concise and specific.
-- Use only canonical Bible references.
-- connectionType must be one of: type_antitype, parallel, fulfillment, thematic.
-- No extra fields.`;
-    }
-
-    return `${languageInstruction}
-
-You are a Seventh-day Adventist biblical theologian.
-Task: Generate prophecy connections for the passage below, following Adventist doctrine only.
-Do not use non-Adventist interpretive frameworks.
-Ground every connection in explicit Scripture references.
-
-Passage: ${passage}
-Passage Text:
-${passageText || 'Text not available'}
-
-Return JSON exactly in this shape:
-{
-  "connections": [
-    {
-      "passage": "Book X:Y-Z",
-      "connectedPassages": ["Book A:B-C", "Book D:E-F"],
-      "theme": "short Adventist prophetic theme",
-      "description": "1-2 sentences, Adventist framing only"
-    }
-  ]
-}
-
-Rules:
-- Return 1 to 5 connections.
-- Keep theme and description concise and specific.
-- Use only canonical Bible references.
-- No extra fields.`;
+    return ScripturePrompts.sanctuaryOrProphecyConnections({
+      mode,
+      languageInstruction,
+      passage,
+      passageText: passageText || 'Text not available',
+    });
   }
 
   private parseSanctuaryConnectionsResponse(response: string): SanctuaryConnection[] {

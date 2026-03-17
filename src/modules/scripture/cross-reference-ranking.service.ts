@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ScriptureService } from './scripture.service';
 import { LlmService } from '../llm/llm.service';
 import { EGWPassageIntegrationService } from '../egw/egw-passage-integration.service';
+import { ScripturePrompts } from './scripture-prompts';
 
 export type CrossReferenceCategory =
   | 'thematic'
@@ -444,31 +445,11 @@ export class CrossReferenceRankingService {
       themes: item.themes,
     }));
 
-    const prompt = `Refine these ranked biblical cross references for preaching use.
-
-Source Verse: ${sourceVerse}
-Source Text: ${sourceText.slice(0, 800)}
-
-Candidates JSON:
-${JSON.stringify(candidates, null, 2)}
-
-Return JSON array of same length and order with fields:
-[
-  {
-    "reference": "string",
-    "category": "thematic|quotation|typology|prophetic_fulfillment|narrative_continuation|interpretive_tension|lexical",
-    "tier": "primary|secondary|illustrative",
-    "relevanceScore": 0-100,
-    "connectionExplanation": "short explanation",
-    "themes": ["theme1","theme2"]
-  }
-]
-
-Rules:
-- Keep references unchanged.
-- Improve explanation clarity for sermon use.
-- Keep categories/tier conservative.
-- Return JSON only.`;
+    const prompt = ScripturePrompts.crossReferenceRefine({
+      sourceVerse,
+      sourceText: sourceText.slice(0, 800),
+      candidatesJson: JSON.stringify(candidates, null, 2),
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, 'system', {

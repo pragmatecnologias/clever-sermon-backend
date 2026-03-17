@@ -6,6 +6,7 @@ import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from '../scripture/scripture.service';
 import { WorkspaceHelpers } from '../workspaces/helpers';
+import { AnalysisPrompts } from './analysis-prompts';
 
 @Injectable()
 export class TheologicalCenterService {
@@ -39,45 +40,12 @@ export class TheologicalCenterService {
     const manuscript = workspace.manuscripts?.[0];
     const outlinePoints = WorkspaceHelpers.extractOutlinePointTexts(outline?.structure || {});
 
-    const prompt = `You are a seasoned preaching mentor analyzing sermon alignment with the theological center of the passage.
-
-PASSAGE: ${workspace.mainPassage}
-TEXT: ${passageText}
-
-SERMON THEME: ${workspace.theme || 'Not specified'}
-OUTLINE POINTS: ${outlinePoints.join('\n')}
-
-TASK:
-1. Identify the DOMINANT THEOLOGICAL CENTER of this passage - the central claim, the main point God is making.
-2. Provide clear TEXTUAL WARRANT - which verses/phrases establish this center.
-3. Analyze if the sermon is ORBITING this center or deviating from it.
-4. Identify DEVIATIONS - points that drift from the center (rate severity: minor/moderate/major).
-5. Identify SECONDARY THEMES that should be suppressed or removed.
-6. Give an ALIGNMENT SCORE (0-100).
-
-Return JSON:
-{
-  "dominantCenter": "Clear statement of the passage's theological center",
-  "textualWarrant": "Specific verses and phrases that establish this",
-  "alignmentScore": 85,
-  "deviations": [
-    {
-      "point": "Outline point that deviates",
-      "severity": "moderate",
-      "explanation": "Why this deviates from the center"
-    }
-  ],
-  "secondaryThemes": ["Theme 1", "Theme 2"],
-  "suppressionSuggestions": [
-    {
-      "theme": "Secondary theme to remove",
-      "reason": "Why it weakens the sermon",
-      "impact": "What removing it accomplishes"
-    }
-  ]
-}
-
-Be DECISIVE. Say "This is weak" or "This is the strongest thread" or "This is distracting."`;
+    const prompt = AnalysisPrompts.theologicalCenter({
+      mainPassage: workspace.mainPassage,
+      passageText,
+      theme: workspace.theme || 'Not specified',
+      outlinePoints: outlinePoints.join('\n'),
+    });
 
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {
