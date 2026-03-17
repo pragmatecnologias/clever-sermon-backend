@@ -1,4 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { LlmService } from '../llm/llm.service';
+import { ScriptureService } from './scripture.service';
+import { ScriptureCacheService } from './scripture-cache.service';
+import { parseJsonObjectFromLlm } from './json-response.util';
 
 export interface SanctuaryConnection {
   sourcePassage: string;
@@ -16,246 +20,285 @@ export interface ProphecyConnection {
 
 @Injectable()
 export class SanctuaryProphecyMapperService {
-  private sanctuaryMap: Map<string, SanctuaryConnection> = new Map();
-  private prophecyMap: Map<string, ProphecyConnection> = new Map();
+  private bookAliasMap = new Map<string, string>([
+    ['efesios', 'ephesians'],
+    ['hebreos', 'hebrews'],
+    ['apocalipsis', 'revelation'],
+    ['levitico', 'leviticus'],
+    ['éxodo', 'exodus'],
+    ['exodo', 'exodus'],
+    ['daniel', 'daniel'],
+  ]);
 
-  constructor() {
-    this.initializeSanctuaryConnections();
-    this.initializeProphecyConnections();
-  }
+  constructor(
+    private llmService: LlmService,
+    private scriptureService: ScriptureService,
+    private cacheService: ScriptureCacheService,
+  ) {}
 
-  getSanctuaryConnections(passage: string): SanctuaryConnection[] {
-    const results: SanctuaryConnection[] = [];
-    const bookChapter = this.extractBookChapter(passage);
-    
-    for (const [key, connection] of this.sanctuaryMap.entries()) {
-      if (key.includes(bookChapter) || connection.targetPassages.some(p => p.includes(bookChapter))) {
-        results.push(connection);
+  async getSanctuaryConnections(passage: string, language: string = 'en', userId: string = 'system'): Promise<SanctuaryConnection[]> {
+    const normalizedPassage = this.normalizePassageForCache(passage);
+    const cached = await this.cacheService.getSanctuaryConnections(normalizedPassage, language);
+    if (Array.isArray(cached)) {
+      const sanitizedCached = cached
+        .map((item) => this.sanitizeSanctuaryConnection(item))
+        .filter((item): item is SanctuaryConnection => !!item);
+      if (sanitizedCached.length > 0) {
+        return sanitizedCached;
       }
     }
-    
-    return results;
+
+    const response = await this.getConnectionsFromLlm('sanctuary', passage, language, userId);
+    const connections = this.parseSanctuaryConnectionsResponse(response);
+    if (connections.length === 0) {
+      throw new Error('No valid sanctuary connections were generated for this passage.');
+    }
+    await this.cacheService.setSanctuaryConnections(normalizedPassage, language, connections);
+    return connections;
   }
 
-  getProphecyConnections(passage: string): ProphecyConnection[] {
-    const results: ProphecyConnection[] = [];
-    const bookChapter = this.extractBookChapter(passage);
-    
-    for (const connection of this.prophecyMap.values()) {
-      if (connection.passage.includes(bookChapter) || 
-          connection.connectedPassages.some(p => p.includes(bookChapter))) {
-        results.push(connection);
+  async getProphecyConnections(passage: string, language: string = 'en', userId: string = 'system'): Promise<ProphecyConnection[]> {
+    const normalizedPassage = this.normalizePassageForCache(passage);
+    const cached = await this.cacheService.getProphecyConnections(normalizedPassage, language);
+    if (Array.isArray(cached)) {
+      const sanitizedCached = cached
+        .map((item) => this.sanitizeProphecyConnection(item))
+        .filter((item): item is ProphecyConnection => !!item);
+      if (sanitizedCached.length > 0) {
+        return sanitizedCached;
       }
     }
-    
-    return results;
+
+    const response = await this.getConnectionsFromLlm('prophecy', passage, language, userId);
+    const connections = this.parseProphecyConnectionsResponse(response);
+    if (connections.length === 0) {
+      throw new Error('No valid prophecy connections were generated for this passage.');
+    }
+    await this.cacheService.setProphecyConnections(normalizedPassage, language, connections);
+    return connections;
   }
 
   getAllSanctuaryThreads(): SanctuaryConnection[] {
-    return Array.from(this.sanctuaryMap.values());
+    return [];
   }
 
   getAllProphecyThreads(): ProphecyConnection[] {
-    return Array.from(this.prophecyMap.values());
+    return [];
   }
 
-  private extractBookChapter(passage: string): string {
-    const match = passage.match(/^([\w\s]+)\s+(\d+)/);
-    return match ? `${match[1]} ${match[2]}` : passage;
+  private normalizeBookName(book: string): string {
+    const cleaned = String(book || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\w\s]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return this.bookAliasMap.get(cleaned) || cleaned;
   }
 
-  private initializeSanctuaryConnections() {
-    // Hebrews 8 → Sanctuary connections
-    this.sanctuaryMap.set('hebrews-8', {
-      sourcePassage: 'Hebrews 8:1-5',
-      targetPassages: [
-        'Exodus 25:8-9',
-        'Exodus 25:40',
-        'Leviticus 16:2',
-        'Numbers 24:5-6',
-        'Revelation 11:19',
-        'Revelation 15:5'
-      ],
-      connectionType: 'type_antitype',
-      description: 'Heavenly sanctuary as the true tabernacle, earthly sanctuary as copy and shadow'
-    });
-
-    // Hebrews 9 → Day of Atonement
-    this.sanctuaryMap.set('hebrews-9', {
-      sourcePassage: 'Hebrews 9:11-28',
-      targetPassages: [
-        'Leviticus 16:1-34',
-        'Leviticus 23:27-32',
-        'Daniel 8:14',
-        'Revelation 11:19'
-      ],
-      connectionType: 'type_antitype',
-      description: 'Christ\'s ministry in heavenly sanctuary fulfills Day of Atonement typology'
-    });
-
-    // Daniel 8:14 → Sanctuary cleansing
-    this.sanctuaryMap.set('daniel-8-14', {
-      sourcePassage: 'Daniel 8:14',
-      targetPassages: [
-        'Leviticus 16:16',
-        'Leviticus 16:30',
-        'Hebrews 9:23',
-        'Revelation 11:19',
-        'Revelation 14:6-7'
-      ],
-      connectionType: 'fulfillment',
-      description: 'Cleansing of sanctuary connects to investigative judgment and Day of Atonement'
-    });
-
-    // Exodus 25 → Sanctuary pattern
-    this.sanctuaryMap.set('exodus-25', {
-      sourcePassage: 'Exodus 25:8-9',
-      targetPassages: [
-        'Exodus 25:40',
-        'Hebrews 8:5',
-        'Hebrews 9:23-24',
-        'Revelation 11:19',
-        'Revelation 15:5'
-      ],
-      connectionType: 'type_antitype',
-      description: 'Earthly sanctuary built according to heavenly pattern'
-    });
-
-    // Leviticus 16 → Day of Atonement
-    this.sanctuaryMap.set('leviticus-16', {
-      sourcePassage: 'Leviticus 16:1-34',
-      targetPassages: [
-        'Daniel 8:14',
-        'Hebrews 9:7-12',
-        'Hebrews 9:23-28',
-        'Revelation 11:19'
-      ],
-      connectionType: 'type_antitype',
-      description: 'Day of Atonement ritual as type of final judgment'
-    });
-
-    // Revelation 11:19 → Heavenly temple
-    this.sanctuaryMap.set('revelation-11-19', {
-      sourcePassage: 'Revelation 11:19',
-      targetPassages: [
-        'Exodus 25:16',
-        'Exodus 40:20',
-        'Deuteronomy 10:5',
-        'Hebrews 9:4',
-        'Revelation 15:5'
-      ],
-      connectionType: 'fulfillment',
-      description: 'Ark of covenant visible in heavenly temple, connecting to law and judgment'
-    });
+  private toCanonicalBookChapter(passage: string): string {
+    const match = String(passage || '').match(/^([\wÀ-ÿ\s]+)\s+(\d+)/);
+    if (!match) {
+      return this.normalizeBookName(passage).replace(/\s+/g, '-');
+    }
+    const book = this.normalizeBookName(match[1]);
+    const chapter = match[2];
+    return `${book}-${chapter}`;
   }
 
-  private initializeProphecyConnections() {
-    // Daniel 2 → Kingdom prophecy
-    this.prophecyMap.set('daniel-2', {
-      passage: 'Daniel 2:31-45',
-      connectedPassages: [
-        'Daniel 7:1-28',
-        'Daniel 8:1-27',
-        'Revelation 13:1-18',
-        'Revelation 17:1-18'
-      ],
-      theme: 'Succession of world kingdoms',
-      description: 'Image of kingdoms from Babylon to God\'s eternal kingdom'
-    });
+  private normalizePassageForCache(passage: string): string {
+    const canonical = this.toCanonicalBookChapter(passage);
+    return canonical || String(passage || '').trim().toLowerCase();
+  }
 
-    // Daniel 7 → Beasts and judgment
-    this.prophecyMap.set('daniel-7', {
-      passage: 'Daniel 7:1-28',
-      connectedPassages: [
-        'Daniel 2:31-45',
-        'Daniel 8:1-27',
-        'Revelation 13:1-18',
-        'Revelation 14:6-12',
-        'Revelation 17:1-18'
-      ],
-      theme: 'Beasts, little horn, and investigative judgment',
-      description: 'Four beasts parallel Daniel 2, judgment scene, and little horn power'
-    });
+  private async getConnectionsFromLlm(
+    mode: 'sanctuary' | 'prophecy',
+    passage: string,
+    language: string,
+    userId: string,
+  ): Promise<string> {
+    const translationCode = language === 'es' ? 'RVR1960' : 'KJV';
+    let passageText = '';
 
-    // Daniel 8 → 2300 days
-    this.prophecyMap.set('daniel-8', {
-      passage: 'Daniel 8:1-27',
-      connectedPassages: [
-        'Daniel 9:24-27',
-        'Leviticus 16:1-34',
-        'Hebrews 9:23-28',
-        'Revelation 14:6-7'
-      ],
-      theme: '2300 days and sanctuary cleansing',
-      description: 'Ram, goat, little horn, and 2300 days prophecy'
-    });
+    try {
+      const result = await this.scriptureService.getPassage(passage, translationCode);
+      if (result && Array.isArray(result.verses) && result.verses.length > 0) {
+        passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
+      }
+    } catch (error: any) {
+      console.error(`[SanctuaryProphecyMapper] Failed to fetch passage text for ${passage}:`, error?.message || error);
+    }
 
-    // Daniel 9 → 70 weeks
-    this.prophecyMap.set('daniel-9', {
-      passage: 'Daniel 9:24-27',
-      connectedPassages: [
-        'Daniel 8:14',
-        'Ezra 7:7-26',
-        'Nehemiah 2:1-8',
-        'Matthew 3:13-17',
-        'Luke 3:1-23'
-      ],
-      theme: '70 weeks and Messiah',
-      description: 'Prophetic timeline to Messiah and starting point for 2300 days'
-    });
+    const prompt = this.buildPrompt(mode, passage, passageText, language);
+    let lastParseError: Error | null = null;
 
-    // Revelation 12 → Woman and dragon
-    this.prophecyMap.set('revelation-12', {
-      passage: 'Revelation 12:1-17',
-      connectedPassages: [
-        'Genesis 3:15',
-        'Daniel 7:25',
-        'Revelation 13:1-18',
-        'Revelation 14:12'
-      ],
-      theme: 'Church through ages and remnant',
-      description: 'Pure woman (church), dragon (Satan), 1260 days persecution, remnant'
-    });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const attemptPrompt =
+        attempt === 1
+          ? prompt
+          : `${prompt}\n\nCRITICAL: Your previous response was invalid or truncated. Return strict valid JSON only, no markdown.`;
+      const response = await this.llmService.generateCompletion(attemptPrompt, userId || 'system', {
+        temperature: 0.25,
+        maxTokens: 1600,
+      });
 
-    // Revelation 13 → Beasts
-    this.prophecyMap.set('revelation-13', {
-      passage: 'Revelation 13:1-18',
-      connectedPassages: [
-        'Daniel 7:1-28',
-        'Daniel 8:9-14',
-        'Revelation 12:17',
-        'Revelation 14:9-12',
-        'Revelation 17:1-18'
-      ],
-      theme: 'Sea beast and earth beast',
-      description: 'Beast from sea (papacy), beast from earth (USA), mark of the beast'
-    });
+      try {
+        if (mode === 'sanctuary') {
+          const parsed = this.parseSanctuaryConnectionsResponse(response);
+          if (parsed.length > 0) return response;
+        } else {
+          const parsed = this.parseProphecyConnectionsResponse(response);
+          if (parsed.length > 0) return response;
+        }
+      } catch (error: any) {
+        lastParseError = error;
+      }
+    }
 
-    // Revelation 14 → Three angels
-    this.prophecyMap.set('revelation-14', {
-      passage: 'Revelation 14:6-12',
-      connectedPassages: [
-        'Daniel 8:14',
-        'Exodus 20:8-11',
-        'Revelation 13:15-17',
-        'Revelation 18:1-4'
-      ],
-      theme: 'Three angels\' messages',
-      description: 'Everlasting gospel, judgment hour, Babylon fallen, mark warning'
-    });
+    if (lastParseError) {
+      throw new Error(`LLM response parsing failed: ${lastParseError.message}`);
+    }
+    throw new Error('LLM did not return usable connection data.');
+  }
 
-    // Revelation 17 → Babylon
-    this.prophecyMap.set('revelation-17', {
-      passage: 'Revelation 17:1-18',
-      connectedPassages: [
-        'Daniel 2:31-45',
-        'Daniel 7:1-28',
-        'Revelation 13:1-18',
-        'Revelation 14:8',
-        'Revelation 18:1-24'
-      ],
-      theme: 'Mystery Babylon',
-      description: 'Woman on scarlet beast, seven heads and ten horns, fall of Babylon'
-    });
+  private buildPrompt(mode: 'sanctuary' | 'prophecy', passage: string, passageText: string, language: string): string {
+    const languageInstruction =
+      language === 'es'
+        ? 'Responde solo en español, con JSON válido y sin markdown.'
+        : 'Respond in English only, with valid JSON and no markdown.';
+
+    if (mode === 'sanctuary') {
+      return `${languageInstruction}
+
+You are a Seventh-day Adventist biblical theologian.
+Task: Generate sanctuary connections for the passage below, following Adventist doctrine only.
+Do not use non-Adventist interpretive frameworks.
+Ground every connection in explicit Scripture references.
+
+Passage: ${passage}
+Passage Text:
+${passageText || 'Text not available'}
+
+Return JSON exactly in this shape:
+{
+  "connections": [
+    {
+      "sourcePassage": "Book X:Y-Z",
+      "targetPassages": ["Book A:B-C", "Book D:E-F"],
+      "connectionType": "type_antitype|parallel|fulfillment|thematic",
+      "description": "1-2 sentences, Adventist framing only"
+    }
+  ]
+}
+
+Rules:
+- Return 1 to 5 connections.
+- Keep description concise and specific.
+- Use only canonical Bible references.
+- connectionType must be one of: type_antitype, parallel, fulfillment, thematic.
+- No extra fields.`;
+    }
+
+    return `${languageInstruction}
+
+You are a Seventh-day Adventist biblical theologian.
+Task: Generate prophecy connections for the passage below, following Adventist doctrine only.
+Do not use non-Adventist interpretive frameworks.
+Ground every connection in explicit Scripture references.
+
+Passage: ${passage}
+Passage Text:
+${passageText || 'Text not available'}
+
+Return JSON exactly in this shape:
+{
+  "connections": [
+    {
+      "passage": "Book X:Y-Z",
+      "connectedPassages": ["Book A:B-C", "Book D:E-F"],
+      "theme": "short Adventist prophetic theme",
+      "description": "1-2 sentences, Adventist framing only"
+    }
+  ]
+}
+
+Rules:
+- Return 1 to 5 connections.
+- Keep theme and description concise and specific.
+- Use only canonical Bible references.
+- No extra fields.`;
+  }
+
+  private parseSanctuaryConnectionsResponse(response: string): SanctuaryConnection[] {
+    const parsed = parseJsonObjectFromLlm(response);
+    const items = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.connections)
+        ? parsed.connections
+        : Array.isArray(parsed?.data)
+          ? parsed.data
+          : [];
+    if (!Array.isArray(items)) return [];
+
+    return items
+      .map((item: any) => this.sanitizeSanctuaryConnection(item))
+      .filter((item): item is SanctuaryConnection => !!item)
+      .slice(0, 5);
+  }
+
+  private parseProphecyConnectionsResponse(response: string): ProphecyConnection[] {
+    const parsed = parseJsonObjectFromLlm(response);
+    const items = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.connections)
+        ? parsed.connections
+        : Array.isArray(parsed?.data)
+          ? parsed.data
+          : [];
+    if (!Array.isArray(items)) return [];
+
+    return items
+      .map((item: any) => this.sanitizeProphecyConnection(item))
+      .filter((item): item is ProphecyConnection => !!item)
+      .slice(0, 5);
+  }
+
+  private sanitizeSanctuaryConnection(raw: any): SanctuaryConnection | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const sourcePassage = String(raw.sourcePassage || raw.passage || '').trim().slice(0, 120);
+    const targetPassages = Array.isArray(raw.targetPassages)
+      ? raw.targetPassages.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+      : [];
+    const description = String(raw.description || '').trim().slice(0, 600);
+    const allowedTypes = new Set(['type_antitype', 'parallel', 'fulfillment', 'thematic']);
+    const connectionTypeRaw = String(raw.connectionType || '').trim();
+    const connectionType = allowedTypes.has(connectionTypeRaw) ? (connectionTypeRaw as SanctuaryConnection['connectionType']) : 'thematic';
+
+    if (!sourcePassage || !description) return null;
+    return {
+      sourcePassage,
+      targetPassages,
+      connectionType,
+      description,
+    };
+  }
+
+  private sanitizeProphecyConnection(raw: any): ProphecyConnection | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const passage = String(raw.passage || raw.sourcePassage || '').trim().slice(0, 120);
+    const connectedPassages = Array.isArray(raw.connectedPassages)
+      ? raw.connectedPassages.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 12)
+      : [];
+    const theme = String(raw.theme || '').trim().slice(0, 160);
+    const description = String(raw.description || '').trim().slice(0, 600);
+
+    if (!passage || !theme || !description) return null;
+    return {
+      passage,
+      connectedPassages,
+      theme,
+      description,
+    };
   }
 }

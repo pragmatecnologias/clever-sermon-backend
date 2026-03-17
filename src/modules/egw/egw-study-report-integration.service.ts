@@ -33,16 +33,18 @@ export class EGWStudyReportIntegrationService {
     chapter: number,
     verseStart?: number,
     verseEnd?: number,
-    includeEGW: boolean = true
+    includeEGW: boolean = true,
+    language: string = 'en',
   ): Promise<EGWStudyReportSection | null> {
     if (!includeEGW) return null;
+    const isSpanish = String(language || '').toLowerCase().startsWith('es');
 
     const insights = await this.egwPassageService.getPassageInsights(
       book,
       chapter,
       verseStart,
       verseEnd,
-      'en',
+      language,
       8 // Get more for categorization
     );
 
@@ -54,10 +56,10 @@ export class EGWStudyReportIntegrationService {
     const categorized = this.categorizeInsights(insights.insights);
 
     return {
-      thematicEmphasis: this.generateThematicEmphasis(categorized.thematic),
-      devotionalInsight: this.generateDevotionalInsight(categorized.devotional),
-      practicalCounsel: this.generatePracticalCounsel(categorized.practical),
-      propheticExpansion: this.generatePropheticExpansion(categorized.prophetic),
+      thematicEmphasis: this.generateThematicEmphasis(categorized.thematic, isSpanish),
+      devotionalInsight: this.generateDevotionalInsight(categorized.devotional, isSpanish),
+      practicalCounsel: this.generatePracticalCounsel(categorized.practical, isSpanish),
+      propheticExpansion: this.generatePropheticExpansion(categorized.prophetic, isSpanish),
       quotes: this.formatQuotes(insights.insights)
     };
   }
@@ -121,14 +123,18 @@ export class EGWStudyReportIntegrationService {
   /**
    * Generate thematic emphasis summary
    */
-  private generateThematicEmphasis(insights: PassageEGWInsight[]): string | undefined {
+  private generateThematicEmphasis(insights: PassageEGWInsight[], isSpanish: boolean): string | undefined {
     if (insights.length === 0) return undefined;
 
     const themes = insights.slice(0, 3);
-    let summary = '**Summary of Spirit of Prophecy emphasis:**\n\n';
+    let summary = isSpanish
+      ? '**Resumen del énfasis del Espíritu de Profecía:**\n\n'
+      : '**Summary of Spirit of Prophecy emphasis:**\n\n';
     
     themes.forEach((insight, idx) => {
-      summary += `${idx + 1}. ${insight.bookTitle} emphasizes: "${insight.preview}"\n`;
+      summary += isSpanish
+        ? `${idx + 1}. ${insight.bookTitle} enfatiza: "${insight.preview}"\n`
+        : `${idx + 1}. ${insight.bookTitle} emphasizes: "${insight.preview}"\n`;
     });
 
     return summary;
@@ -137,31 +143,37 @@ export class EGWStudyReportIntegrationService {
   /**
    * Generate devotional insight summary
    */
-  private generateDevotionalInsight(insights: PassageEGWInsight[]): string | undefined {
+  private generateDevotionalInsight(insights: PassageEGWInsight[], isSpanish: boolean): string | undefined {
     if (insights.length === 0) return undefined;
 
     const top = insights[0];
-    return `**Devotional perspective from Spirit of Prophecy:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`;
+    return isSpanish
+      ? `**Perspectiva devocional del Espíritu de Profecía:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`
+      : `**Devotional perspective from Spirit of Prophecy:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`;
   }
 
   /**
    * Generate practical counsel summary
    */
-  private generatePracticalCounsel(insights: PassageEGWInsight[]): string | undefined {
+  private generatePracticalCounsel(insights: PassageEGWInsight[], isSpanish: boolean): string | undefined {
     if (insights.length === 0) return undefined;
 
     const top = insights[0];
-    return `**Practical counsel from Spirit of Prophecy:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`;
+    return isSpanish
+      ? `**Consejo práctico del Espíritu de Profecía:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`
+      : `**Practical counsel from Spirit of Prophecy:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`;
   }
 
   /**
    * Generate prophetic expansion summary
    */
-  private generatePropheticExpansion(insights: PassageEGWInsight[]): string | undefined {
+  private generatePropheticExpansion(insights: PassageEGWInsight[], isSpanish: boolean): string | undefined {
     if (insights.length === 0) return undefined;
 
     const top = insights[0];
-    return `**Prophetic context from Spirit of Prophecy:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`;
+    return isSpanish
+      ? `**Contexto profético del Espíritu de Profecía:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`
+      : `**Prophetic context from Spirit of Prophecy:**\n\n"${top.preview}" — ${top.bookTitle}, ${top.reference}`;
   }
 
   /**

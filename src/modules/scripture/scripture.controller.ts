@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Param, Body, UseGuards, Req, Res } from '@nestjs/common';
+import { Controller, Get, Post, Query, Param, Body, UseGuards, Req, Res, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { ScriptureService } from './scripture.service';
 import { SDACrossReferencesService } from './sda-cross-references.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -363,13 +363,37 @@ export class ScriptureController {
   }
 
   @Get('sanctuary-connections')
-  async getSanctuaryConnections(@Query('passage') passage: string) {
-    return this.sanctuaryProphecyMapperService.getSanctuaryConnections(passage);
+  async getSanctuaryConnections(
+    @Query('passage') passage: string,
+    @Query('language') language: string,
+    @Req() req: any,
+  ) {
+    if (!passage || !String(passage).trim()) {
+      throw new BadRequestException('Missing required passage parameter');
+    }
+    const userId = req.user?.userId || req.user?.id || 'system';
+    try {
+      return await this.sanctuaryProphecyMapperService.getSanctuaryConnections(passage, language || 'en', userId);
+    } catch (error: any) {
+      throw new InternalServerErrorException(error?.message || 'Unable to generate sanctuary connections');
+    }
   }
 
   @Get('prophecy-connections')
-  async getProphecyConnections(@Query('passage') passage: string) {
-    return this.sanctuaryProphecyMapperService.getProphecyConnections(passage);
+  async getProphecyConnections(
+    @Query('passage') passage: string,
+    @Query('language') language: string,
+    @Req() req: any,
+  ) {
+    if (!passage || !String(passage).trim()) {
+      throw new BadRequestException('Missing required passage parameter');
+    }
+    const userId = req.user?.userId || req.user?.id || 'system';
+    try {
+      return await this.sanctuaryProphecyMapperService.getProphecyConnections(passage, language || 'en', userId);
+    } catch (error: any) {
+      throw new InternalServerErrorException(error?.message || 'Unable to generate prophecy connections');
+    }
   }
 
   @Get('sanctuary-threads')

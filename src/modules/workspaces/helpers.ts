@@ -408,6 +408,21 @@ export class WorkspaceHelpers {
   }
 
   static parseIllustrationsFromResponse(text: string): any[] {
+    const parsed = WorkspaceHelpers.parseJsonSafe(text);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (parsed && typeof parsed === 'object') {
+      const fromObject =
+        (Array.isArray((parsed as any).illustrations) && (parsed as any).illustrations) ||
+        (Array.isArray((parsed as any).items) && (parsed as any).items) ||
+        (Array.isArray((parsed as any).data) && (parsed as any).data) ||
+        [];
+      if (fromObject.length > 0) {
+        return fromObject;
+      }
+    }
+
     const items: any[] = [];
     const sections = text.split(/(?:Illustration|Example) \d+:/i);
     
@@ -422,8 +437,23 @@ export class WorkspaceHelpers {
         verseReference: verseMatch ? verseMatch[1] : null
       });
     }
-    
-    return items.length > 0 ? items : [];
+
+    if (items.length > 0) return items;
+
+    const listItems = WorkspaceHelpers.parseListFromResponse(text);
+    if (listItems.length > 0) {
+      return listItems.map((entry, index) => {
+        const verseMatch = entry.match(/\(([^)]+\d+:\d+[^)]*)\)/);
+        const content = entry.replace(/\(([^)]+\d+:\d+[^)]*)\)/, '').trim();
+        return {
+          title: `Illustration ${index + 1}`,
+          content: content || entry,
+          verseReference: verseMatch ? verseMatch[1] : null,
+        };
+      });
+    }
+
+    return [];
   }
 
   static parseCitationsFromResponse(text: string): any[] {

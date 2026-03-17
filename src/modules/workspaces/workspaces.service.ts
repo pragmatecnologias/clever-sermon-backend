@@ -3067,16 +3067,53 @@ ${localeRules}
     return match?.[1]?.trim() || String(reference || '').trim();
   }
 
-  private describeCrossReferenceCategory(category: string): string {
+  private isSpanishLanguage(language?: string): boolean {
+    return this.asString(language || '')
+      .toLowerCase()
+      .startsWith('es');
+  }
+
+  private describeCrossReferenceCategory(category: string, language: string = 'en'): string {
     const normalized = this.asString(category).toLowerCase();
-    if (normalized === 'quotation') return 'This passage is linked by direct quotation or strong verbal overlap.';
-    if (normalized === 'typology') return 'This passage mirrors the same pattern or biblical type.';
-    if (normalized === 'prophetic_fulfillment') return 'This passage advances a prophecy-to-fulfillment connection.';
-    if (normalized === 'narrative_continuation') return 'This passage continues the same storyline or redemptive movement.';
-    if (normalized === 'interpretive_tension') return 'This passage sharpens the same theological tension or interpretive issue.';
-    if (normalized === 'lexical') return 'This passage shares important wording or key terms with the main text.';
-    if (normalized === 'thematic') return 'This passage develops the same theological theme from another angle.';
-    return 'This passage supports the same theme or doctrinal movement in the study.';
+    const isSpanish = this.isSpanishLanguage(language);
+    if (normalized === 'quotation') {
+      return isSpanish
+        ? 'Este pasaje se vincula por cita directa o fuerte coincidencia verbal.'
+        : 'This passage is linked by direct quotation or strong verbal overlap.';
+    }
+    if (normalized === 'typology') {
+      return isSpanish
+        ? 'Este pasaje refleja el mismo patrón o tipo bíblico.'
+        : 'This passage mirrors the same pattern or biblical type.';
+    }
+    if (normalized === 'prophetic_fulfillment') {
+      return isSpanish
+        ? 'Este pasaje desarrolla una conexión de profecía y cumplimiento.'
+        : 'This passage advances a prophecy-to-fulfillment connection.';
+    }
+    if (normalized === 'narrative_continuation') {
+      return isSpanish
+        ? 'Este pasaje continúa la misma línea narrativa o movimiento redentor.'
+        : 'This passage continues the same storyline or redemptive movement.';
+    }
+    if (normalized === 'interpretive_tension') {
+      return isSpanish
+        ? 'Este pasaje agudiza la misma tensión teológica o cuestión interpretativa.'
+        : 'This passage sharpens the same theological tension or interpretive issue.';
+    }
+    if (normalized === 'lexical') {
+      return isSpanish
+        ? 'Este pasaje comparte vocabulario importante o términos clave con el texto principal.'
+        : 'This passage shares important wording or key terms with the main text.';
+    }
+    if (normalized === 'thematic') {
+      return isSpanish
+        ? 'Este pasaje desarrolla el mismo tema teológico desde otro ángulo.'
+        : 'This passage develops the same theological theme from another angle.';
+    }
+    return isSpanish
+      ? 'Este pasaje apoya el mismo tema o movimiento doctrinal del estudio.'
+      : 'This passage supports the same theme or doctrinal movement in the study.';
   }
 
   private async buildStudyReportInputContext(workspace: SermonWorkspace, passageText: string) {
@@ -3085,6 +3122,10 @@ ${localeRules}
     const cache = workspace.scriptureCache || {};
     const egwReference = this.parseReferenceForEgw(reference);
     const includeEgw = Boolean((workspace as any)?.egwEnabled || workspace?.metadata?.egwEnabled);
+    const reportLanguage = this.isSpanishLanguage(workspace.language) ? 'es' : 'en';
+    const additionalPassages = this.asStringArray(workspace.additionalPassages, 24).filter(
+      (item) => item && item !== reference,
+    );
 
     const [bookMetadata, historicalContext, culturalContext, timeline, crossReferences, crossReferenceDetails] = await Promise.all([
       this.scriptureService.getBookMetadata(book).catch(() => null),
@@ -3121,13 +3162,29 @@ ${localeRules}
         const detailed = xrefCategoryMap.get(ref);
         const cached = cachedRankedMap.get(ref);
         const category = this.asString(detailed?.category || cached?.category || '');
-        const connection = this.asString(detailed?.connection || cached?.connection || this.describeCrossReferenceCategory(category));
+        const connection = this.asString(
+          detailed?.connection || cached?.connection || this.describeCrossReferenceCategory(category, reportLanguage),
+        );
         return {
           reference: ref,
           category,
           connection,
         };
       });
+    const additionalPassageReferences = additionalPassages.map((ref) => ({
+      reference: ref,
+      category: 'thematic',
+      connection: reportLanguage === 'es'
+        ? 'Pasaje adicional seleccionado en el workspace para apoyar la exégesis.'
+        : 'Additional passage selected in workspace to support exegesis.',
+    }));
+    const mergedCrossReferences = new Map<string, { reference: string; category: string; connection: string }>();
+    [...additionalPassageReferences, ...normalizedCrossReferences].forEach((item) => {
+      if (!item.reference) return;
+      if (!mergedCrossReferences.has(item.reference)) {
+        mergedCrossReferences.set(item.reference, item);
+      }
+    });
 
     const egwSection =
       includeEgw && egwReference
@@ -3138,6 +3195,7 @@ ${localeRules}
               egwReference.verseStart,
               egwReference.verseEnd,
               true,
+              reportLanguage,
             )
             .catch(() => null)
         : null;
@@ -3149,10 +3207,15 @@ ${localeRules}
       },
       workspace: {
         title: workspace.title,
+        seriesTitle: workspace.seriesTitle || '',
         theme: workspace.theme || '',
         audienceProfile: workspace.audienceProfile || '',
         sermonGoals: workspace.sermonGoals || '',
-        language: workspace.language || 'en',
+        style: workspace.style || '',
+        storyArc: workspace.storyArc || '',
+        additionalPassages,
+        includeEgw,
+        language: reportLanguage,
         theologicalLens: normalizeTheologicalLens(workspace.theologicalLens),
       },
       cachedStudySections: {
@@ -3169,7 +3232,7 @@ ${localeRules}
         crossReferencesLookup: cache?.crossReferences || null,
       },
       referenceData: {
-        crossReferences: normalizedCrossReferences,
+        crossReferences: Array.from(mergedCrossReferences.values()).slice(0, 24),
         savedReferences: this.normalizeReferenceEntries(workspace.references || [], 20),
         bookMetadata,
         historicalContext,
@@ -3181,7 +3244,11 @@ ${localeRules}
   }
 
   buildStudyReportPrompt(workspace: SermonWorkspace, passageText: string, studyInputs: any) {
-    const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
+    const isSpanish = this.isSpanishLanguage(workspace.language || studyInputs?.workspace?.language);
+    const languageLabel = isSpanish ? 'Spanish' : 'English';
+    const languageInstruction = isSpanish
+      ? 'CRITICAL LANGUAGE LOCK: Produce ALL text fields in Spanish only. Do not output English in any generated field.'
+      : 'Produce ALL text fields in English only.';
     const theologicalLens = normalizeTheologicalLens(workspace.theologicalLens);
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
     const inputJson = this.compactJsonForPrompt(studyInputs, 12000);
@@ -3193,13 +3260,23 @@ Main Passage: ${workspace.mainPassage}
 Passage Text:
 ${passageText}
 
+Workspace Metadata (all fields are intentional constraints, do not ignore):
+Title: ${workspace.title || 'N/A'}
+Series: ${workspace.seriesTitle || 'N/A'}
 Theme: ${workspace.theme || 'N/A'}
+Audience: ${workspace.audienceProfile || 'N/A'}
+Sermon Goals: ${workspace.sermonGoals || 'N/A'}
+Style: ${workspace.style || 'N/A'}
+Story Arc: ${workspace.storyArc || 'N/A'}
+Additional Passages: ${workspace.additionalPassages?.length ? workspace.additionalPassages.join(', ') : 'None'}
+Include EGW: ${((workspace as any)?.egwEnabled || workspace?.metadata?.egwEnabled) ? 'Yes' : 'No'}
 Theological Lens: ${theologicalLens}
 
 Study Data Inputs (use these as primary evidence; do not ignore them):
 ${inputJson}
 
 Write in ${languageLabel}.
+${languageInstruction}
 
 Return ONLY valid JSON with this exact shape:
 {
@@ -3296,7 +3373,7 @@ Rules:
 - "exegeticalFlow" must describe argument progression (not just outline labels).
 - "structureOfPassage" must include visible verse anchoring in "verses".
 - "studyAssets" must organize sermon material already grounded in the passage for later outline work.
-- Use saved references and EGW input when available instead of inventing generic assets.
+- Use Additional Passages, saved references, and EGW input when available instead of inventing generic assets.
 - For "crossReferences", always explain connection with a concrete reason.
 - For "interpretiveChallenges", provide at least 2 interpretationOptions when possible.
 - In "canonicalContext", show storyline movement (OT -> Christ/NT -> consummation) when applicable.
@@ -3388,7 +3465,7 @@ Rules:
       .slice(0, limit);
   }
 
-  private buildStudyReportBaseSections(studyInputs: any): Record<string, any> {
+  private buildStudyReportBaseSections(studyInputs: any, language: string = 'en'): Record<string, any> {
     const summary = studyInputs?.cachedStudySections?.passageSummary || {};
     const verseContext = studyInputs?.cachedStudySections?.verseContext || {};
     const structural = studyInputs?.cachedStudySections?.structuralAnalysis || {};
@@ -3408,7 +3485,9 @@ Rules:
     const crossReferences = Array.isArray(referenceData?.crossReferences)
       ? referenceData.crossReferences.slice(0, 8).map((item: any) => ({
           reference: this.asString(item?.reference),
-          connection: this.asString(item?.connection || this.describeCrossReferenceCategory(item?.category)),
+          connection: this.asString(
+            item?.connection || this.describeCrossReferenceCategory(item?.category, language),
+          ),
           category: this.asString(item?.category || 'thematic'),
           tier: 'secondary',
         }))
@@ -4635,18 +4714,27 @@ Rules:
     const response = await this.llmService.generateCompletion(prompt, userId);
     this.logLlmOutput('illustrations', response);
 
-    const parsed = this.parseJsonSafe(response) || this.parseIllustrationsFromResponse(response);
-    const items = Array.isArray(parsed) ? parsed : [];
+    const parsed = this.parseJsonSafe(response);
+    const fallbackItems = this.parseIllustrationsFromResponse(response);
+    const items = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object'
+        ? (
+            (Array.isArray((parsed as any).illustrations) && (parsed as any).illustrations) ||
+            (Array.isArray((parsed as any).items) && (parsed as any).items) ||
+            (Array.isArray((parsed as any).data) && (parsed as any).data) ||
+            fallbackItems
+          )
+        : fallbackItems;
     const illustrations = [];
 
     for (const item of items) {
+      const content = this.asString(item?.content || item?.text || item?.description || '').trim();
+      if (!content) continue;
       const illustration = this.illustrationRepository.create({
         workspaceId,
         title: item.title || null,
-        content:
-          workspace.language === 'es'
-            ? this.normalizeSpanishGeneratedText(item.content || item.text || '')
-            : item.content || item.text || '',
+        content: workspace.language === 'es' ? this.normalizeSpanishGeneratedText(content) : content,
         source: item.source || item.verseReference || item.verseReferences?.[0] || null,
         relatedPoint: item.relatedPoint || null,
         tags: Array.isArray(item.tags) ? item.tags : null,
@@ -4723,7 +4811,7 @@ Rules:
       response = null;
       parsed = null;
     }
-    const baseSections = this.buildStudyReportBaseSections(studyInputs);
+    const baseSections = this.buildStudyReportBaseSections(studyInputs, workspace.language || 'en');
     let normalizedSections = this.normalizeStudyReportSections({
       ...baseSections,
       ...(parsed && typeof parsed === 'object' ? parsed : {}),
@@ -4773,7 +4861,7 @@ Rules:
         workspace,
       ),
     };
-    if (workspace.language === 'es') {
+    if (this.isSpanishLanguage(workspace.language)) {
       mergedSections = this.normalizeSpanishValueDeep(mergedSections);
     }
     const report = this.studyReportRepository.create({

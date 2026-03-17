@@ -6,6 +6,7 @@ import Redis from 'ioredis';
 export class ScriptureCacheService {
   private redis: Redis | null = null;
   private readonly TTL = 86400; // 24 hours in seconds
+  private readonly LLM_CONNECTIONS_TTL = 21600; // 6 hours in seconds
   private enabled: boolean;
 
   constructor(private configService: ConfigService) {
@@ -83,6 +84,14 @@ export class ScriptureCacheService {
     responseLanguage: string,
   ): string {
     return `scripture:word-study-suggestions:${String(translationCode || 'KJV').toUpperCase()}:${String(language || 'greek').toLowerCase()}:${String(responseLanguage || 'en').toLowerCase()}:${encodeURIComponent(String(reference || '').trim().toLowerCase())}`;
+  }
+
+  private getSanctuaryConnectionsKey(passage: string, language: string): string {
+    return `scripture:sanctuary-connections:${String(language || 'en').toLowerCase()}:${encodeURIComponent(String(passage || '').trim().toLowerCase())}`;
+  }
+
+  private getProphecyConnectionsKey(passage: string, language: string): string {
+    return `scripture:prophecy-connections:${String(language || 'en').toLowerCase()}:${encodeURIComponent(String(passage || '').trim().toLowerCase())}`;
   }
 
   /**
@@ -315,6 +324,62 @@ export class ScriptureCacheService {
       console.log(`[Cache] SET: ${key}`);
     } catch (error) {
       console.error('[Cache] WordStudySuggestions set error:', error.message);
+    }
+  }
+
+  async getSanctuaryConnections(passage: string, language: string): Promise<any[] | null> {
+    if (!this.enabled || !this.redis) return null;
+
+    try {
+      const key = this.getSanctuaryConnectionsKey(passage, language);
+      const cached = await this.redis.get(key);
+      if (!cached) return null;
+      console.log(`[Cache] HIT: ${key}`);
+      const parsed = JSON.parse(cached);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (error) {
+      console.error('[Cache] SanctuaryConnections get error:', error.message);
+      return null;
+    }
+  }
+
+  async setSanctuaryConnections(passage: string, language: string, data: any[]): Promise<void> {
+    if (!this.enabled || !this.redis) return;
+
+    try {
+      const key = this.getSanctuaryConnectionsKey(passage, language);
+      await this.redis.setex(key, this.LLM_CONNECTIONS_TTL, JSON.stringify(Array.isArray(data) ? data : []));
+      console.log(`[Cache] SET: ${key}`);
+    } catch (error) {
+      console.error('[Cache] SanctuaryConnections set error:', error.message);
+    }
+  }
+
+  async getProphecyConnections(passage: string, language: string): Promise<any[] | null> {
+    if (!this.enabled || !this.redis) return null;
+
+    try {
+      const key = this.getProphecyConnectionsKey(passage, language);
+      const cached = await this.redis.get(key);
+      if (!cached) return null;
+      console.log(`[Cache] HIT: ${key}`);
+      const parsed = JSON.parse(cached);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (error) {
+      console.error('[Cache] ProphecyConnections get error:', error.message);
+      return null;
+    }
+  }
+
+  async setProphecyConnections(passage: string, language: string, data: any[]): Promise<void> {
+    if (!this.enabled || !this.redis) return;
+
+    try {
+      const key = this.getProphecyConnectionsKey(passage, language);
+      await this.redis.setex(key, this.LLM_CONNECTIONS_TTL, JSON.stringify(Array.isArray(data) ? data : []));
+      console.log(`[Cache] SET: ${key}`);
+    } catch (error) {
+      console.error('[Cache] ProphecyConnections set error:', error.message);
     }
   }
 
