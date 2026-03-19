@@ -46,7 +46,7 @@ export class ScriptureController {
     private perVerseContextService: PerVerseContextService,
     private translationComparisonEnhancedService: TranslationComparisonEnhancedService,
     private passageSummaryService: PassageSummaryService,
-    private studySynthesisService: StudySynthesisService
+    private studySynthesisService: StudySynthesisService,
   ) {}
 
   @Get('passage')

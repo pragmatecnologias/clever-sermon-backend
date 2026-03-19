@@ -59,7 +59,7 @@ import { EGWModule } from '../egw/egw.module';
     SDADoctrinalGuardrailsService,
     TranslationComparisonEnhancedService,
     PassageSummaryService,
-    StudySynthesisService
+    StudySynthesisService,
   ],
   controllers: [ScriptureController],
   exports: [ScriptureService, CitationValidatorService, SDADoctrinalGuardrailsService],

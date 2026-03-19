@@ -452,7 +452,13 @@ export class ScriptureService {
     const index = await this.loadWordStudyIndex();
     const occurrences = await this.loadWordOccurrences();
     const key = word.toLowerCase();
-    const entry = index?.[key];
+    const strongsLookup = key.match(/^[gh]\d+$/i)
+      ? `${key[0].toUpperCase()}${String(Number(key.slice(1))).padStart(4, '0')}`
+      : null;
+    const strongsEntry = strongsLookup
+      ? Object.values(index || {}).find((item: any) => String(item?.strongs || '').toUpperCase() === strongsLookup)
+      : null;
+    const entry = index?.[key] || strongsEntry;
     const occurrenceEntry = occurrences?.[key];
     const distributionByBook = this.buildDistributionByBook(occurrenceEntry?.verses || []);
     const targetLanguage = this.resolveResponseLanguage(responseLanguage);

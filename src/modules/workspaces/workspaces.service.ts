@@ -1175,12 +1175,13 @@ Rules:
 
   buildIllustrationsPrompt(workspace: SermonWorkspace, mainPoints: string[], seededIdeas: string[] = []) {
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
-    return `Generate 8-12 sermon illustrations based on:
+    return `Generate 8-12 high-quality sermon illustrations based on:
 Title: ${workspace.title}
 Main Passage: ${workspace.mainPassage}
 Theme: ${workspace.theme || 'N/A'}
+Audience: ${workspace.audienceProfile || 'N/A'}
 Main Points: ${mainPoints.join(', ') || 'N/A'}
-${seededIdeas.length ? `Existing study illustration ideas: ${seededIdeas.join(' | ')}` : ''}
+${seededIdeas.length ? `Existing study illustration ideas (use only as inspiration, do not copy wording): ${seededIdeas.join(' | ')}` : ''}
 
 Write in ${languageLabel}.
 
@@ -1189,7 +1190,21 @@ title, content, verseReference, source (optional), relatedPoint (optional), tags
 
 Rules:
 - Include a relevant Bible verse reference for each illustration in verseReference.
-- Return at least 8 distinct items.
+- Return at least 8 DISTINCT items.
+- Make each illustration concrete, realistic, and preacher-usable in a live sermon.
+- Prioritize real-life scenarios (family, work, community, discipleship, conflict, restoration) over abstract allegories.
+- Do not overuse repetitive bridge/garden/lighthouse metaphors unless uniquely developed.
+- Keep each content field to 2-4 sentences max.
+- Each item must include:
+  1) a vivid scenario,
+  2) the spiritual insight tied to the passage,
+  3) a clear transition line the preacher can say.
+- Vary the illustration type mix:
+  - at least 3 everyday contemporary examples,
+  - at least 2 pastoral/church-life examples,
+  - at least 2 biblical-history/cultural-context analogies.
+- Keep theological fidelity to ${workspace.mainPassage} and avoid doctrinal drift.
+- If language is Spanish, use natural pastoral Spanish (not literal machine-translation style).
 - No markdown, no prose outside JSON, no code fences.`;
   }
 
@@ -3014,8 +3029,8 @@ Rules:
       reference: ref,
       category: 'thematic',
       connection: reportLanguage === 'es'
-        ? 'Pasaje adicional seleccionado en el workspace para apoyar la exégesis.'
-        : 'Additional passage selected in workspace to support exegesis.',
+        ? `Conecta con ${workspace.mainPassage} y amplía el tema central del estudio.`
+        : `Connects with ${workspace.mainPassage} and expands the study's central theme.`,
     }));
     const mergedCrossReferences = new Map<string, { reference: string; category: string; connection: string }>();
     [...additionalPassageReferences, ...normalizedCrossReferences].forEach((item) => {
@@ -4477,6 +4492,11 @@ Rules:
     promptOverride?: string,
   ): Promise<SermonApplication[]> {
     const workspace = await this.findOne(workspaceId, userId);
+    if (!Array.isArray(workspace?.studyReports) || workspace.studyReports.length === 0) {
+      throw new BadRequestException(
+        'Generate the Study Report first before creating applications.',
+      );
+    }
     await this.applicationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
@@ -4514,6 +4534,11 @@ Rules:
     promptOverride?: string,
   ): Promise<DiscussionQuestion[]> {
     const workspace = await this.findOne(workspaceId, userId);
+    if (!Array.isArray(workspace?.studyReports) || workspace.studyReports.length === 0) {
+      throw new BadRequestException(
+        'Generate the Study Report first before creating discussion questions.',
+      );
+    }
     await this.questionRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const pointNodes = Array.isArray(outline?.structure?.pointNodes) ? outline.structure.pointNodes : [];
@@ -4543,6 +4568,11 @@ Rules:
     promptOverride?: string,
   ): Promise<SermonIllustration[]> {
     const workspace = await this.findOne(workspaceId, userId);
+    if (!Array.isArray(workspace?.studyReports) || workspace.studyReports.length === 0) {
+      throw new BadRequestException(
+        'Generate the Study Report first before creating illustration ideas.',
+      );
+    }
     await this.illustrationRepository.delete({ workspaceId });
     const outline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0];
     const mainPoints = this.extractOutlinePointTexts(outline?.structure || {});
@@ -4566,17 +4596,66 @@ Rules:
           )
         : fallbackItems;
     const illustrations = [];
+    const decodeLooseField = (source: string, key: string): string => {
+      const value = this.asString(source);
+      if (!value) return '';
+      const pattern = new RegExp(
+        `["'\`]?${key}["'\`]?\\s*[:=]\\s*["“]?([\\s\\S]*?)["”]?(?=\\n\\s*["'\`]?(?:title|content|description|text|verseReference|source|tags)["'\`]?\\s*[:=]|\\n{2,}|$)`,
+        'i',
+      );
+      const match = value.match(pattern);
+      return this.asString(match?.[1] || '').trim();
+    };
+    const cleanIllustrationText = (value: any): string =>
+      this.asString(value)
+        .replace(/\r/g, '')
+        .replace(/^\s*["'`]?((title|content|description|text))["'`]?\s*[:=]\s*["'`]?/i, '')
+        .replace(/\n+\s*["'`]?(verseReference|source|tags)["'`]?\s*[:=][\s\S]*$/i, '')
+        .replace(/\s*["'`]?(verseReference|source|tags)["'`]?\s*[:=][\s\S]*$/i, '')
+        .replace(/^[`"'“”]+|[`"',“”\]]+$/g, '')
+        .trim();
 
     for (const item of items) {
-      const content = this.asString(item?.content || item?.text || item?.description || '').trim();
+      const rawItem = typeof item === 'string' ? this.asString(item) : this.asString(JSON.stringify(item));
+      const title = this.asString(item?.title || decodeLooseField(rawItem, 'title'));
+      const looseContent = decodeLooseField(rawItem, 'content') || decodeLooseField(rawItem, 'description');
+      let content = cleanIllustrationText(item?.content || item?.text || item?.description || looseContent || rawItem);
+      let source = this.asString(
+        item?.source ||
+        item?.verseReference ||
+        item?.verseReferences?.[0] ||
+        decodeLooseField(rawItem, 'verseReference') ||
+        decodeLooseField(rawItem, 'source'),
+      );
+      let tags = Array.isArray(item?.tags)
+        ? item.tags.map((tag: any) => this.asString(tag)).filter(Boolean).slice(0, 8)
+        : [];
+      if (!tags.length) {
+        const tagsRaw = decodeLooseField(rawItem, 'tags');
+        if (tagsRaw) {
+          tags = tagsRaw
+            .replace(/^\[|\]$/g, '')
+            .split(/[,\|]/)
+            .map((tag) => this.asString(tag).replace(/^["'`]+|["'`]+$/g, ''))
+            .filter(Boolean)
+            .slice(0, 8);
+        }
+      }
+      if (!source) {
+        const verseMatch = content.match(/\b(?:[1-3]\s*)?[A-Za-zÁÉÍÓÚáéíóúñÑ]+\s+\d+:\d+(?:-\d+)?\b/);
+        if (verseMatch?.[0]) {
+          source = verseMatch[0];
+          content = cleanIllustrationText(content.replace(verseMatch[0], ''));
+        }
+      }
       if (!content) continue;
       const illustration = this.illustrationRepository.create({
         workspaceId,
-        title: item.title || null,
+        title: title || null,
         content: workspace.language === 'es' ? this.normalizeSpanishGeneratedText(content) : content,
-        source: item.source || item.verseReference || item.verseReferences?.[0] || null,
+        source: source || null,
         relatedPoint: item.relatedPoint || null,
-        tags: Array.isArray(item.tags) ? item.tags : null,
+        tags: tags.length ? tags : null,
       });
       illustrations.push(await this.illustrationRepository.save(illustration));
     }
@@ -4818,6 +4897,7 @@ Rules:
       promptOverride ||
       this.buildMediaSuggestionsPrompt(workspace, passageText, studyInputs, normalizedSections, existingPrompts);
     let parsed: any = null;
+    let rawResponse = '';
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {
         temperature: 0.3,
@@ -4826,6 +4906,7 @@ Rules:
         localMaxAttempts: 1,
       });
       this.logLlmOutput('media-suggestions', response);
+      rawResponse = response;
       parsed = this.parseJsonSafe(response);
     } catch (error) {
       console.warn(`[media-suggestions] LLM fallback activated: ${(error as Error)?.message || 'unknown error'}`);
@@ -4840,6 +4921,9 @@ Rules:
           : [];
 
     let mediaSuggestionCards = this.normalizeMediaSuggestionCards(rawSuggestions, 24);
+    if (!mediaSuggestionCards.length) {
+      mediaSuggestionCards = this.extractMediaSuggestionCardsFromLooseResponse(rawResponse, 24);
+    }
     if (!mediaSuggestionCards.length) {
       mediaSuggestionCards = this.normalizeMediaSuggestionCards(existingAssets?.categoryAssets?.mediaSuggestionCards || [], 24);
       if (!mediaSuggestionCards.length) {

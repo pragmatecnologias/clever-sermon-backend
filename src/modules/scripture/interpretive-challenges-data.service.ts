@@ -123,12 +123,16 @@ export class InterpretiveChallengesDataService {
     const sdaPerspective = parsed.sdaPerspective || parsed.perspectivaSDA;
 
     // Normalize views structure (handle Spanish field names)
-    const normalizedViews = views.map((view: any) => ({
-      viewName: view.viewName || view.nombreVista || view.nombre || '',
-      summary: view.summary || view.resumen || '',
-      proponents: view.proponents || view.proponentes || '',
-      keyArguments: view.keyArguments || view.argumentosClave || view.argumentos || [],
-    }));
+    const normalizedViews = views
+      .map((view: any) => ({
+        viewName: view.viewName || view.nombreVista || view.nombre || '',
+        summary: view.summary || view.resumen || '',
+        proponents: view.proponents || view.proponentes || '',
+        keyArguments: this.normalizeKeyArguments(
+          view.keyArguments || view.argumentosClave || view.argumentos || [],
+        ),
+      }))
+      .filter((view: InterpretiveView) => view.viewName && view.summary && view.keyArguments.length > 0);
 
     if (!challenge || normalizedViews.length === 0) {
       throw new Error('LLM response missing required challenge/views content');
@@ -234,9 +238,11 @@ export class InterpretiveChallengesDataService {
     let match: RegExpExecArray | null;
     while ((match = viewRegex.exec(repaired)) !== null) {
       const keyArgumentsRaw = match[4] || '';
-      const keyArguments = Array.from(keyArgumentsRaw.matchAll(/"((?:\\.|[^"\\])*)"/g))
+      const keyArguments = this.normalizeKeyArguments(
+        Array.from(keyArgumentsRaw.matchAll(/"((?:\\.|[^"\\])*)"/g))
         .map((item) => this.unescapeJsonString(item[1]))
-        .filter(Boolean);
+        .filter(Boolean),
+      );
       views.push({
         viewName: this.unescapeJsonString(match[1]),
         summary: this.unescapeJsonString(match[2]),
@@ -292,6 +298,35 @@ export class InterpretiveChallengesDataService {
         .replace(/\\t/g, '\t')
         .replace(/\\\\/g, '\\');
     }
+  }
+
+  private normalizeKeyArguments(input: any): string[] {
+    const rawValues: string[] = [];
+
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (typeof item === 'string') {
+          rawValues.push(item);
+          continue;
+        }
+        if (item && typeof item === 'object') {
+          for (const value of Object.values(item)) {
+            if (typeof value === 'string') {
+              rawValues.push(value);
+            }
+          }
+        }
+      }
+    } else if (typeof input === 'string') {
+      rawValues.push(input);
+    }
+
+    const cleaned = rawValues
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .filter((value) => !/^(argument|argumento)s?:?$/i.test(value));
+
+    return Array.from(new Set(cleaned));
   }
 
   private initializeChallengeData() {

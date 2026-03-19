@@ -201,14 +201,16 @@ export class TranslationComparisonEnhancedService {
       // Spanish translations
       return ['NBLA', 'RVR1960', 'NVI'];
     } else {
-      // English translations (default)
-      return ['KJV', 'NIV', 'ESV', 'NASB'];
+      // English translations (default): prioritize broadly available providers first.
+      return ['KJV', 'WEB', 'ASV', 'NIV', 'ESV', 'NASB'];
     }
   }
 
   private getTranslationName(code: string): string {
     const names: Record<string, string> = {
       'KJV': 'King James Version',
+      'WEB': 'World English Bible',
+      'ASV': 'American Standard Version',
       'NIV': 'New International Version',
       'ESV': 'English Standard Version',
       'NASB': 'New American Standard Bible',
@@ -224,6 +226,8 @@ export class TranslationComparisonEnhancedService {
   private getTranslationType(code: string): 'formal' | 'dynamic' | 'paraphrase' {
     const types: Record<string, 'formal' | 'dynamic' | 'paraphrase'> = {
       'KJV': 'formal',
+      'WEB': 'formal',
+      'ASV': 'formal',
       'NASB': 'formal',
       'ESV': 'formal',
       'NKJV': 'formal',
