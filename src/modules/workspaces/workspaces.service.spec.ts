@@ -31,6 +31,7 @@ describe('WorkspacesService manuscript parsing', () => {
       null as any,
       null as any,
       null as any,
+      null as any,
     );
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
   });

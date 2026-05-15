@@ -29,6 +29,7 @@ import { EGWStudyReportIntegrationService } from '../egw/egw-study-report-integr
 import { EGWSermonBuilderIntegrationService } from '../egw/egw-sermon-builder-integration.service';
 import { SermonIntegrityService } from './sermon-integrity.service';
 import { WorkspaceHelpers } from './helpers';
+import { WorkspaceStateService } from './workspace-state.service';
 import { WorkspaceGenerationCapability, WorkspaceGenerationRegistry } from './workspace-generation.registry';
 import {
   WorkspaceArtifactCounts,
@@ -1035,7 +1036,7 @@ Rules:
     return `${source}\n<h3>Repair · ${anchorText || 'Target Section'}</h3>\n${normalizedReplacementHtml}`.trim();
   }
 
-  private async applyTargetedManuscriptRepair(
+  async applyTargetedManuscriptRepair(
     payload: ManuscriptRepairQueuePayload,
     setStage: (state: string, message: string, touchedAnchors?: string[]) => Promise<void>,
   ) {
@@ -1351,6 +1352,7 @@ Rules:
     private manuscriptRepairQueue: Queue,
     @InjectQueue('workspace-generation')
     private workspaceGenerationQueue: Queue,
+    private workspaceStateService: WorkspaceStateService,
   ) {}
 
   private getWorkspaceUiState(workspace: SermonWorkspace): { phase: WorkspacePhase; section: WorkspaceSection } {
@@ -2012,7 +2014,8 @@ Rules:
     const claimReviewDecisions = this.getWorkspaceClaimReviews(workspace);
     const nextAction = this.getWorkspaceNextAction(workspace);
 
-    return {
+    const stateBuilder = this.workspaceStateService || new WorkspaceStateService()
+    return stateBuilder.buildWorkspaceState({
       workspace,
       activePhase: uiState.phase,
       activeSection: uiState.section,
@@ -2034,7 +2037,7 @@ Rules:
       claimReviewDecisions,
       nextAction,
       uiState,
-    };
+    });
   }
 
   async create(userId: string, createDto: CreateWorkspaceDto): Promise<SermonWorkspace> {

@@ -12,12 +12,16 @@ import { UpdateCitationDto } from './dto/update-citation.dto';
 import { RecordClaimReviewDto } from './dto/record-claim-review.dto';
 import { RecordIntegrityIssueReviewDto } from './dto/record-integrity-issue-review.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { WorkspaceGenerationService } from './workspace-generation.service';
+import { WorkspaceTrustService } from './workspace-trust.service';
 
 @Controller('workspaces')
 @UseGuards(JwtAuthGuard)
 export class WorkspacesController {
   constructor(
     private readonly workspacesService: WorkspacesService,
+    private readonly workspaceGenerationService: WorkspaceGenerationService,
+    private readonly workspaceTrustService: WorkspaceTrustService,
     private readonly contentValidatorService: ContentValidatorService,
   ) {}
 
@@ -51,7 +55,7 @@ export class WorkspacesController {
     @Param('id') id: string,
     @Body() body: RecordClaimReviewDto,
   ) {
-    return this.workspacesService.recordClaimReview(id, req.user.userId, body);
+    return this.workspaceTrustService.recordClaimReview(id, req.user.userId, body);
   }
 
   @Patch(':id')
@@ -97,7 +101,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'outline', promptOverride);
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'outline', promptOverride);
     }
     return this.workspacesService.generateOutlines(id, req.user.userId, 3, promptOverride);
   }
@@ -127,7 +131,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'applications', promptOverride);
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'applications', promptOverride);
     }
     return this.workspacesService.generateApplications(id, req.user.userId, promptOverride);
   }
@@ -140,7 +144,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'discussion-questions', promptOverride);
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'discussion-questions', promptOverride);
     }
     return this.workspacesService.generateDiscussionQuestions(id, req.user.userId, promptOverride);
   }
@@ -153,7 +157,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'illustrations', promptOverride);
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'illustrations', promptOverride);
     }
     return this.workspacesService.generateIllustrations(id, req.user.userId, promptOverride);
   }
@@ -166,7 +170,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'citations', promptOverride);
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'citations', promptOverride);
     }
     return this.workspacesService.generateCitations(id, req.user.userId, promptOverride);
   }
@@ -180,7 +184,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'study-report', promptOverride, includeEGW === 'true');
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'study-report', promptOverride, includeEGW === 'true');
     }
     return this.workspacesService.generateStudyReport(id, req.user.userId, promptOverride);
   }
@@ -193,7 +197,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'sermon-core', promptOverride);
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'sermon-core', promptOverride);
     }
     return this.workspacesService.generateSermonCore(id, req.user.userId);
   }
@@ -204,7 +208,7 @@ export class WorkspacesController {
     @Param('id') id: string,
     @Param('jobId') jobId: string,
   ) {
-    return this.workspacesService.getWorkspaceGenerationJobStatus(id, jobId, req.user.userId);
+    return this.workspaceGenerationService.getWorkspaceGenerationJobStatus(id, jobId, req.user.userId);
   }
 
   @Post(':id/media-suggestions')
@@ -215,7 +219,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'media-suggestions', promptOverride);
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'media-suggestions', promptOverride);
     }
     return this.workspacesService.generateMediaSuggestions(id, req.user.userId, promptOverride);
   }
@@ -255,7 +259,7 @@ export class WorkspacesController {
     @Query('async') asyncMode?: string,
   ) {
     if (this.wantsAsync(asyncMode)) {
-      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'integrity-check');
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'integrity-check');
     }
     return this.workspacesService.runIntegrityCheck(id, req.user.userId);
   }
@@ -266,7 +270,7 @@ export class WorkspacesController {
     @Param('id') id: string,
     @Body() body: RecordIntegrityIssueReviewDto,
   ) {
-    return this.workspacesService.recordIntegrityIssueReview(id, req.user.userId, body);
+    return this.workspaceTrustService.recordIntegrityIssueReview(id, req.user.userId, body);
   }
 
   @Post(':id/auto-fix-content')
@@ -284,7 +288,7 @@ export class WorkspacesController {
     @Param('id') id: string,
     @Query('translation') translation?: string,
   ) {
-    return this.workspacesService.validateCitations(id, req.user.userId, translation);
+    return this.workspaceTrustService.validateCitations(id, req.user.userId, translation);
   }
 
   @Patch('outlines/:id')
@@ -337,7 +341,7 @@ export class WorkspacesController {
       mode?: 'targeted' | string;
     },
   ) {
-    return this.workspacesService.enqueueManuscriptRepair(id, manuscriptId, req.user.userId, body || {});
+    return this.workspaceGenerationService.enqueueManuscriptRepair(id, manuscriptId, req.user.userId, body || {});
   }
 
   @Get(':id/manuscripts/:manuscriptId/repair/jobs/:jobId')
@@ -347,7 +351,7 @@ export class WorkspacesController {
     @Param('manuscriptId') manuscriptId: string,
     @Param('jobId') jobId: string,
   ) {
-    return this.workspacesService.getManuscriptRepairJobStatus(id, manuscriptId, jobId, req.user.userId);
+    return this.workspaceGenerationService.getManuscriptRepairJobStatus(id, manuscriptId, jobId, req.user.userId);
   }
 
   @Patch('applications/:id')
