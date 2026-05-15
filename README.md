@@ -119,7 +119,7 @@ npm run build
 npm run start:prod
 ```
 
-API will be available at `http://localhost:3001/api/v1`
+API will be available at `http://localhost:4001/api/v1`
 
 ## API Endpoints
 

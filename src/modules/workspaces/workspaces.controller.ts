@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Delete, UseGuards, Request, Query, Req } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, Delete, UseGuards, Request, Query, Req, Headers } from '@nestjs/common';
 import { WorkspacesService } from './workspaces.service';
 import { ContentValidatorService } from './content-validator.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
@@ -14,6 +14,8 @@ import { RecordIntegrityIssueReviewDto } from './dto/record-integrity-issue-revi
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { WorkspaceGenerationService } from './workspace-generation.service';
 import { WorkspaceTrustService } from './workspace-trust.service';
+import { WorkspaceMediaPackService } from './workspace-media-pack.service';
+import { ComposeMediaPackDto } from './dto/compose-media-pack.dto';
 
 @Controller('workspaces')
 @UseGuards(JwtAuthGuard)
@@ -22,6 +24,7 @@ export class WorkspacesController {
     private readonly workspacesService: WorkspacesService,
     private readonly workspaceGenerationService: WorkspaceGenerationService,
     private readonly workspaceTrustService: WorkspaceTrustService,
+    private readonly workspaceMediaPackService: WorkspaceMediaPackService,
     private readonly contentValidatorService: ContentValidatorService,
   ) {}
 
@@ -222,6 +225,16 @@ export class WorkspacesController {
       return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'media-suggestions', promptOverride);
     }
     return this.workspacesService.generateMediaSuggestions(id, req.user.userId, promptOverride);
+  }
+
+  @Post(':id/media-pack/compose')
+  composeMediaPack(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() body: ComposeMediaPackDto,
+    @Headers('authorization') authorization?: string,
+  ) {
+    return this.workspaceMediaPackService.composeMediaPack(id, req.user.userId, authorization, body || {});
   }
 
   @Post(':id/socratic-coach')

@@ -8,6 +8,8 @@ import { SermonIntegrityService } from './sermon-integrity.service';
 import { WorkspaceStateService } from './workspace-state.service';
 import { WorkspaceGenerationService } from './workspace-generation.service';
 import { WorkspaceTrustService } from './workspace-trust.service';
+import { WorkspaceMediaPackService } from './workspace-media-pack.service';
+import { MediaProxyController } from './media-proxy.controller';
 import { ManuscriptRepairProcessor } from './manuscript-repair.processor';
 import { WorkspaceGenerationProcessor } from './workspace-generation.processor';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
@@ -49,12 +51,13 @@ import { EGWModule } from '../egw/egw.module';
     WorkspaceStateService,
     WorkspaceGenerationService,
     WorkspaceTrustService,
+    WorkspaceMediaPackService,
     ContentValidatorService,
     SermonIntegrityService,
     ManuscriptRepairProcessor,
     WorkspaceGenerationProcessor,
   ],
-  controllers: [WorkspacesController],
+  controllers: [WorkspacesController, MediaProxyController],
   exports: [WorkspacesService],
 })
 export class WorkspacesModule {}
