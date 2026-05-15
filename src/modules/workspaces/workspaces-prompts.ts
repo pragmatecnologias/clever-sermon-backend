@@ -332,3 +332,297 @@ ${input.localeRules}
 - No markdown, no prose outside JSON, no code fences.`;
   },
 };
+
+export type WorkspacePromptId =
+  | 'sermon-core'
+  | 'socratic-coach-question'
+  | 'socratic-coach-list'
+  | 'targeted-repair-patch'
+  | 'manuscript-generation'
+  | 'outline'
+  | 'outline-points'
+  | 'outline-from-points'
+  | 'outline-point-nodes'
+  | 'applications'
+  | 'discussion-questions'
+  | 'illustrations'
+  | 'citations'
+  | 'study-report'
+  | 'media-suggestions';
+
+export type WorkspacePromptEvaluationCase = {
+  id: string;
+  promptId: WorkspacePromptId;
+  description: string;
+  input: Record<string, unknown>;
+  expectedTraits: string[];
+};
+
+export const WorkspacePromptRegistry: Record<WorkspacePromptId, {
+  promptId: WorkspacePromptId;
+  description: string;
+  evaluationCases: WorkspacePromptEvaluationCase[];
+}> = {
+  'sermon-core': {
+    promptId: 'sermon-core',
+    description: 'Extract sermon core from study data',
+    evaluationCases: [
+      {
+        id: 'sermon-core-en-simple',
+        promptId: 'sermon-core',
+        description: 'English sermon core generation from passage study data',
+        input: {
+          mainPassage: 'John 3:16',
+          theme: 'God so loved the world',
+          sermonGoals: 'Call people to trust Christ',
+          audienceProfile: 'Mixed congregation',
+        },
+        expectedTraits: ['json', 'bigIdea', 'fallenCondition', 'centralTruth', 'sermonGoal', 'audienceNeed', 'passage-grounded'],
+      },
+    ],
+  },
+  'socratic-coach-question': {
+    promptId: 'socratic-coach-question',
+    description: 'Coach a pastor answer with a single question',
+    evaluationCases: [
+      {
+        id: 'coach-question-faithfulness',
+        promptId: 'socratic-coach-question',
+        description: 'Checks answer fidelity to the passage',
+        input: {
+          context: 'Romans 8:1',
+          questionId: 'Q1',
+          answer: 'No condemnation in Christ means believers are free.',
+        },
+        expectedTraits: ['json', 'affirmation', 'coachFeedback', 'rewriteHint', 'nextQuestion', 'text-fidelity'],
+      },
+    ],
+  },
+  'socratic-coach-list': {
+    promptId: 'socratic-coach-list',
+    description: 'Generate a full Socratic question set',
+    evaluationCases: [
+      {
+        id: 'coach-list-refine-mode',
+        promptId: 'socratic-coach-list',
+        description: 'Produces eight targeted refine questions',
+        input: {
+          mode: 'refine',
+          listenerProfile: 'skeptic',
+          context: 'Outline points and manuscript excerpts',
+        },
+        expectedTraits: ['json', 'questions', '8-questions', 'text-fidelity', 'application-linkage'],
+      },
+      {
+        id: 'coach-list-self-reflection',
+        promptId: 'socratic-coach-list',
+        description: 'Produces self reflection questions',
+        input: {
+          mode: 'self_reflection',
+          listenerProfile: 'general_congregation',
+          context: 'Sermon preparation notes',
+        },
+        expectedTraits: ['json', 'questions', 'self-reflection', 'spiritual-formation'],
+      },
+    ],
+  },
+  'targeted-repair-patch': {
+    promptId: 'targeted-repair-patch',
+    description: 'Patch a manuscript snippet with local repair',
+    evaluationCases: [
+      {
+        id: 'targeted-repair-no-anchor-duplication',
+        promptId: 'targeted-repair-patch',
+        description: 'Avoids duplicating the anchor title in the replacement',
+        input: {
+          mainPassage: 'Ephesians 2:1-10',
+          targetAnchor: 'Introduction',
+          proposedAction: 'Strengthen text fidelity',
+          conversationSummary: 'Coach flagged weak grounding',
+        },
+        expectedTraits: ['json', 'replacement', 'why', 'no-anchor-duplication', 'text-faithful'],
+      },
+    ],
+  },
+  'manuscript-generation': {
+    promptId: 'manuscript-generation',
+    description: 'Generate a sermon manuscript from outline and study data',
+    evaluationCases: [
+      {
+        id: 'manuscript-v2-en',
+        promptId: 'manuscript-generation',
+        description: 'Produces full HTML manuscript with cues',
+        input: {
+          mainPassage: 'John 3:16',
+          targetMinutes: 22,
+          wordTarget: 2800,
+        },
+        expectedTraits: ['html', 'cues', 'outline-authority', 'slide-cues', 'key-lines'],
+      },
+    ],
+  },
+  outline: {
+    promptId: 'outline',
+    description: 'Generate a sermon outline',
+    evaluationCases: [
+      {
+        id: 'outline-candidate-basic',
+        promptId: 'outline',
+        description: 'Generates a full outline structure',
+        input: {
+          mainPassage: 'John 3:16',
+          theme: 'Love of God',
+        },
+        expectedTraits: ['json', 'introduction', 'points', 'conclusion', 'scripture-support'],
+      },
+    ],
+  },
+  'outline-points': {
+    promptId: 'outline-points',
+    description: 'Generate outline point variations',
+    evaluationCases: [
+      {
+        id: 'outline-points-variations',
+        promptId: 'outline-points',
+        description: 'Produces multiple candidate point sets',
+        input: {
+          mainPassage: 'John 3:16',
+          count: 3,
+        },
+        expectedTraits: ['json', 'array', 'angle', 'points', 'variation'],
+      },
+    ],
+  },
+  'outline-from-points': {
+    promptId: 'outline-from-points',
+    description: 'Generate a sermon outline from selected points',
+    evaluationCases: [
+      {
+        id: 'outline-from-points-simple',
+        promptId: 'outline-from-points',
+        description: 'Builds a structured outline from three points',
+        input: {
+          mainPassage: 'John 3:16',
+          points: ['God loved', 'God gave', 'We believe'],
+        },
+        expectedTraits: ['json', 'outline', 'points', 'title', 'conclusion'],
+      },
+    ],
+  },
+  'outline-point-nodes': {
+    promptId: 'outline-point-nodes',
+    description: 'Generate supporting node data for outline points',
+    evaluationCases: [
+      {
+        id: 'outline-point-nodes-support',
+        promptId: 'outline-point-nodes',
+        description: 'Produces grounded node metadata for each point',
+        input: {
+          mainPassage: 'John 3:16',
+          points: ['God loved', 'God gave', 'We believe'],
+        },
+        expectedTraits: ['json', 'pointNodes', 'supportingVerses', 'applications', 'discussionQuestions'],
+      },
+    ],
+  },
+  applications: {
+    promptId: 'applications',
+    description: 'Generate sermon applications',
+    evaluationCases: [
+      {
+        id: 'applications-audience-driven',
+        promptId: 'applications',
+        description: 'Produces audience-specific applications',
+        input: {
+          mainPassage: 'John 3:16',
+          audienceType: 'young adults',
+        },
+        expectedTraits: ['list', 'audience-specific', 'actionable'],
+      },
+    ],
+  },
+  'discussion-questions': {
+    promptId: 'discussion-questions',
+    description: 'Generate discussion questions',
+    evaluationCases: [
+      {
+        id: 'discussion-questions-groups',
+        promptId: 'discussion-questions',
+        description: 'Produces small-group discussion questions',
+        input: {
+          mainPassage: 'John 3:16',
+        },
+        expectedTraits: ['list', 'reflective', 'discussion-ready'],
+      },
+    ],
+  },
+  illustrations: {
+    promptId: 'illustrations',
+    description: 'Generate illustration ideas',
+    evaluationCases: [
+      {
+        id: 'illustrations-sermon-ready',
+        promptId: 'illustrations',
+        description: 'Produces grounded illustration concepts',
+        input: {
+          mainPassage: 'John 3:16',
+        },
+        expectedTraits: ['list', 'illustration', 'source-aware'],
+      },
+    ],
+  },
+  citations: {
+    promptId: 'citations',
+    description: 'Generate citation candidates',
+    evaluationCases: [
+      {
+        id: 'citations-source-aware',
+        promptId: 'citations',
+        description: 'Produces claim citations with verse references',
+        input: {
+          mainPassage: 'John 3:16',
+        },
+        expectedTraits: ['json', 'verseReferences', 'source-aware', 'claim-support'],
+      },
+    ],
+  },
+  'study-report': {
+    promptId: 'study-report',
+    description: 'Generate a structured study report',
+    evaluationCases: [
+      {
+        id: 'study-report-exegetical',
+        promptId: 'study-report',
+        description: 'Produces the required study-report sections',
+        input: {
+          mainPassage: 'John 3:16',
+          language: 'en',
+        },
+        expectedTraits: ['json', 'passageOverview', 'canonicalContext', 'crossReferences', 'interpretiveChallenges', 'mainTheologicalClaim'],
+      },
+    ],
+  },
+  'media-suggestions': {
+    promptId: 'media-suggestions',
+    description: 'Generate media and delivery suggestions',
+    evaluationCases: [
+      {
+        id: 'media-suggestions-pack',
+        promptId: 'media-suggestions',
+        description: 'Produces export-ready media pack suggestions',
+        input: {
+          mainPassage: 'John 3:16',
+        },
+        expectedTraits: ['json', 'mediaSuggestions', 'studyAssets', 'slide-cues', 'export-ready'],
+      },
+    ],
+  },
+};
+
+export const WorkspacePromptEvaluationCases = Object.values(WorkspacePromptRegistry).flatMap((entry) => entry.evaluationCases);
+
+export const getWorkspacePromptEvaluationCoverage = () => ({
+  promptCount: Object.keys(WorkspacePromptRegistry).length,
+  evaluationCaseCount: WorkspacePromptEvaluationCases.length,
+  promptIds: Object.keys(WorkspacePromptRegistry) as WorkspacePromptId[],
+});

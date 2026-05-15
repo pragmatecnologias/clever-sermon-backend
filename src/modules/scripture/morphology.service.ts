@@ -25,6 +25,7 @@ export class MorphologyService {
   private morphologyIndex: Record<string, MorphologyEntry> | null = null;
 
   async getMorphology(word: string, language: string): Promise<MorphologyEntry | null> {
+    if (!word) return null;
     const index = await this.loadMorphologyIndex(language);
     const key = word.toLowerCase();
     return index[key] || null;

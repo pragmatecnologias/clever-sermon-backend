@@ -22,7 +22,13 @@ export class CrossReferencesService {
     return this.crossRefRepository.find({ where, order: { strength: 'DESC' } });
   }
 
-  create(dto: Partial<CrossReference>) {
+  create(dto: Partial<CrossReference> & { reference?: string; targetReference?: string }) {
+    if (!dto.sourceVerse) {
+      dto.sourceVerse = dto.reference || dto.targetVerse || dto.targetReference || null;
+    }
+    if (!dto.targetVerse && dto.targetReference) {
+      dto.targetVerse = dto.targetReference;
+    }
     const ref = this.crossRefRepository.create(dto);
     return this.crossRefRepository.save(ref);
   }

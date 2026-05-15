@@ -22,10 +22,39 @@ import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateIllustrationDto } from './dto/update-illustration.dto';
 import { UpdateDiscussionQuestionDto } from './dto/update-discussion-question.dto';
 import { UpdateCitationDto } from './dto/update-citation.dto';
+import { RecordClaimReviewDto } from './dto/record-claim-review.dto';
+import { RecordIntegrityIssueReviewDto } from './dto/record-integrity-issue-review.dto';
 import { EGWService } from '../egw/egw.service';
 import { EGWStudyReportIntegrationService } from '../egw/egw-study-report-integration.service';
 import { EGWSermonBuilderIntegrationService } from '../egw/egw-sermon-builder-integration.service';
+import { SermonIntegrityService } from './sermon-integrity.service';
 import { WorkspaceHelpers } from './helpers';
+import { WorkspaceGenerationCapability, WorkspaceGenerationRegistry } from './workspace-generation.registry';
+import {
+  WorkspaceArtifactCounts,
+  WorkspaceClaimSummary,
+  WorkspaceClaimSupportLevel,
+  WorkspaceClaimReview,
+  WorkspaceClaimReviewDecision,
+  WorkspaceIntegritySummary,
+  WorkspaceIntegrityIssueDecision,
+  WorkspaceIntegrityIssueReview,
+  WorkspaceIntegrityIssueSummary,
+  WorkspaceNextAction,
+  WorkspaceMediaPackSummary,
+  WorkspaceExportSummary,
+  WorkspacePhase,
+  WorkspaceManuscriptHistorySummary,
+  WorkspaceManuscriptComparisonSummary,
+  WorkspaceManuscriptSummary,
+  WorkspaceProgress,
+  WorkspaceOutlineHistorySummary,
+  WorkspaceOutlineComparisonSummary,
+  WorkspaceOutlineSummary,
+  WorkspaceSection,
+  WorkspaceSourceSummary,
+  WorkspaceStateResponse,
+} from './workspace-state.types';
 import { WorkspacesPrompts } from './workspaces-prompts';
 import { normalizeTheologicalLens } from './theological-lens.util';
 
@@ -83,6 +112,20 @@ type ManuscriptRepairQueuePayload = {
   doNotTouchAnchors: string[];
   conversationSummary: string;
   mode: 'targeted';
+};
+
+type WorkspaceGenerationJobPayload = {
+  workspaceId: string;
+  userId: string;
+  capability: WorkspaceGenerationCapability;
+  promptOverride?: string;
+  includeEGW?: boolean;
+};
+
+type WorkspaceIntegrityCheckPayload = {
+  workspaceId: string;
+  userId: string;
+  async?: boolean;
 };
 
 @Injectable()
@@ -661,6 +704,176 @@ Rules:
     };
   }
 
+  async queueWorkspaceGeneration(
+    workspaceId: string,
+    userId: string,
+    capability: WorkspaceGenerationCapability,
+    promptOverride?: string,
+    includeEGW = false,
+  ) {
+    await this.findOne(workspaceId, userId);
+    const job = await this.workspaceGenerationQueue.add('generate', {
+      workspaceId,
+      userId,
+      capability,
+      promptOverride,
+      includeEGW,
+    } satisfies WorkspaceGenerationJobPayload, {
+      attempts: 2,
+      removeOnComplete: 50,
+      removeOnFail: 50,
+    });
+    return {
+      jobId: String(job.id),
+      status: 'queued',
+      workspaceId,
+      capability,
+    };
+  }
+
+  async getWorkspaceGenerationJobStatus(
+    workspaceId: string,
+    jobId: string,
+    userId: string,
+  ) {
+    await this.findOne(workspaceId, userId);
+    const job = await this.workspaceGenerationQueue.getJob(jobId);
+    if (!job) {
+      throw new BadRequestException('Generation job not found.');
+    }
+    const data = (job.data || {}) as WorkspaceGenerationJobPayload;
+    if (data.workspaceId !== workspaceId || data.userId !== userId) {
+      throw new BadRequestException('Generation job does not belong to this workspace.');
+    }
+
+    const state = await job.getState();
+    const progress = (job.progress() || {}) as { state?: string; message?: string };
+    if (state === 'completed') {
+      return {
+        jobId,
+        status: 'completed',
+        state: 'completed',
+        result: job.returnvalue || null,
+      };
+    }
+    if (state === 'failed') {
+      return {
+        jobId,
+        status: 'failed',
+        state: 'failed',
+        error: job.failedReason || 'Generation job failed.',
+      };
+    }
+    return {
+      jobId,
+      status: state === 'active' ? (progress.state || 'running') : 'queued',
+      state: progress.state || (state === 'active' ? 'running' : 'queued'),
+      message: progress.message || '',
+    };
+  }
+
+  private validateGenerationResult(capability: WorkspaceGenerationCapability, parsed: unknown) {
+    const registryEntry = WorkspaceGenerationRegistry[capability];
+    const validation = registryEntry.validate(parsed);
+    if (!validation.ok) {
+      throw new BadRequestException(
+        `${registryEntry.description} validation failed: ${validation.issues.join('; ')}`,
+      );
+    }
+    return validation;
+  }
+
+  async processWorkspaceGenerationJob(
+    payload: WorkspaceGenerationJobPayload,
+    job?: Job<WorkspaceGenerationJobPayload>,
+  ) {
+    const setStage = async (state: string, message: string) => {
+      if (job) {
+        await job.progress({ state, message });
+      }
+    };
+
+    await setStage('loading', 'Loading workspace.');
+    const workspace = await this.findOne(payload.workspaceId, payload.userId);
+    if (payload.capability === 'study-report') {
+      await setStage('study-report', 'Generating study report.');
+      const report = await this.generateStudyReport(payload.workspaceId, payload.userId, payload.promptOverride);
+      this.validateGenerationResult('study-report', (report as any)?.sections || report);
+      await setStage('completed', 'Study report completed.');
+      return report;
+    }
+    if (payload.capability === 'outline-points' || payload.capability === 'outline') {
+      await setStage('outline', 'Generating outlines.');
+      const result = payload.capability === 'outline-points'
+        ? await this.generateOutlines(payload.workspaceId, payload.userId, 3, payload.promptOverride)
+        : await this.generateOutlines(payload.workspaceId, payload.userId, 3, payload.promptOverride);
+      if (payload.capability === 'outline-points') {
+        this.validateGenerationResult('outline-points', result.map((outline) => outline.structure?.outlineType ? {
+          points: this.extractOutlinePointTexts(outline.structure || {}),
+          angle: outline.title,
+        } : {
+          points: this.extractOutlinePointTexts(outline.structure || {}),
+          angle: outline.title,
+        }));
+      } else {
+        this.validateGenerationResult('outline', result[0]?.structure || {});
+      }
+      await setStage('completed', 'Outline generation completed.');
+      return result;
+    }
+    if (payload.capability === 'sermon-core') {
+      await setStage('sermon-core', 'Generating sermon core.');
+      const result = await this.generateSermonCore(payload.workspaceId, payload.userId);
+      this.validateGenerationResult('sermon-core', result);
+      await setStage('completed', 'Sermon core completed.');
+      return result;
+    }
+    if (payload.capability === 'integrity-check') {
+      await setStage('integrity-check', 'Running integrity review.');
+      const result = await this.runIntegrityCheck(payload.workspaceId, payload.userId);
+      this.validateGenerationResult('integrity-check', result);
+      await setStage('completed', 'Integrity review completed.');
+      return result;
+    }
+    if (payload.capability === 'applications') {
+      await setStage('applications', 'Generating applications.');
+      const result = await this.generateApplications(payload.workspaceId, payload.userId, payload.promptOverride);
+      this.validateGenerationResult('applications', result);
+      await setStage('completed', 'Applications completed.');
+      return result;
+    }
+    if (payload.capability === 'discussion-questions') {
+      await setStage('discussion-questions', 'Generating discussion questions.');
+      const result = await this.generateDiscussionQuestions(payload.workspaceId, payload.userId, payload.promptOverride);
+      this.validateGenerationResult('discussion-questions', result);
+      await setStage('completed', 'Discussion questions completed.');
+      return result;
+    }
+    if (payload.capability === 'illustrations') {
+      await setStage('illustrations', 'Generating illustration ideas.');
+      const result = await this.generateIllustrations(payload.workspaceId, payload.userId, payload.promptOverride);
+      this.validateGenerationResult('illustrations', result);
+      await setStage('completed', 'Illustrations completed.');
+      return result;
+    }
+    if (payload.capability === 'citations') {
+      await setStage('citations', 'Generating citations.');
+      const result = await this.generateCitations(payload.workspaceId, payload.userId, payload.promptOverride);
+      this.validateGenerationResult('citations', result);
+      await setStage('completed', 'Citations completed.');
+      return result;
+    }
+    if (payload.capability === 'media-suggestions') {
+      await setStage('media-suggestions', 'Generating media suggestions.');
+      const result = await this.generateMediaSuggestions(payload.workspaceId, payload.userId, payload.promptOverride);
+      this.validateGenerationResult('media-suggestions', result);
+      await setStage('completed', 'Media suggestions completed.');
+      return result;
+    }
+    await setStage('failed', `Unsupported capability: ${payload.capability}`);
+    throw new BadRequestException(`Unsupported generation capability: ${payload.capability}`);
+  }
+
   async processManuscriptRepairJob(
     payload: ManuscriptRepairQueuePayload,
     job?: Job<ManuscriptRepairQueuePayload>,
@@ -1133,9 +1346,696 @@ Rules:
     private egwService: EGWService,
     private egwStudyReportService: EGWStudyReportIntegrationService,
     private egwSermonBuilderService: EGWSermonBuilderIntegrationService,
+    private sermonIntegrityService: SermonIntegrityService,
     @InjectQueue('manuscript-repair')
     private manuscriptRepairQueue: Queue,
+    @InjectQueue('workspace-generation')
+    private workspaceGenerationQueue: Queue,
   ) {}
+
+  private getWorkspaceUiState(workspace: SermonWorkspace): { phase: WorkspacePhase; section: WorkspaceSection } {
+    const rawState = (workspace?.metadata as any)?.uiState || {};
+    const phaseCandidate = this.asString(rawState?.phase || '').toUpperCase();
+    const sectionCandidate = this.asString(rawState?.section || '').toLowerCase();
+
+    const phase: WorkspacePhase = ['THEME', 'PASSAGE', 'STUDY', 'OUTLINE', 'WRITE', 'REFINE', 'DELIVER'].includes(phaseCandidate)
+      ? (phaseCandidate as WorkspacePhase)
+      : this.inferWorkspacePhase(workspace);
+
+    const section: WorkspaceSection = ['workspace', 'scripture', 'study-report', 'outlines', 'manuscript', 'citations', 'dna', 'media'].includes(sectionCandidate)
+      ? (sectionCandidate as WorkspaceSection)
+      : this.inferWorkspaceSection(phase);
+
+    return { phase, section };
+  }
+
+  private inferWorkspacePhase(workspace: SermonWorkspace): WorkspacePhase {
+    const progress = this.getWorkspaceProgress(workspace);
+    if (progress.deliverPrepared) return 'DELIVER';
+    if (progress.refineCompleted) return 'REFINE';
+    if (progress.manuscriptWritten) return 'WRITE';
+    if (progress.outlineCreated) return 'OUTLINE';
+    if (progress.studyGenerated) return 'STUDY';
+    if (progress.passageExplored) return 'PASSAGE';
+    return 'THEME';
+  }
+
+  private inferWorkspaceSection(phase: WorkspacePhase): WorkspaceSection {
+    switch (phase) {
+      case 'PASSAGE':
+        return 'scripture';
+      case 'STUDY':
+        return 'study-report';
+      case 'OUTLINE':
+        return 'outlines';
+      case 'WRITE':
+        return 'manuscript';
+      case 'REFINE':
+        return 'dna';
+      case 'DELIVER':
+        return 'media';
+      case 'THEME':
+      default:
+        return 'workspace';
+    }
+  }
+
+  private getWorkspaceArtifactCounts(workspace: SermonWorkspace): WorkspaceArtifactCounts {
+    return {
+      outlines: Array.isArray(workspace?.outlines) ? workspace.outlines.length : 0,
+      manuscripts: Array.isArray(workspace?.manuscripts) ? workspace.manuscripts.length : 0,
+      studyReports: Array.isArray(workspace?.studyReports) ? workspace.studyReports.length : 0,
+      applications: Array.isArray(workspace?.applications) ? workspace.applications.length : 0,
+      illustrations: Array.isArray(workspace?.illustrations) ? workspace.illustrations.length : 0,
+      citations: Array.isArray(workspace?.citations) ? workspace.citations.length : 0,
+    };
+  }
+
+  private getWorkspaceSourceLedger(workspace: SermonWorkspace): WorkspaceSourceSummary[] {
+    const citationSources = (workspace?.citations || []).flatMap((citation: any) => {
+      const verses = Array.isArray(citation?.verseReferences) ? citation.verseReferences : [];
+      if (!verses.length) {
+        return [{
+          id: `citation-source-${citation.id}`,
+          sourceType: citation?.externalSources?.length ? 'external' : 'generated',
+          label: this.asString(citation?.statement || 'Citation'),
+          reference: citation?.externalSources?.[0] || '',
+          verified: Boolean(citation?.isVerified),
+        }];
+      }
+      return verses.map((verse: string, index: number) => ({
+        id: `citation-source-${citation.id}-${index}`,
+        sourceType: 'bible' as const,
+        label: verse,
+        reference: verse,
+        verified: Boolean(citation?.isVerified),
+      }));
+    });
+
+    const studyReportSource = (workspace?.studyReports?.[0]?.sections?.studyAssets?.categoryAssets?.mediaSuggestionCards || []).length
+      ? [{
+          id: `study-report-${workspace?.studyReports?.[0]?.id || 'latest'}`,
+          sourceType: 'generated' as const,
+          label: 'Study report',
+          reference: workspace?.studyReports?.[0]?.createdAt || '',
+          verified: true,
+        }]
+      : [];
+
+    return [...citationSources, ...studyReportSource].slice(0, 100);
+  }
+
+  private getWorkspaceMediaPack(workspace: SermonWorkspace): WorkspaceMediaPackSummary | null {
+    const metadata = (workspace?.metadata || {}) as Record<string, any>;
+    const mediaPack = metadata?.mediaPack || metadata?.deliverables?.mediaPack || null;
+    if (!mediaPack || typeof mediaPack !== 'object') {
+      return null;
+    }
+
+    return {
+      status: this.asString(mediaPack.status || (mediaPack.generatedAt ? 'ready' : 'draft')) as WorkspaceMediaPackSummary['status'],
+      generatedAt: mediaPack.generatedAt ? this.asString(mediaPack.generatedAt) : undefined,
+      sourceOutlineId: mediaPack.sourceOutlineId ? this.asString(mediaPack.sourceOutlineId) : null,
+      sourceManuscriptId: mediaPack.sourceManuscriptId ? this.asString(mediaPack.sourceManuscriptId) : null,
+      sourceStudyReportId: mediaPack.sourceStudyReportId ? this.asString(mediaPack.sourceStudyReportId) : null,
+      slideCount: typeof mediaPack.slideCount === 'number' ? mediaPack.slideCount : undefined,
+      audioEnabled: typeof mediaPack.audioEnabled === 'boolean' ? mediaPack.audioEnabled : undefined,
+      musicEnabled: typeof mediaPack.musicEnabled === 'boolean' ? mediaPack.musicEnabled : undefined,
+      videoEnabled: typeof mediaPack.videoEnabled === 'boolean' ? mediaPack.videoEnabled : undefined,
+      exportPrepared: typeof mediaPack.exportPrepared === 'boolean'
+        ? mediaPack.exportPrepared
+        : Boolean(metadata?.deliverables?.export),
+    };
+  }
+
+  private getWorkspaceExportPack(workspace: SermonWorkspace): WorkspaceExportSummary | null {
+    const metadata = (workspace?.metadata || {}) as Record<string, any>;
+    const exportPack = metadata?.exportPack || metadata?.deliverables?.export || null;
+    if (!exportPack || typeof exportPack !== 'object') {
+      return null;
+    }
+
+    const artifacts = Array.isArray(exportPack.artifacts) ? exportPack.artifacts : [];
+    return {
+      status: this.asString(exportPack.status || (exportPack.generatedAt ? 'ready' : 'draft')) as WorkspaceExportSummary['status'],
+      generatedAt: exportPack.generatedAt ? this.asString(exportPack.generatedAt) : undefined,
+      sourceOutlineId: exportPack.sourceOutlineId ? this.asString(exportPack.sourceOutlineId) : null,
+      sourceManuscriptId: exportPack.sourceManuscriptId ? this.asString(exportPack.sourceManuscriptId) : null,
+      sourceStudyReportId: exportPack.sourceStudyReportId ? this.asString(exportPack.sourceStudyReportId) : null,
+      artifacts: artifacts
+        .map((artifact: any) => ({
+          type: this.asString(artifact?.type || 'study-report') as WorkspaceExportSummary['artifacts'][number]['type'],
+          label: this.asString(artifact?.label || artifact?.type || 'Export'),
+          status: this.asString(artifact?.status || 'pending') as WorkspaceExportSummary['artifacts'][number]['status'],
+          filename: artifact?.filename ? this.asString(artifact.filename) : undefined,
+          sourceOutlineId: artifact?.sourceOutlineId ? this.asString(artifact.sourceOutlineId) : null,
+          sourceManuscriptId: artifact?.sourceManuscriptId ? this.asString(artifact.sourceManuscriptId) : null,
+          sourceStudyReportId: artifact?.sourceStudyReportId ? this.asString(artifact.sourceStudyReportId) : null,
+          url: artifact?.url ? this.asString(artifact.url) : null,
+        }))
+        .filter((artifact: any) => artifact.label),
+    };
+  }
+
+  private getWorkspaceClaimLedger(workspace: SermonWorkspace): WorkspaceClaimSummary[] {
+    const claimsFromCitations = (workspace?.citations || []).map((citation: any) => {
+      const verified = Boolean(citation?.isVerified);
+      const supportLevel: WorkspaceClaimSupportLevel = verified
+        ? 'supported'
+        : Array.isArray(citation?.verseReferences) && citation.verseReferences.length
+          ? 'partially_supported'
+          : 'needs_review';
+      const sourceType: WorkspaceSourceSummary['sourceType'] = Array.isArray(citation?.verseReferences) && citation.verseReferences.length
+        ? 'bible'
+        : (citation?.externalSources?.length ? 'external' : 'generated');
+      return {
+        id: citation.id,
+        claimText: this.asString(citation?.statement || ''),
+        claimType: this.asString(citation?.statementType || 'claim'),
+        supportLevel,
+        sourceType,
+        sourceIds: Array.isArray(citation?.verseReferences)
+          ? citation.verseReferences.map((verse: string) => this.cleanCoachText(verse)).filter(Boolean)
+          : [],
+        location: 'citations',
+        verified,
+      };
+    });
+
+    const outline = this.getActiveOutline(workspace);
+    const outlineClaims = outline
+      ? [{
+          id: `outline-${outline.id}`,
+          claimText: this.asString(workspace?.outlines?.find((item: any) => item.id === outline.id)?.title || ''),
+          claimType: 'outline',
+          supportLevel: 'needs_review' as WorkspaceClaimSupportLevel,
+          sourceType: 'generated' as const,
+          sourceIds: [outline.id],
+          location: 'outline',
+          verified: false,
+        }]
+      : [];
+
+    const studyReportClaim = this.asString((workspace?.studyReports?.[0]?.sections as any)?.mainTheologicalClaim || '');
+    const studyReportClaims = studyReportClaim
+      ? [{
+          id: `study-report-claim-${workspace?.studyReports?.[0]?.id || 'latest'}`,
+          claimText: studyReportClaim,
+          claimType: 'study-report',
+          supportLevel: 'needs_review' as WorkspaceClaimSupportLevel,
+          sourceType: 'generated' as const,
+          sourceIds: workspace?.studyReports?.[0]?.id ? [workspace.studyReports[0].id] : [],
+          location: 'study-report',
+          verified: false,
+        }]
+      : [];
+
+    return [...claimsFromCitations, ...outlineClaims, ...studyReportClaims].slice(0, 100);
+  }
+
+  private getWorkspaceClaimReviews(workspace: SermonWorkspace): WorkspaceClaimReview[] {
+    const claimReviews = (workspace?.metadata as any)?.claimReviews;
+    if (!Array.isArray(claimReviews)) {
+      return [];
+    }
+    return claimReviews
+      .map((review: any) => ({
+        claimId: this.asString(review?.claimId || ''),
+        decision: this.asString(review?.decision || '') as WorkspaceClaimReviewDecision,
+        note: review?.note ? this.asString(review.note) : undefined,
+        updatedAt: this.asString(review?.updatedAt || ''),
+        claimText: review?.claimText ? this.asString(review.claimText) : undefined,
+        claimType: review?.claimType ? this.asString(review.claimType) : undefined,
+        supportLevel: review?.supportLevel ? (this.asString(review.supportLevel) as WorkspaceClaimSupportLevel) : undefined,
+        sourceType: review?.sourceType ? (this.asString(review.sourceType) as WorkspaceSourceSummary['sourceType']) : undefined,
+        sourceIds: Array.isArray(review?.sourceIds) ? review.sourceIds.map((item: any) => this.asString(item)).filter(Boolean) : undefined,
+        location: review?.location ? this.asString(review.location) : undefined,
+      }))
+      .filter((review) => review.claimId && ['repair', 'acknowledge', 'cite'].includes(review.decision));
+  }
+
+  async recordClaimReview(
+    workspaceId: string,
+    userId: string,
+    payload: RecordClaimReviewDto,
+  ): Promise<WorkspaceClaimReview> {
+    const workspace = await this.findOne(workspaceId, userId);
+    const claimId = this.asString(payload?.claimId || '');
+    if (!claimId) {
+      throw new BadRequestException('Claim id is required.');
+    }
+    const claimLedger = this.getWorkspaceClaimLedger(workspace);
+    const claim = claimLedger.find((item) => item.id === claimId);
+    if (!claim) {
+      throw new BadRequestException('Claim not found in this workspace.');
+    }
+
+    const updatedAt = new Date().toISOString();
+    const review: WorkspaceClaimReview = {
+      claimId,
+      decision: payload.decision,
+      note: payload.note ? this.asString(payload.note) : undefined,
+      updatedAt,
+      claimText: payload.claimText ? this.asString(payload.claimText) : claim.claimText,
+      claimType: payload.claimType ? this.asString(payload.claimType) : claim.claimType,
+      supportLevel: payload.supportLevel || claim.supportLevel,
+      sourceType: (payload.sourceType as WorkspaceSourceSummary['sourceType']) || claim.sourceType,
+      sourceIds: Array.isArray(payload.sourceIds) && payload.sourceIds.length
+        ? payload.sourceIds.map((item) => this.cleanCoachText(item)).filter(Boolean)
+        : claim.sourceIds,
+      location: payload.location ? this.asString(payload.location) : claim.location,
+    };
+
+    const metadata = (workspace.metadata || {}) as Record<string, any>;
+    const claimReviews = Array.isArray(metadata.claimReviews) ? metadata.claimReviews : [];
+    const filtered = claimReviews.filter((item: any) => this.asString(item?.claimId || '') !== claimId);
+    metadata.claimReviews = [...filtered, review].slice(-100);
+    workspace.metadata = metadata;
+    await this.workspaceRepository.save(workspace);
+    return review;
+  }
+
+  private buildIntegrityIssueId(issue: {
+    severity?: string;
+    category?: string;
+    message?: string;
+    affectedItem?: string;
+  }, index: number): string {
+    const raw = [
+      issue.severity || 'issue',
+      issue.category || 'general',
+      issue.message || issue.affectedItem || 'integrity',
+      String(index + 1),
+    ]
+      .join('-')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 72);
+    return raw ? `issue-${raw}` : `issue-${index + 1}`;
+  }
+
+  private getWorkspaceIntegrityIssueLedger(workspace: SermonWorkspace): WorkspaceIntegrityIssueSummary[] {
+    const report = (workspace?.metadata as any)?.integrityReport;
+    const reviews = this.getWorkspaceIntegrityIssueReviews(workspace);
+    const reviewMap = new Map(
+      reviews.map((review) => [
+        review.issueId,
+        review,
+      ]),
+    );
+    const issues = Array.isArray(report?.issues) ? report.issues : [];
+    return issues.map((issue: any, index: number) => {
+      const issueId = this.buildIntegrityIssueId(issue, index);
+      const review = reviewMap.get(issueId);
+      return {
+        id: issueId,
+        severity: this.asString(issue?.severity || 'warning') as WorkspaceIntegrityIssueSummary['severity'],
+        category: this.asString(issue?.category || 'general'),
+        message: this.asString(issue?.message || ''),
+        affectedItem: issue?.affectedItem ? this.asString(issue.affectedItem) : undefined,
+        decision: review?.decision,
+        note: review?.note,
+        updatedAt: review?.updatedAt || this.asString(report?.updatedAt || ''),
+        status: review ? 'reviewed' : 'open',
+      };
+    });
+  }
+
+  private getWorkspaceIntegrityIssueReviews(workspace: SermonWorkspace): WorkspaceIntegrityIssueReview[] {
+    const reviews = (workspace?.metadata as any)?.integrityIssueReviews;
+    if (!Array.isArray(reviews)) {
+      return [];
+    }
+    return reviews
+      .map((review: any) => ({
+        issueId: this.asString(review?.issueId || ''),
+        decision: this.asString(review?.decision || '') as WorkspaceIntegrityIssueDecision,
+        note: review?.note ? this.asString(review.note) : undefined,
+        updatedAt: this.asString(review?.updatedAt || ''),
+        issueMessage: review?.issueMessage ? this.asString(review.issueMessage) : undefined,
+        severity: review?.severity ? (this.asString(review.severity) as WorkspaceIntegrityIssueSummary['severity']) : undefined,
+        category: review?.category ? this.asString(review.category) : undefined,
+        affectedItem: review?.affectedItem ? this.asString(review.affectedItem) : undefined,
+      }))
+      .filter((review) => review.issueId && ['repair', 'acknowledge', 'cite'].includes(review.decision));
+  }
+
+  async recordIntegrityIssueReview(
+    workspaceId: string,
+    userId: string,
+    payload: RecordIntegrityIssueReviewDto,
+  ): Promise<WorkspaceIntegrityIssueReview> {
+    const workspace = await this.findOne(workspaceId, userId);
+    const issueId = this.asString(payload?.issueId || '');
+    if (!issueId) {
+      throw new BadRequestException('Issue id is required.');
+    }
+    const ledger = this.getWorkspaceIntegrityIssueLedger(workspace);
+    const issue = ledger.find((item) => item.id === issueId);
+    if (!issue) {
+      throw new BadRequestException('Issue not found in this workspace.');
+    }
+
+    const updatedAt = new Date().toISOString();
+    const review: WorkspaceIntegrityIssueReview = {
+      issueId,
+      decision: payload.decision,
+      note: payload.note ? this.asString(payload.note) : undefined,
+      updatedAt,
+      issueMessage: payload.issueMessage ? this.asString(payload.issueMessage) : issue.message,
+      severity: (payload.severity as WorkspaceIntegrityIssueSummary['severity']) || issue.severity,
+      category: payload.category ? this.asString(payload.category) : issue.category,
+      affectedItem: payload.affectedItem ? this.asString(payload.affectedItem) : issue.affectedItem,
+    };
+
+    const metadata = (workspace.metadata || {}) as Record<string, any>;
+    const existing = Array.isArray(metadata.integrityIssueReviews) ? metadata.integrityIssueReviews : [];
+    const filtered = existing.filter((item: any) => this.asString(item?.issueId || '') !== issueId);
+    metadata.integrityIssueReviews = [...filtered, review].slice(-100);
+    workspace.metadata = metadata;
+    await this.workspaceRepository.save(workspace);
+    return review;
+  }
+
+  private getActiveOutline(workspace: SermonWorkspace): WorkspaceOutlineSummary | null {
+    const activeOutlineId = this.asString((workspace?.metadata as any)?.activeOutlineId || '');
+    const selectedOutline =
+      (activeOutlineId
+        ? (workspace?.outlines || []).find((outline: any) => outline?.id === activeOutlineId)
+        : null) ||
+      (workspace?.outlines || []).find((outline: any) => outline?.isSelected) ||
+      workspace?.outlines?.[0];
+    if (!selectedOutline) return null;
+    return {
+      id: selectedOutline.id,
+      title: this.asString(selectedOutline.title || ''),
+      isSelected: Boolean(selectedOutline.isSelected),
+      createdAt: selectedOutline.createdAt,
+      pointCount: this.extractOutlinePointTexts(selectedOutline.structure || {}).length,
+    };
+  }
+
+  private getWorkspaceOutlineHistory(workspace: SermonWorkspace): WorkspaceOutlineHistorySummary[] {
+    const history = Array.isArray((workspace?.metadata as any)?.outlineHistory)
+      ? ((workspace?.metadata as any)?.outlineHistory as any[])
+      : [];
+    const snapshots = history
+      .map((item: any, index: number) => ({
+        id: this.asString(item?.id || `history-outline-${index + 1}`),
+        title: this.asString(item?.title || `Outline Version ${index + 1}`),
+        isSelected: false,
+        createdAt: this.asString(item?.createdAt || item?.archivedAt || ''),
+        pointCount: typeof item?.pointCount === 'number' ? item.pointCount : Array.isArray(item?.points) ? item.points.length : 0,
+        revisionLabel: this.asString(item?.revisionLabel || `Version ${index + 1}`),
+        archivedAt: this.asString(item?.archivedAt || item?.createdAt || ''),
+      }))
+      .filter((item) => item.id && item.title);
+    const currentOutline = this.getActiveOutline(workspace);
+    if (!currentOutline) return snapshots.slice(0, 10);
+    const hasCurrent = snapshots.some((item) => item.id === currentOutline.id);
+    const currentEntry: WorkspaceOutlineHistorySummary = {
+      ...currentOutline,
+      revisionLabel: 'Current',
+      archivedAt: this.asString(currentOutline.createdAt || ''),
+    };
+    return [currentEntry, ...snapshots.filter((item) => !hasCurrent || item.id !== currentOutline.id)].slice(0, 10);
+  }
+
+  private getActiveManuscript(workspace: SermonWorkspace): WorkspaceManuscriptSummary | null {
+    const activeManuscriptId = this.asString((workspace?.metadata as any)?.activeManuscriptId || '');
+    const manuscript =
+      (activeManuscriptId
+        ? (workspace?.manuscripts || []).find((item: any) => item?.id === activeManuscriptId)
+        : null) ||
+      (workspace?.manuscripts || [])[0];
+    if (!manuscript) return null;
+    return {
+      id: manuscript.id,
+      outlineId: manuscript.outlineId || null,
+      wordCount: typeof manuscript.wordCount === 'number' ? manuscript.wordCount : null,
+      estimatedMinutes: typeof manuscript.estimatedMinutes === 'number' ? manuscript.estimatedMinutes : null,
+      createdAt: manuscript.createdAt,
+      updatedAt: manuscript.updatedAt,
+    };
+  }
+
+  private getWorkspaceManuscriptHistory(workspace: SermonWorkspace): WorkspaceManuscriptHistorySummary[] {
+    const history = Array.isArray((workspace?.metadata as any)?.manuscriptHistory)
+      ? ((workspace?.metadata as any)?.manuscriptHistory as any[])
+      : [];
+    const snapshots = history
+      .map((item: any, index: number) => ({
+        id: this.asString(item?.id || `history-manuscript-${index + 1}`),
+        outlineId: item?.outlineId ? this.asString(item.outlineId) : null,
+        wordCount: typeof item?.wordCount === 'number' ? item.wordCount : null,
+        estimatedMinutes: typeof item?.estimatedMinutes === 'number' ? item.estimatedMinutes : null,
+        createdAt: this.asString(item?.createdAt || item?.archivedAt || ''),
+        updatedAt: this.asString(item?.updatedAt || item?.archivedAt || ''),
+        revisionLabel: this.asString(item?.revisionLabel || `Version ${index + 1}`),
+        archivedAt: this.asString(item?.archivedAt || item?.updatedAt || item?.createdAt || ''),
+      }))
+      .filter((item) => item.id);
+    const currentManuscript = this.getActiveManuscript(workspace);
+    if (!currentManuscript) return snapshots.slice(0, 10);
+    const hasCurrent = snapshots.some((item) => item.id === currentManuscript.id);
+    const currentEntry: WorkspaceManuscriptHistorySummary = {
+      ...currentManuscript,
+      revisionLabel: 'Current',
+      archivedAt: this.asString(currentManuscript.updatedAt || currentManuscript.createdAt || ''),
+    };
+    return [currentEntry, ...snapshots.filter((item) => !hasCurrent || item.id !== currentManuscript.id)].slice(0, 10);
+  }
+
+  private getWorkspaceOutlineComparison(
+    workspace: SermonWorkspace,
+    history: WorkspaceOutlineHistorySummary[],
+  ): WorkspaceOutlineComparisonSummary | null {
+    const active = this.getActiveOutline(workspace);
+    if (!active) return null;
+    const previous = history.find((item) => item.id !== active.id) || null;
+    if (!previous) return null;
+    return {
+      previousRevisionLabel: previous.revisionLabel || null,
+      pointDelta: active.pointCount - previous.pointCount,
+      titleChanged: active.title !== previous.title,
+    };
+  }
+
+  private getWorkspaceManuscriptComparison(
+    workspace: SermonWorkspace,
+    history: WorkspaceManuscriptHistorySummary[],
+  ): WorkspaceManuscriptComparisonSummary | null {
+    const active = this.getActiveManuscript(workspace);
+    if (!active) return null;
+    const previous = history.find((item) => item.id !== active.id) || null;
+    if (!previous) return null;
+    return {
+      previousRevisionLabel: previous.revisionLabel || null,
+      wordDelta: (active.wordCount || 0) - (previous.wordCount || 0),
+      minuteDelta: (active.estimatedMinutes || 0) - (previous.estimatedMinutes || 0),
+      outlineChanged: (active.outlineId || null) !== (previous.outlineId || null),
+    };
+  }
+
+  private appendWorkspaceHistory<T extends Record<string, unknown>>(
+    workspace: SermonWorkspace,
+    key: 'outlineHistory' | 'manuscriptHistory',
+    entry: T,
+    limit = 10,
+  ) {
+    const metadata = (workspace.metadata || {}) as Record<string, any>;
+    const existing = Array.isArray(metadata[key]) ? metadata[key] : [];
+    const next = [...existing, entry].slice(-limit);
+    workspace.metadata = {
+      ...metadata,
+      [key]: next,
+    };
+  }
+
+  private snapshotOutlineForHistory(outline: SermonOutline, revisionLabel: string): Record<string, unknown> {
+    return {
+      id: outline.id,
+      title: outline.title,
+      isSelected: Boolean(outline.isSelected),
+      createdAt: outline.createdAt?.toISOString?.() || outline.createdAt || new Date().toISOString(),
+      archivedAt: new Date().toISOString(),
+      revisionLabel,
+      pointCount: this.extractOutlinePointTexts(outline.structure || {}).length,
+      structure: outline.structure || {},
+    };
+  }
+
+  private snapshotManuscriptForHistory(manuscript: SermonManuscript, revisionLabel: string): Record<string, unknown> {
+    return {
+      id: manuscript.id,
+      outlineId: manuscript.outlineId || null,
+      wordCount: typeof manuscript.wordCount === 'number' ? manuscript.wordCount : null,
+      estimatedMinutes: typeof manuscript.estimatedMinutes === 'number' ? manuscript.estimatedMinutes : null,
+      createdAt: manuscript.createdAt?.toISOString?.() || manuscript.createdAt || new Date().toISOString(),
+      updatedAt: manuscript.updatedAt?.toISOString?.() || manuscript.updatedAt || new Date().toISOString(),
+      archivedAt: new Date().toISOString(),
+      revisionLabel,
+      content: manuscript.content || {},
+      transitions: manuscript.transitions || null,
+    };
+  }
+
+  private getLatestIntegrityReport(workspace: SermonWorkspace): WorkspaceIntegritySummary | null {
+    const metadataReport = (workspace?.metadata as any)?.integrityReport || null;
+    if (!metadataReport) return null;
+    const issues = Array.isArray(metadataReport.issues) ? metadataReport.issues : [];
+    const reviewedIssueCount = this.getWorkspaceIntegrityIssueReviews(workspace).length;
+    return {
+      overallScore: typeof metadataReport.overallScore === 'number' ? metadataReport.overallScore : undefined,
+      balanced: typeof metadataReport.balanced === 'boolean' ? metadataReport.balanced : undefined,
+      issueCount: issues.length,
+      criticalIssueCount: issues.filter((item: any) => this.asString(item?.severity || '').toLowerCase() === 'critical').length,
+      warningIssueCount: issues.filter((item: any) => this.asString(item?.severity || '').toLowerCase() === 'warning').length,
+      reviewedIssueCount,
+      strengthCount: Array.isArray(metadataReport.strengths) ? metadataReport.strengths.length : undefined,
+      updatedAt: this.asString(metadataReport.updatedAt || ''),
+    };
+  }
+
+  private getWorkspaceProgress(workspace: SermonWorkspace): WorkspaceProgress {
+    const scriptureCache = workspace?.scriptureCache || {};
+    const metadata = (workspace?.metadata || {}) as Record<string, any>;
+    const latestStudyReport = Array.isArray(workspace?.studyReports) ? workspace.studyReports[0] : null;
+    const latestOutline = Array.isArray(workspace?.outlines) ? workspace.outlines[0] : null;
+    const latestManuscript = Array.isArray(workspace?.manuscripts) ? workspace.manuscripts[0] : null;
+
+    return {
+      themeConfigured: Boolean(workspace?.theme || workspace?.sermonGoals || workspace?.audienceProfile),
+      passageExplored: Boolean(scriptureCache?.scriptureResult || scriptureCache?.passageSummary || scriptureCache?.translationComparison),
+      studyGenerated: Boolean(latestStudyReport),
+      outlineCreated: Boolean(latestOutline),
+      manuscriptWritten: Boolean(latestManuscript),
+      refineCompleted: Boolean(metadata?.socraticCoachLastSession || metadata?.dnaIntegrity || metadata?.integrityReport),
+      deliverPrepared: Boolean(metadata?.mediaPack || metadata?.deliverables?.mediaPack || metadata?.deliverables?.export),
+    };
+  }
+
+  private getWorkspaceNextAction(workspace: SermonWorkspace): WorkspaceNextAction {
+    const progress = this.getWorkspaceProgress(workspace);
+    const uiState = this.getWorkspaceUiState(workspace);
+    if (!progress.themeConfigured) {
+      return {
+        phase: 'THEME',
+        section: 'workspace',
+        action: 'define-theme',
+        label: 'Define sermon direction',
+        description: 'Confirm the sermon theme, audience, and goals before generating study artifacts.',
+      };
+    }
+    if (!progress.passageExplored) {
+      return {
+        phase: 'PASSAGE',
+        section: 'scripture',
+        action: 'lookup-passage',
+        label: 'Study the passage',
+        description: 'Load the main passage, compare translations, and confirm the textual context.',
+      };
+    }
+    if (!progress.studyGenerated) {
+      return {
+        phase: 'STUDY',
+        section: 'study-report',
+        action: 'generate-study-report',
+        label: 'Generate a study report',
+        description: 'Turn passage research into a structured study report before outlining.',
+      };
+    }
+    if (!progress.outlineCreated) {
+      return {
+        phase: 'OUTLINE',
+        section: 'outlines',
+        action: 'create-outline',
+        label: 'Generate sermon outlines',
+        description: 'Create outline candidates and choose the strongest structure for the sermon.',
+      };
+    }
+    if (!progress.manuscriptWritten) {
+      return {
+        phase: 'WRITE',
+        section: 'manuscript',
+        action: 'write-manuscript',
+        label: 'Draft the manuscript',
+        description: 'Generate the first manuscript draft from the selected outline.',
+      };
+    }
+    if (!progress.refineCompleted) {
+      return {
+        phase: 'REFINE',
+        section: 'dna',
+        action: 'analyze-sermon',
+        label: 'Run integrity review',
+        description: 'Validate citations, theology, and sermon balance before delivery.',
+      };
+    }
+    if (!progress.deliverPrepared) {
+      return {
+        phase: 'DELIVER',
+        section: 'media',
+        action: 'generate-media-pack',
+        label: 'Prepare delivery assets',
+        description: 'Generate slides, audio, and supporting media from the approved manuscript.',
+      };
+    }
+
+    return {
+      phase: uiState.phase,
+      section: uiState.section,
+      action: 'export-final',
+      label: 'Export or present',
+      description: 'The sermon is ready for export, delivery, or further refinement.',
+    };
+  }
+
+  private buildWorkspaceState(workspace: SermonWorkspace): WorkspaceStateResponse {
+    const uiState = this.getWorkspaceUiState(workspace);
+    const progress = this.getWorkspaceProgress(workspace);
+    const artifacts = this.getWorkspaceArtifactCounts(workspace);
+    const activeOutline = this.getActiveOutline(workspace);
+    const activeManuscript = this.getActiveManuscript(workspace);
+    const outlineHistory = this.getWorkspaceOutlineHistory(workspace);
+    const manuscriptHistory = this.getWorkspaceManuscriptHistory(workspace);
+    const outlineComparison = this.getWorkspaceOutlineComparison(workspace, outlineHistory);
+    const manuscriptComparison = this.getWorkspaceManuscriptComparison(workspace, manuscriptHistory);
+    const latestIntegrityReport = this.getLatestIntegrityReport(workspace);
+    const integrityIssueLedger = this.getWorkspaceIntegrityIssueLedger(workspace);
+    const integrityIssueReviews = this.getWorkspaceIntegrityIssueReviews(workspace);
+    const mediaPack = this.getWorkspaceMediaPack(workspace);
+    const exportPack = this.getWorkspaceExportPack(workspace);
+    const claimLedger = this.getWorkspaceClaimLedger(workspace);
+    const sourceLedger = this.getWorkspaceSourceLedger(workspace);
+    const claimReviewDecisions = this.getWorkspaceClaimReviews(workspace);
+    const nextAction = this.getWorkspaceNextAction(workspace);
+
+    return {
+      workspace,
+      activePhase: uiState.phase,
+      activeSection: uiState.section,
+      progress,
+      artifacts,
+      activeOutline,
+      activeManuscript,
+      outlineHistory,
+      manuscriptHistory,
+      outlineComparison,
+      manuscriptComparison,
+      latestIntegrityReport,
+      integrityIssueLedger,
+      integrityIssueReviews,
+      mediaPack,
+      exportPack,
+      claimLedger,
+      sourceLedger,
+      claimReviewDecisions,
+      nextAction,
+      uiState,
+    };
+  }
 
   async create(userId: string, createDto: CreateWorkspaceDto): Promise<SermonWorkspace> {
     const workspace = this.workspaceRepository.create({
@@ -4136,6 +5036,20 @@ Rules:
   ): Promise<SermonOutline[]> {
     const workspace = await this.findOne(workspaceId, userId);
 
+    if (Array.isArray(workspace.outlines) && workspace.outlines.length) {
+      const outlineHistoryBase = Array.isArray((workspace.metadata as any)?.outlineHistory)
+        ? ((workspace.metadata as any)?.outlineHistory as any[]).length
+        : 0;
+      workspace.outlines.forEach((outline, index) => {
+        this.appendWorkspaceHistory(
+          workspace,
+          'outlineHistory',
+          this.snapshotOutlineForHistory(outline, `Version ${outlineHistoryBase + index + 1}`),
+        );
+      });
+      await this.workspaceRepository.save(workspace);
+    }
+
     // Delete existing outlines before regenerating
     await this.outlineRepository.delete({ workspaceId });
 
@@ -4152,6 +5066,7 @@ Rules:
     this.logLlmOutput('outline:points', pointsResponse);
 
     const pointsVariations = this.parseOutlinePointsResponse(pointsResponse, count);
+    this.validateGenerationResult('outline-points', pointsVariations);
     const fallbackPoints = this.parseListFromResponse(pointsResponse).slice(0, 5);
     const generatedPointSignatures = new Set<string>();
 
@@ -4216,6 +5131,7 @@ Rules:
       outlineData = await this.ensureOutlinePointNodes(workspace, userId, outlineData, reportText);
       outlineData = this.attachStudyAssetsToOutline(outlineData, studyContext?.studyAssets);
       outlineData = this.sanitizeOutputForLens(outlineData, workspace);
+      this.validateGenerationResult('outline', outlineData);
       if (currentSignature) {
         generatedPointSignatures.add(currentSignature);
       }
@@ -4230,6 +5146,15 @@ Rules:
       outlines.push(await this.outlineRepository.save(outline));
     }
 
+    const activeOutlineId = outlines.find((outline) => outline?.isSelected)?.id || outlines[0]?.id || null;
+    if (activeOutlineId) {
+      workspace.metadata = {
+        ...(workspace.metadata || {}),
+        activeOutlineId,
+      };
+      await this.workspaceRepository.save(workspace);
+    }
+
     return outlines;
   }
 
@@ -4241,6 +5166,21 @@ Rules:
     manuscriptOptions?: ManuscriptGenerationOptions,
   ): Promise<SermonManuscript> {
     const workspace = await this.findOne(workspaceId, userId);
+
+    if (Array.isArray(workspace.manuscripts) && workspace.manuscripts.length) {
+      const manuscriptHistoryBase = Array.isArray((workspace.metadata as any)?.manuscriptHistory)
+        ? ((workspace.metadata as any)?.manuscriptHistory as any[]).length
+        : 0;
+      workspace.manuscripts.forEach((manuscript, index) => {
+        this.appendWorkspaceHistory(
+          workspace,
+          'manuscriptHistory',
+          this.snapshotManuscriptForHistory(manuscript, `Version ${manuscriptHistoryBase + index + 1}`),
+        );
+      });
+      await this.workspaceRepository.save(workspace);
+    }
+
     const outline = await this.outlineRepository.findOne({ where: { id: outlineId } });
     if (!outline) {
       throw new Error('Outline not found');
@@ -4432,7 +5372,15 @@ Rules:
       );
     }
 
-    return this.manuscriptRepository.save(manuscript);
+    const saved = await this.manuscriptRepository.save(manuscript);
+    workspace.metadata = {
+      ...(workspace.metadata || {}),
+      activeOutlineId: outlineId,
+      activeManuscriptId: saved.id,
+    };
+    await this.workspaceRepository.save(workspace);
+
+    return saved;
   }
 
   async regenerateManuscriptCues(
@@ -4766,6 +5714,7 @@ Rules:
     if (completeness.isSparse) {
       normalizedSections = this.hydrateSparseStudyReportSections(workspace, normalizedSections);
     }
+    this.validateGenerationResult('study-report', normalizedSections);
 
     let mergedSections = {
       ...normalizedSections,
@@ -4850,6 +5799,7 @@ Rules:
     };
     const normalizedSermonCore =
       workspace.language === 'es' ? this.normalizeSpanishValueDeep(sermonCore) : sermonCore;
+    this.validateGenerationResult('sermon-core', normalizedSermonCore);
 
     // Save to workspace
     await this.workspaceRepository.update(workspaceId, {
@@ -4857,6 +5807,67 @@ Rules:
     });
 
     return normalizedSermonCore;
+  }
+
+  async runIntegrityCheck(
+    workspaceId: string,
+    userId: string,
+  ): Promise<{
+    overallScore: number;
+    balanced: boolean;
+    issues: Array<{
+      severity: 'critical' | 'warning' | 'info';
+      category: 'textual_support' | 'relevance' | 'balance' | 'citation' | 'application';
+      message: string;
+      affectedItem?: string;
+    }>;
+    strengths: string[];
+    recommendations: string[];
+    pointAnalysis: Array<{ point: string; textSupported: boolean; supportingVerses: string[]; supportScore: number; issues: string[] }>;
+    applicationAnalysis: Array<{ application: string; tiedToPassage: boolean; relevanceScore: number; issues: string[] }>;
+    citationAnalysis: Array<{ statement: string; verseReference: string; verified: boolean; supportLevel: 'supported' | 'weak' | 'not_supported'; issues: string[] }>;
+  }> {
+    const workspace = await this.findOne(workspaceId, userId);
+    const selectedOutline = workspace.outlines?.find((o: any) => o.isSelected) || workspace.outlines?.[0];
+    const outlinePoints = selectedOutline?.structure?.points || [];
+    const applications = (workspace.applications || []).map((a: any) => a.content);
+    const citations = (workspace.citations || []).map((c: any) => ({
+      statement: c.statement,
+      verseReferences: c.verseReferences || [],
+    }));
+
+    const report = await this.sermonIntegrityService.analyzeSermonIntegrity({
+      mainPassage: workspace.mainPassage,
+      outlinePoints,
+      applications,
+      citations,
+      language: workspace.language || 'en',
+    });
+
+    this.validateGenerationResult('integrity-check', report);
+
+    const updatedAt = new Date().toISOString();
+    const integrityIssueLedger = report.issues.map((issue, index) => ({
+      id: this.buildIntegrityIssueId(issue, index),
+      severity: issue.severity,
+      category: issue.category,
+      message: issue.message,
+      affectedItem: issue.affectedItem,
+      status: 'open' as const,
+      updatedAt,
+    }));
+
+    workspace.metadata = {
+      ...(workspace.metadata || {}),
+      integrityReport: {
+        ...report,
+        updatedAt,
+      },
+      integrityIssueLedger,
+    };
+    await this.workspaceRepository.save(workspace);
+
+    return report;
   }
 
   async generateMediaSuggestions(
@@ -4963,6 +5974,22 @@ Rules:
       studyAssets: mergedAssets,
     };
 
+    const selectedOutline = workspace.outlines?.find((item) => item.isSelected) || workspace.outlines?.[0] || null;
+    const selectedManuscript = workspace.manuscripts?.[0] || null;
+    const mediaPackGeneratedAt = new Date().toISOString();
+    const mediaPack = {
+      status: 'ready' as const,
+      generatedAt: mediaPackGeneratedAt,
+      sourceOutlineId: selectedOutline?.id || null,
+      sourceManuscriptId: selectedManuscript?.id || null,
+      sourceStudyReportId: latestReport?.id || null,
+      slideCount: Array.isArray(mediaSuggestionCards) ? mediaSuggestionCards.length : 0,
+      audioEnabled: mediaSuggestionCards.length > 0,
+      musicEnabled: mediaSuggestionCards.length > 0,
+      videoEnabled: mediaSuggestionCards.length > 0,
+      exportPrepared: true,
+    };
+
     let persistedReport: SermonStudyReport;
     if (latestReport) {
       latestReport.sections = mergedSections;
@@ -4976,6 +6003,68 @@ Rules:
       });
       persistedReport = await this.studyReportRepository.save(created);
     }
+
+    workspace.metadata = {
+      ...(workspace.metadata || {}),
+      mediaPack,
+      exportPack: {
+        status: 'ready',
+        generatedAt: mediaPack.generatedAt,
+        sourceOutlineId: mediaPack.sourceOutlineId,
+        sourceManuscriptId: mediaPack.sourceManuscriptId,
+        sourceStudyReportId: mediaPack.sourceStudyReportId,
+        artifacts: [
+          {
+            type: 'pptx',
+            label: 'Slide deck (PPTX)',
+            status: 'ready',
+            filename: `sermon-deck-${workspaceId}.pptx`,
+            sourceOutlineId: mediaPack.sourceOutlineId,
+            sourceManuscriptId: mediaPack.sourceManuscriptId,
+            sourceStudyReportId: mediaPack.sourceStudyReportId,
+          },
+          {
+            type: 'pdf',
+            label: 'Slide deck (PDF)',
+            status: 'ready',
+            filename: `sermon-deck-${workspaceId}.pdf`,
+            sourceOutlineId: mediaPack.sourceOutlineId,
+            sourceManuscriptId: mediaPack.sourceManuscriptId,
+            sourceStudyReportId: mediaPack.sourceStudyReportId,
+          },
+          {
+            type: 'docx',
+            label: 'Manuscript (DOCX)',
+            status: 'ready',
+            filename: `sermon-manuscript-${workspaceId}.docx`,
+            sourceOutlineId: mediaPack.sourceOutlineId,
+            sourceManuscriptId: mediaPack.sourceManuscriptId,
+            sourceStudyReportId: mediaPack.sourceStudyReportId,
+          },
+          {
+            type: 'study-report',
+            label: 'Study report export',
+            status: 'ready',
+            filename: `study-report-${workspaceId}.md`,
+            sourceOutlineId: mediaPack.sourceOutlineId,
+            sourceManuscriptId: mediaPack.sourceManuscriptId,
+            sourceStudyReportId: mediaPack.sourceStudyReportId,
+          },
+        ],
+      },
+      deliverables: {
+        ...((workspace.metadata as Record<string, any>)?.deliverables || {}),
+        mediaPack,
+        export: {
+          status: 'ready',
+          sourceOutlineId: mediaPack.sourceOutlineId,
+          sourceManuscriptId: mediaPack.sourceManuscriptId,
+          sourceStudyReportId: mediaPack.sourceStudyReportId,
+          generatedAt: mediaPack.generatedAt,
+        },
+      },
+    };
+    await this.workspaceRepository.save(workspace);
 
     return persistedReport;
   }
@@ -5091,6 +6180,14 @@ Rules:
     return this.upgradeWorkspaceContracts(workspace);
   }
 
+  async getWorkspaceState(id: string, userId: string): Promise<WorkspaceStateResponse> {
+    const workspace = await this.findOne(id, userId);
+    if (!workspace) {
+      throw new BadRequestException('Workspace not found');
+    }
+    return this.buildWorkspaceState(workspace);
+  }
+
   async update(id: string, userId: string, updateDto: UpdateWorkspaceDto): Promise<SermonWorkspace> {
     const normalizedUpdate: UpdateWorkspaceDto = { ...updateDto };
     normalizedUpdate.theologicalLens = normalizeTheologicalLens(
@@ -5172,14 +6269,81 @@ Rules:
     if (!outline || outline.workspace.userId !== userId) {
       return null;
     }
+    const shouldSnapshot = typeof dto?.title === 'string' || dto?.structure !== undefined;
+    if (shouldSnapshot) {
+      const outlineHistoryBase = Array.isArray((outline.workspace.metadata as any)?.outlineHistory)
+        ? ((outline.workspace.metadata as any)?.outlineHistory as any[]).length
+        : 0;
+      this.appendWorkspaceHistory(
+        outline.workspace,
+        'outlineHistory',
+        this.snapshotOutlineForHistory(outline, `Version ${outlineHistoryBase + 1}`),
+      );
+      await this.workspaceRepository.save(outline.workspace);
+    }
+    if (dto.isSelected) {
+      await this.outlineRepository
+        .createQueryBuilder()
+        .update(SermonOutline)
+        .set({ isSelected: false })
+        .where('workspaceId = :workspaceId', { workspaceId: outline.workspaceId })
+        .andWhere('id <> :id', { id })
+        .execute();
+      await this.workspaceRepository.update(
+        { id: outline.workspaceId, userId },
+        {
+          metadata: {
+            ...(outline.workspace.metadata || {}),
+            activeOutlineId: id,
+          } as any,
+        } as any,
+      );
+    }
     await this.outlineRepository.update({ id }, dto);
     return this.outlineRepository.findOne({ where: { id } });
+  }
+
+  async restoreOutlineHistory(userId: string, workspaceId: string, historyIndex: number): Promise<SermonOutline> {
+    const workspace = await this.findOne(workspaceId, userId);
+    const history = Array.isArray((workspace.metadata as any)?.outlineHistory)
+      ? ((workspace.metadata as any)?.outlineHistory as any[])
+      : [];
+    const snapshot = history[historyIndex];
+    if (!snapshot) {
+      throw new BadRequestException('Outline history entry not found.');
+    }
+    const outline = this.outlineRepository.create({
+      workspaceId,
+      title: this.asString(snapshot.title || `Restored Outline ${historyIndex + 1}`),
+      structure: (snapshot.structure as Record<string, any>) || {},
+      contentFormat: 'markdown',
+      isSelected: true,
+    });
+    const saved = await this.outlineRepository.save(outline);
+    workspace.metadata = {
+      ...(workspace.metadata || {}),
+      activeOutlineId: saved.id,
+    };
+    await this.workspaceRepository.save(workspace);
+    return saved;
   }
 
   async updateManuscript(userId: string, id: string, dto: UpdateManuscriptDto): Promise<SermonManuscript> {
     const manuscript = await this.manuscriptRepository.findOne({ where: { id }, relations: ['workspace'] });
     if (!manuscript || manuscript.workspace.userId !== userId) {
       return null;
+    }
+    const shouldSnapshot = dto?.content !== undefined || dto?.transitions !== undefined;
+    if (shouldSnapshot) {
+      const manuscriptHistoryBase = Array.isArray((manuscript.workspace.metadata as any)?.manuscriptHistory)
+        ? ((manuscript.workspace.metadata as any)?.manuscriptHistory as any[]).length
+        : 0;
+      this.appendWorkspaceHistory(
+        manuscript.workspace,
+        'manuscriptHistory',
+        this.snapshotManuscriptForHistory(manuscript, `Version ${manuscriptHistoryBase + 1}`),
+      );
+      await this.workspaceRepository.save(manuscript.workspace);
     }
     const updatePayload: Partial<SermonManuscript> = {};
     if (dto.transitions) {
@@ -5200,7 +6364,40 @@ Rules:
       updatePayload.contentFormat = safeContent.formatVersion === 'v2' ? 'html' : manuscript.contentFormat;
     }
     await this.manuscriptRepository.update({ id }, updatePayload);
+    manuscript.workspace.metadata = {
+      ...(manuscript.workspace.metadata || {}),
+      activeManuscriptId: id,
+    };
+    await this.workspaceRepository.save(manuscript.workspace);
     return this.manuscriptRepository.findOne({ where: { id } });
+  }
+
+  async restoreManuscriptHistory(userId: string, workspaceId: string, historyIndex: number): Promise<SermonManuscript> {
+    const workspace = await this.findOne(workspaceId, userId);
+    const history = Array.isArray((workspace.metadata as any)?.manuscriptHistory)
+      ? ((workspace.metadata as any)?.manuscriptHistory as any[])
+      : [];
+    const snapshot = history[historyIndex];
+    if (!snapshot) {
+      throw new BadRequestException('Manuscript history entry not found.');
+    }
+    const manuscript = this.manuscriptRepository.create({
+      workspaceId,
+      outlineId: snapshot.outlineId || null,
+      content: (snapshot.content as Record<string, any>) || {},
+      transitions: (snapshot.transitions as Record<string, any>) || null,
+      contentFormat: 'html',
+      wordCount: typeof snapshot.wordCount === 'number' ? snapshot.wordCount : null,
+      estimatedMinutes: typeof snapshot.estimatedMinutes === 'number' ? snapshot.estimatedMinutes : null,
+    });
+    const saved = await this.manuscriptRepository.save(manuscript);
+    workspace.metadata = {
+      ...(workspace.metadata || {}),
+      activeManuscriptId: saved.id,
+      activeOutlineId: saved.outlineId || (workspace.metadata as any)?.activeOutlineId,
+    };
+    await this.workspaceRepository.save(workspace);
+    return saved;
   }
 
   async updateApplication(userId: string, id: string, dto: UpdateApplicationDto): Promise<SermonApplication> {

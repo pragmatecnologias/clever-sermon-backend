@@ -38,7 +38,7 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-  CREATE TYPE llm_provider AS ENUM ('local', 'openai', 'anthropic');
+  CREATE TYPE llm_provider AS ENUM ('local', 'openai', 'anthropic', 'minimax');
 EXCEPTION
   WHEN duplicate_object THEN null;
 END $$;

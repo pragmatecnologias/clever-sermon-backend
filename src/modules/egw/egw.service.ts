@@ -89,6 +89,7 @@ export class EGWService {
   }
 
   async searchByTopic(topic: string, limit: number = 10): Promise<EGWSearchResult[]> {
+    if (!topic) return [];
     // Topic-based search with keyword expansion
     const keywords = this.expandTopicKeywords(topic);
     const results: EGWSearchResult[] = [];
@@ -114,6 +115,7 @@ export class EGWService {
     limit: number = 5,
     language: string = 'en'
   ): Promise<EGWQuote[]> {
+    if (!scriptureReference) return [];
     // Parse scripture reference (e.g., "1 Samuel 16:18-23" -> book: "1 Samuel", chapter: 16)
     const refParts = scriptureReference.match(/^(.+?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$/);
     if (!refParts) {

@@ -385,13 +385,13 @@ export class CanonicalConstellationService {
   }
 
   async getBookCluster(bookName: string): Promise<ConstellationData> {
+    if (!bookName || !this.bibleStructure[bookName]) {
+      return { nodes: [], connections: [], metadata: { totalBooks: 0, totalChapters: 0, totalConnections: 0 } };
+    }
     const nodes: ConstellationNode[] = [];
     const connections: ConstellationConnection[] = [];
 
     const chapterCount = this.bibleStructure[bookName];
-    if (!chapterCount) {
-      throw new Error(`Book ${bookName} not found`);
-    }
 
     // Create chapter nodes in a spiral
     for (let i = 1; i <= chapterCount; i++) {

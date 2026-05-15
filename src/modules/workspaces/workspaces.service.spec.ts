@@ -29,6 +29,8 @@ describe('WorkspacesService manuscript parsing', () => {
       null as any,
       null as any,
       null as any,
+      null as any,
+      null as any,
     );
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
   });
@@ -236,5 +238,109 @@ describe('WorkspacesService manuscript parsing', () => {
   it('flags adventist drift when sunday language appears', () => {
     expect((service as any).hasAdventistDrift('En este domingo celebramos...')).toBe(true);
     expect((service as any).hasAdventistDrift('En este sábado adoramos al Señor.')).toBe(false);
+  });
+
+  it('builds workspace state with history and compare summaries', () => {
+    const workspace = {
+      title: 'Hope in Christ',
+      mainPassage: 'John 3:16',
+      language: 'en',
+      status: 'in_progress',
+      metadata: {
+        activeOutlineId: 'outline-current',
+        activeManuscriptId: 'manuscript-current',
+        mediaPack: {
+          status: 'ready',
+          generatedAt: '2026-01-04T00:00:00.000Z',
+          sourceOutlineId: 'outline-current',
+          sourceManuscriptId: 'manuscript-current',
+          sourceStudyReportId: 'study-1',
+          slideCount: 6,
+          audioEnabled: true,
+          musicEnabled: false,
+          videoEnabled: true,
+          exportPrepared: true,
+        },
+        exportPack: {
+          status: 'ready',
+          generatedAt: '2026-01-04T00:00:00.000Z',
+          sourceOutlineId: 'outline-current',
+          sourceManuscriptId: 'manuscript-current',
+          sourceStudyReportId: 'study-1',
+          artifacts: [
+            { type: 'pptx', label: 'Slide deck (PPTX)', status: 'ready', filename: 'sermon-deck-workspace.pptx' },
+            { type: 'docx', label: 'Manuscript (DOCX)', status: 'ready', filename: 'sermon-manuscript-workspace.docx' },
+          ],
+        },
+        outlineHistory: [
+          {
+            id: 'outline-previous',
+            title: 'Outline Version 1',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            archivedAt: '2026-01-02T00:00:00.000Z',
+            revisionLabel: 'Version 1',
+            pointCount: 2,
+            structure: { points: ['a', 'b'] },
+          },
+        ],
+        manuscriptHistory: [
+          {
+            id: 'manuscript-previous',
+            outlineId: 'outline-previous',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-02T00:00:00.000Z',
+            archivedAt: '2026-01-02T00:00:00.000Z',
+            revisionLabel: 'Version 1',
+            wordCount: 900,
+            estimatedMinutes: 7,
+            content: { text: '<p>old</p>' },
+            transitions: {},
+          },
+        ],
+      },
+      outlines: [
+        {
+          id: 'outline-current',
+          title: 'Outline Version 2',
+          isSelected: true,
+          createdAt: '2026-01-03T00:00:00.000Z',
+          structure: { points: ['a', 'b', 'c', 'd'] },
+        },
+      ],
+      manuscripts: [
+        {
+          id: 'manuscript-current',
+          outlineId: 'outline-current',
+          wordCount: 1200,
+          estimatedMinutes: 9,
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-04T00:00:00.000Z',
+          content: { text: '<p>new</p>' },
+        },
+      ],
+      studyReports: [{ id: 'study-1' }],
+      applications: [],
+      illustrations: [],
+      citations: [],
+      scriptureCache: {
+        scriptureResult: { verses: [{ reference: 'John 3:16', text: 'For God so loved the world' }] },
+      },
+    } as any;
+
+    const state = (service as any).buildWorkspaceState(workspace);
+
+    expect(state.activeOutline?.id).toBe('outline-current');
+    expect(state.activeManuscript?.id).toBe('manuscript-current');
+    expect(state.outlineHistory.length).toBeGreaterThanOrEqual(1);
+    expect(state.manuscriptHistory.length).toBeGreaterThanOrEqual(1);
+    expect(state.outlineComparison?.pointDelta).toBe(2);
+    expect(state.manuscriptComparison?.wordDelta).toBe(300);
+    expect(state.manuscriptComparison?.minuteDelta).toBe(2);
+    expect(state.mediaPack?.status).toBe('ready');
+    expect(state.mediaPack?.exportPrepared).toBe(true);
+    expect(state.mediaPack?.slideCount).toBe(6);
+    expect(state.exportPack?.status).toBe('ready');
+    expect(state.exportPack?.artifacts.length).toBeGreaterThan(0);
+    expect(state.nextAction.label).toBeTruthy();
   });
 });

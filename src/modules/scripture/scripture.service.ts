@@ -449,6 +449,7 @@ export class ScriptureService {
   }
 
   async getWordStudy(word: string, language: string, responseLanguage: string = 'en'): Promise<any> {
+    if (!word) return { error: 'word parameter is required' };
     const index = await this.loadWordStudyIndex();
     const occurrences = await this.loadWordOccurrences();
     const key = word.toLowerCase();

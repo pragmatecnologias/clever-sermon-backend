@@ -64,7 +64,7 @@ export class LlmService {
       localMaxAttempts?: number;
     } = {},
   ): Promise<string> {
-    const provider = options.provider || LlmProvider.LOCAL;
+    const provider = options.provider || LlmProvider.MINIMAX;
     const startTime = Date.now();
     const shouldLog = this.configService.get('LOG_LLM_REQUESTS') === 'true';
 
@@ -86,6 +86,10 @@ export class LlmService {
         model = result.model;
       } else if (provider === LlmProvider.OPENAI) {
         const result = await this.callOpenAI(prompt, options);
+        response = result.response;
+        model = result.model;
+      } else if (provider === LlmProvider.MINIMAX) {
+        const result = await this.callMiniMax(prompt, options);
         response = result.response;
         model = result.model;
       } else {
@@ -267,6 +271,45 @@ export class LlmService {
         },
       },
     );
+
+    return {
+      response: response.data.choices[0].message.content,
+      model,
+    };
+  }
+
+  private async callMiniMax(
+    prompt: string,
+    options: any,
+  ): Promise<{ response: string; model: string }> {
+    const apiKey = this.configService.get('MINIMAX_API_KEY');
+    if (!apiKey) {
+      throw new Error('MINIMAX_API_KEY is not configured. Set it in your .env file.');
+    }
+    const model = options.model || 'MiniMax-M2.7';
+
+    const response = await axios.post(
+      'https://api.minimax.io/v1/text/chatcompletion_v2',
+      {
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options.temperature || 0.7,
+        max_completion_tokens: options.maxTokens || 2000,
+      },
+      {
+        timeout: options.timeoutMs || 120000,
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    if (response.data?.base_resp?.status_code !== 0) {
+      throw new Error(
+        `MiniMax API error: ${response.data.base_resp.status_msg} (code ${response.data.base_resp.status_code})`,
+      );
+    }
 
     return {
       response: response.data.choices[0].message.content,

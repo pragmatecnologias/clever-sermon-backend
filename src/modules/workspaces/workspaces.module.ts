@@ -6,6 +6,7 @@ import { WorkspacesController } from './workspaces.controller';
 import { ContentValidatorService } from './content-validator.service';
 import { SermonIntegrityService } from './sermon-integrity.service';
 import { ManuscriptRepairProcessor } from './manuscript-repair.processor';
+import { WorkspaceGenerationProcessor } from './workspace-generation.processor';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { SermonOutline } from '../../entities/sermon-outline.entity';
 import { SermonManuscript } from '../../entities/sermon-manuscript.entity';
@@ -33,11 +34,20 @@ import { EGWModule } from '../egw/egw.module';
     BullModule.registerQueue({
       name: 'manuscript-repair',
     }),
+    BullModule.registerQueue({
+      name: 'workspace-generation',
+    }),
     LlmModule,
     ScriptureModule,
     EGWModule,
   ],
-  providers: [WorkspacesService, ContentValidatorService, SermonIntegrityService, ManuscriptRepairProcessor],
+  providers: [
+    WorkspacesService,
+    ContentValidatorService,
+    SermonIntegrityService,
+    ManuscriptRepairProcessor,
+    WorkspaceGenerationProcessor,
+  ],
   controllers: [WorkspacesController],
   exports: [WorkspacesService],
 })

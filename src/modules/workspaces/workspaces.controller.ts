@@ -1,7 +1,6 @@
 import { Controller, Get, Post, Patch, Body, Param, Delete, UseGuards, Request, Query, Req } from '@nestjs/common';
 import { WorkspacesService } from './workspaces.service';
 import { ContentValidatorService } from './content-validator.service';
-import { SermonIntegrityService } from './sermon-integrity.service';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { UpdateOutlineDto } from './dto/update-outline.dto';
@@ -10,6 +9,8 @@ import { UpdateApplicationDto } from './dto/update-application.dto';
 import { UpdateIllustrationDto } from './dto/update-illustration.dto';
 import { UpdateDiscussionQuestionDto } from './dto/update-discussion-question.dto';
 import { UpdateCitationDto } from './dto/update-citation.dto';
+import { RecordClaimReviewDto } from './dto/record-claim-review.dto';
+import { RecordIntegrityIssueReviewDto } from './dto/record-integrity-issue-review.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('workspaces')
@@ -18,8 +19,11 @@ export class WorkspacesController {
   constructor(
     private readonly workspacesService: WorkspacesService,
     private readonly contentValidatorService: ContentValidatorService,
-    private readonly sermonIntegrityService: SermonIntegrityService
   ) {}
+
+  private wantsAsync(asyncMode?: string) {
+    return asyncMode === 'true' || asyncMode === '1' || asyncMode === 'yes';
+  }
 
   @Post()
   create(@Request() req, @Body() createDto: CreateWorkspaceDto) {
@@ -34,6 +38,20 @@ export class WorkspacesController {
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
     return this.workspacesService.findOne(id, req.user.userId);
+  }
+
+  @Get(':id/state')
+  getState(@Request() req, @Param('id') id: string) {
+    return this.workspacesService.getWorkspaceState(id, req.user.userId);
+  }
+
+  @Post(':id/claim-reviews')
+  recordClaimReview(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() body: RecordClaimReviewDto,
+  ) {
+    return this.workspacesService.recordClaimReview(id, req.user.userId, body);
   }
 
   @Patch(':id')
@@ -72,7 +90,15 @@ export class WorkspacesController {
   }
 
   @Post(':id/outlines')
-  generateOutlines(@Request() req, @Param('id') id: string, @Body('promptOverride') promptOverride?: string) {
+  generateOutlines(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('promptOverride') promptOverride?: string,
+    @Query('async') asyncMode?: string,
+  ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'outline', promptOverride);
+    }
     return this.workspacesService.generateOutlines(id, req.user.userId, 3, promptOverride);
   }
 
@@ -94,7 +120,15 @@ export class WorkspacesController {
   }
 
   @Post(':id/applications')
-  generateApplications(@Request() req, @Param('id') id: string, @Body('promptOverride') promptOverride?: string) {
+  generateApplications(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('promptOverride') promptOverride?: string,
+    @Query('async') asyncMode?: string,
+  ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'applications', promptOverride);
+    }
     return this.workspacesService.generateApplications(id, req.user.userId, promptOverride);
   }
 
@@ -103,17 +137,37 @@ export class WorkspacesController {
     @Request() req,
     @Param('id') id: string,
     @Body('promptOverride') promptOverride?: string,
+    @Query('async') asyncMode?: string,
   ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'discussion-questions', promptOverride);
+    }
     return this.workspacesService.generateDiscussionQuestions(id, req.user.userId, promptOverride);
   }
 
   @Post(':id/illustrations')
-  generateIllustrations(@Request() req, @Param('id') id: string, @Body('promptOverride') promptOverride?: string) {
+  generateIllustrations(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('promptOverride') promptOverride?: string,
+    @Query('async') asyncMode?: string,
+  ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'illustrations', promptOverride);
+    }
     return this.workspacesService.generateIllustrations(id, req.user.userId, promptOverride);
   }
 
   @Post(':id/citations')
-  generateCitations(@Request() req, @Param('id') id: string, @Body('promptOverride') promptOverride?: string) {
+  generateCitations(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('promptOverride') promptOverride?: string,
+    @Query('async') asyncMode?: string,
+  ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'citations', promptOverride);
+    }
     return this.workspacesService.generateCitations(id, req.user.userId, promptOverride);
   }
 
@@ -121,18 +175,36 @@ export class WorkspacesController {
   async generateStudyReport(
     @Param('id') id: string,
     @Req() req,
-    @Query('includeEGW') includeEGW?: string
+    @Body('promptOverride') promptOverride?: string,
+    @Query('includeEGW') includeEGW?: string,
+    @Query('async') asyncMode?: string,
   ) {
-    const includeEGWBool = includeEGW === 'true';
-    return this.workspacesService.generateStudyReport(id, req.user.userId);
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'study-report', promptOverride, includeEGW === 'true');
+    }
+    return this.workspacesService.generateStudyReport(id, req.user.userId, promptOverride);
   }
 
   @Post(':id/sermon-core')
   async generateSermonCore(
     @Param('id') id: string,
     @Req() req,
+    @Body('promptOverride') promptOverride?: string,
+    @Query('async') asyncMode?: string,
   ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'sermon-core', promptOverride);
+    }
     return this.workspacesService.generateSermonCore(id, req.user.userId);
+  }
+
+  @Get(':id/jobs/:jobId')
+  getGenerationJobStatus(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('jobId') jobId: string,
+  ) {
+    return this.workspacesService.getWorkspaceGenerationJobStatus(id, jobId, req.user.userId);
   }
 
   @Post(':id/media-suggestions')
@@ -140,7 +212,11 @@ export class WorkspacesController {
     @Request() req,
     @Param('id') id: string,
     @Body('promptOverride') promptOverride?: string,
+    @Query('async') asyncMode?: string,
   ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'media-suggestions', promptOverride);
+    }
     return this.workspacesService.generateMediaSuggestions(id, req.user.userId, promptOverride);
   }
 
@@ -173,24 +249,24 @@ export class WorkspacesController {
   }
 
   @Post(':id/integrity-check')
-  async checkSermonIntegrity(@Param('id') id: string, @Req() req) {
-    const workspace = await this.workspacesService.findOne(id, req.user.userId);
-    
-    const selectedOutline = workspace.outlines?.find((o: any) => o.isSelected) || workspace.outlines?.[0];
-    const outlinePoints = selectedOutline?.structure?.points || [];
-    const applications = (workspace.applications || []).map((a: any) => a.content);
-    const citations = (workspace.citations || []).map((c: any) => ({
-      statement: c.statement,
-      verseReferences: c.verseReferences || []
-    }));
+  async checkSermonIntegrity(
+    @Param('id') id: string,
+    @Req() req,
+    @Query('async') asyncMode?: string,
+  ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspacesService.queueWorkspaceGeneration(id, req.user.userId, 'integrity-check');
+    }
+    return this.workspacesService.runIntegrityCheck(id, req.user.userId);
+  }
 
-    return this.sermonIntegrityService.analyzeSermonIntegrity({
-      mainPassage: workspace.mainPassage,
-      outlinePoints,
-      applications,
-      citations,
-      language: workspace.language || 'en',
-    });
+  @Post(':id/integrity-issue-reviews')
+  recordIntegrityIssueReview(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() body: RecordIntegrityIssueReviewDto,
+  ) {
+    return this.workspacesService.recordIntegrityIssueReview(id, req.user.userId, body);
   }
 
   @Post(':id/auto-fix-content')
@@ -216,9 +292,27 @@ export class WorkspacesController {
     return this.workspacesService.updateOutline(req.user.userId, id, dto);
   }
 
+  @Post(':workspaceId/outlines/history/:historyIndex/restore')
+  restoreOutlineHistory(
+    @Request() req,
+    @Param('workspaceId') workspaceId: string,
+    @Param('historyIndex') historyIndex: string,
+  ) {
+    return this.workspacesService.restoreOutlineHistory(req.user.userId, workspaceId, Number(historyIndex));
+  }
+
   @Patch('manuscripts/:id')
   updateManuscript(@Request() req, @Param('id') id: string, @Body() dto: UpdateManuscriptDto) {
     return this.workspacesService.updateManuscript(req.user.userId, id, dto);
+  }
+
+  @Post(':workspaceId/manuscripts/history/:historyIndex/restore')
+  restoreManuscriptHistory(
+    @Request() req,
+    @Param('workspaceId') workspaceId: string,
+    @Param('historyIndex') historyIndex: string,
+  ) {
+    return this.workspacesService.restoreManuscriptHistory(req.user.userId, workspaceId, Number(historyIndex));
   }
 
   @Post(':id/manuscripts/:manuscriptId/cues/regenerate')
