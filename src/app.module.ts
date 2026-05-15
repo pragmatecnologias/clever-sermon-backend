@@ -31,7 +31,8 @@ import { ChurchSettingsModule } from './modules/church-settings/church-settings.
       useFactory: (configService: ConfigService) => {
         const baseUrl = configService.get<string>('DATABASE_URL');
         const databaseName = configService.get<string>('DATABASE_NAME');
-        const url = baseUrl && databaseName ? `${baseUrl.replace(/\/$/, '')}/${databaseName}` : baseUrl;
+        const hasPath = baseUrl && new URL(baseUrl).pathname && new URL(baseUrl).pathname !== '/';
+        const url = baseUrl && databaseName && !hasPath ? `${baseUrl.replace(/\/$/, '')}/${databaseName}` : baseUrl;
 
         return {
           type: 'postgres',
