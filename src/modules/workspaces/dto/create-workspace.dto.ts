@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsArray, IsEnum, IsBoolean } from 'class-validator';
+import { IsString, IsOptional, IsArray, IsEnum, IsBoolean, IsObject } from 'class-validator';
 import { SermonStyle, StoryArc } from '../../../entities/sermon-workspace.entity';
 
 export class CreateWorkspaceDto {
@@ -47,4 +47,8 @@ export class CreateWorkspaceDto {
   @IsOptional()
   @IsBoolean()
   egwEnabled?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
 }

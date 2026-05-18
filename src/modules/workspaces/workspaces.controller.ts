@@ -116,7 +116,11 @@ export class WorkspacesController {
     @Body('outlineId') outlineId: string,
     @Body('promptOverride') promptOverride?: string,
     @Body('manuscriptOptions') manuscriptOptions?: Record<string, any>,
+    @Query('async') asyncMode?: string,
   ) {
+    if (this.wantsAsync(asyncMode)) {
+      return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'manuscript', promptOverride);
+    }
     return this.workspacesService.generateManuscript(
       id,
       outlineId,

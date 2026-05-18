@@ -793,6 +793,18 @@ export class ScriptureService {
     return index;
   }
 
+  async getCrossReferenceSeedStats(): Promise<{ loaded: boolean; entries: number }> {
+    const index = await this.loadCrossReferences();
+    let entryCount = 0;
+    index.forEach((value) => {
+      entryCount += Array.isArray(value) ? value.length : 0;
+    });
+    return {
+      loaded: entryCount > 0,
+      entries: entryCount,
+    };
+  }
+
   private async loadWordStudyIndex(): Promise<Record<string, any>> {
     if (this.wordStudyIndex) {
       return this.wordStudyIndex;

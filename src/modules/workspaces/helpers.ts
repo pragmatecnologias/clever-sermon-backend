@@ -177,7 +177,7 @@ export class WorkspaceHelpers {
       }
     }
 
-    let plainText = WorkspaceHelpers.decodeSerializedText(source)
+    const plainText = WorkspaceHelpers.decodeSerializedText(source)
       .replace(/^\s*\{\s*"text"\s*:\s*/i, '')
       .replace(/^"\s*/, '')
       .replace(/"\s*,\s*"cues"[\s\S]*$/i, '')

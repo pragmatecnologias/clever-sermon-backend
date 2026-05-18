@@ -14,6 +14,12 @@ describe('WorkspacesService manuscript parsing', () => {
   let consoleInfoSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    const llmService = {
+      getConfiguredProvider: () => 'local',
+      getProviderHealth: () => ({ status: 'ready', message: 'Local LLM ready', checkedAt: '2026-01-01T00:00:00.000Z' }),
+      getConfiguredProviderLabel: () => 'Local LLM',
+    } as any;
+
     service = new WorkspacesService(
       null as any,
       null as any,
@@ -23,7 +29,7 @@ describe('WorkspacesService manuscript parsing', () => {
       null as any,
       null as any,
       null as any,
-      null as any,
+      llmService,
       null as any,
       null as any,
       null as any,
@@ -241,7 +247,7 @@ describe('WorkspacesService manuscript parsing', () => {
     expect((service as any).hasAdventistDrift('En este sábado adoramos al Señor.')).toBe(false);
   });
 
-  it('builds workspace state with history and compare summaries', () => {
+  it('builds workspace state with history and compare summaries', async () => {
     const workspace = {
       title: 'Hope in Christ',
       mainPassage: 'John 3:16',
@@ -328,7 +334,7 @@ describe('WorkspacesService manuscript parsing', () => {
       },
     } as any;
 
-    const state = (service as any).buildWorkspaceState(workspace);
+    const state = await (service as any).buildWorkspaceState(workspace);
 
     expect(state.activeOutline?.id).toBe('outline-current');
     expect(state.activeManuscript?.id).toBe('manuscript-current');
@@ -342,6 +348,8 @@ describe('WorkspacesService manuscript parsing', () => {
     expect(state.mediaPack?.slideCount).toBe(6);
     expect(state.exportPack?.status).toBe('ready');
     expect(state.exportPack?.artifacts.length).toBeGreaterThan(0);
+    expect(state.featureReadiness?.outline.status).toBe('generated');
+    expect(state.featureReadiness?.scripture.status).toBe('generated');
     expect(state.nextAction.label).toBeTruthy();
   });
 });

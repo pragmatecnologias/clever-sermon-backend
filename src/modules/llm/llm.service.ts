@@ -11,6 +11,10 @@ import { LlmPrompts } from './llm-prompts';
 export class LlmService {
   private static readonly LOCAL_TIMEOUT_MS = 45000;
   private static readonly LOCAL_MAX_ATTEMPTS = 3;
+  private readonly providerHealthCache = new Map<
+    LlmProvider,
+    { status: 'ready' | 'needs_service' | 'failed'; message: string; checkedAt: string }
+  >();
 
   constructor(
     private configService: ConfigService,
@@ -50,6 +54,77 @@ export class LlmService {
     } else {
       console.warn('[LLM][error]', payload);
     }
+  }
+
+  private inferProviderFailure(error: any): string | null {
+    const status = error?.response?.status;
+    const code = error?.response?.data?.base_resp?.status_code ?? error?.response?.data?.error?.code ?? error?.code;
+    const message = String(error?.message || error?.response?.data?.base_resp?.status_msg || '').toLowerCase();
+    if (
+      status === 401 ||
+      status === 403 ||
+      code === 2049 ||
+      message.includes('invalid api key') ||
+      message.includes('unauthorized') ||
+      message.includes('authentication') ||
+      message.includes('api key is not configured')
+    ) {
+      return String(error?.message || 'Provider authentication failed');
+    }
+    return null;
+  }
+
+  private setProviderHealth(
+    provider: LlmProvider,
+    status: 'ready' | 'needs_service' | 'failed',
+    message: string,
+  ) {
+    this.providerHealthCache.set(provider, {
+      status,
+      message,
+      checkedAt: new Date().toISOString(),
+    });
+  }
+
+  getProviderHealth(provider: LlmProvider): { status: 'ready' | 'needs_service' | 'failed'; message: string; checkedAt?: string } {
+    const cached = this.providerHealthCache.get(provider);
+    if (cached) {
+      return cached;
+    }
+
+    if (provider === LlmProvider.LOCAL) {
+      const configured = Boolean(this.configService.get('LM_STUDIO_URL'));
+      return configured
+        ? { status: 'ready', message: 'Local LLM is configured for generation.' }
+        : { status: 'needs_service', message: 'Configure LM_STUDIO_URL to enable local generation.' };
+    }
+
+    if (provider === LlmProvider.OPENAI) {
+      const configured = Boolean(this.configService.get('OPENAI_API_KEY'));
+      return configured
+        ? { status: 'ready', message: 'OpenAI is configured for generation.' }
+        : { status: 'needs_service', message: 'Configure OPENAI_API_KEY to enable generation.' };
+    }
+
+    const configured = Boolean(this.configService.get('MINIMAX_API_KEY'));
+    return configured
+      ? { status: 'ready', message: 'MiniMax is configured for generation.' }
+      : { status: 'needs_service', message: 'Configure MINIMAX_API_KEY to enable generation.' };
+  }
+
+  getConfiguredProvider(): LlmProvider | null {
+    if (this.configService.get('LM_STUDIO_URL')) return LlmProvider.LOCAL;
+    if (this.configService.get('OPENAI_API_KEY')) return LlmProvider.OPENAI;
+    if (this.configService.get('MINIMAX_API_KEY')) return LlmProvider.MINIMAX;
+    return null;
+  }
+
+  getConfiguredProviderLabel(): string {
+    const provider = this.getConfiguredProvider();
+    if (provider === LlmProvider.LOCAL) return 'Local LLM';
+    if (provider === LlmProvider.OPENAI) return 'OpenAI';
+    if (provider === LlmProvider.MINIMAX) return 'MiniMax';
+    return 'No LLM provider';
   }
 
   async generateCompletion(
@@ -118,9 +193,12 @@ export class LlmService {
         });
       }
 
+      this.setProviderHealth(provider, 'ready', `${provider} responded successfully.`);
+
       return response;
     } catch (error) {
       const latencyMs = Date.now() - startTime;
+      const providerFailure = this.inferProviderFailure(error);
 
       if (shouldLog) {
         this.logLlmPayload('error', {
@@ -141,6 +219,10 @@ export class LlmService {
           wasSuccessful: false,
           error: error.message,
         });
+      }
+
+      if (providerFailure) {
+        this.setProviderHealth(provider, 'failed', providerFailure);
       }
 
       throw error;

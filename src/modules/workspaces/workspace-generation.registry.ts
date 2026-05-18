@@ -1,7 +1,10 @@
+import { WorkspaceHelpers } from './helpers';
+
 export type WorkspaceGenerationCapability =
   | 'study-report'
   | 'outline-points'
   | 'outline'
+  | 'manuscript'
   | 'sermon-core'
   | 'integrity-check'
   | 'applications'
@@ -74,10 +77,27 @@ export const WorkspaceGenerationRegistry: Record<WorkspaceGenerationCapability, 
       if (!isRecord(parsed)) return { ok: false, issues: ['outline is not an object'] };
       const issues: string[] = [];
       if (typeof parsed.introduction !== 'string') issues.push('introduction missing');
-      const points = Array.isArray(parsed.points) ? parsed.points : [];
-      if (!ensureStringArray(points) || points.length < 3) issues.push('points invalid');
-      if (!Array.isArray(parsed.pointNodes)) issues.push('pointNodes invalid');
+      const points = Array.isArray(parsed.points) ? WorkspaceHelpers.asStringArray(parsed.points, 24) : [];
+      const pointNodes = Array.isArray(parsed.pointNodes) ? parsed.pointNodes : [];
+      const inferredPoints = points.length
+        ? points
+        : pointNodes.map((node: any) => WorkspaceHelpers.pointText(node)).filter(Boolean);
+      if (!ensureStringArray(inferredPoints) || inferredPoints.length < 3) issues.push('points invalid');
+      if (!Array.isArray(pointNodes)) issues.push('pointNodes invalid');
       if (typeof parsed.conclusion !== 'string') issues.push('conclusion missing');
+      return { ok: issues.length === 0, issues };
+    },
+  },
+  manuscript: {
+    capability: 'manuscript',
+    description: 'Generated sermon manuscript',
+    validate: (parsed) => {
+      if (!isRecord(parsed)) return { ok: false, issues: ['manuscript is not an object'] };
+      const issues: string[] = [];
+      const content = isRecord(parsed.content) ? parsed.content : null;
+      if (!content) issues.push('content missing');
+      const text = typeof content?.text === 'string' ? content.text.trim() : '';
+      if (!text) issues.push('content.text missing');
       return { ok: issues.length === 0, issues };
     },
   },

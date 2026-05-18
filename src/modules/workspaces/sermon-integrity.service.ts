@@ -50,6 +50,17 @@ export class SermonIntegrityService {
     private citationValidator: CitationValidatorService
   ) {}
 
+  private isPropheticPassage(reference: string): boolean {
+    const normalized = String(reference || '').toLowerCase();
+    return (
+      /revelation\s*14(?::\s*6\s*-\s*12)?/.test(normalized) ||
+      /revelation\s*(?:12\s*-\s*14|18)/.test(normalized) ||
+      /daniel\s*(?:7|8)/.test(normalized) ||
+      /matthew\s*24/.test(normalized) ||
+      /exodus\s*20/.test(normalized)
+    );
+  }
+
   async analyzeSermonIntegrity(sermonData: {
     mainPassage: string;
     outlinePoints: string[];
@@ -87,8 +98,8 @@ export class SermonIntegrityService {
           severity: 'critical',
           category: 'textual_support',
           message: isSpanish
-            ? `El punto del bosquejo no muestra apoyo textual claro: "${p.point.substring(0, 50)}..."`
-            : `Outline point lacks clear textual support: "${p.point.substring(0, 50)}..."`,
+            ? `Este punto necesita apoyo textual más claro antes de predicarlo: "${p.point.substring(0, 50)}..."`
+            : `This point needs clearer textual support before it is preached: "${p.point.substring(0, 50)}..."`,
           affectedItem: p.point
         });
       } else if (p.supportScore < 0.5) {
@@ -96,8 +107,8 @@ export class SermonIntegrityService {
           severity: 'warning',
           category: 'textual_support',
           message: isSpanish
-            ? `Apoyo textual débil para el punto: "${p.point.substring(0, 50)}..."`
-            : `Weak textual support for point: "${p.point.substring(0, 50)}..."`,
+            ? `Este punto necesita una conexión más visible con el pasaje: "${p.point.substring(0, 50)}..."`
+            : `This point needs a more visible connection to the passage: "${p.point.substring(0, 50)}..."`,
           affectedItem: p.point
         });
       }
@@ -109,8 +120,8 @@ export class SermonIntegrityService {
           severity: 'warning',
           category: 'application',
           message: isSpanish
-            ? `La aplicación podría no estar claramente conectada al pasaje: "${a.application.substring(0, 50)}..."`
-            : `Application may not be clearly tied to passage: "${a.application.substring(0, 50)}..."`,
+            ? `Esta aplicación necesita un puente más claro hacia el pasaje: "${a.application.substring(0, 50)}..."`
+            : `This application needs a clearer bridge back to the passage: "${a.application.substring(0, 50)}..."`,
           affectedItem: a.application
         });
       }
@@ -122,8 +133,8 @@ export class SermonIntegrityService {
           severity: 'critical',
           category: 'citation',
           message: isSpanish
-            ? `La cita no está respaldada por el texto bíblico: ${c.verseReference}`
-            : `Citation not supported by verse text: ${c.verseReference}`,
+            ? `La cita no está respaldada por el texto bíblico y conviene revisarla antes de predicar: ${c.verseReference}`
+            : `This citation is not yet supported by the verse text and should be reviewed before preaching: ${c.verseReference}`,
           affectedItem: c.statement
         });
       } else if (c.supportLevel === 'weak') {
@@ -131,8 +142,8 @@ export class SermonIntegrityService {
           severity: 'warning',
           category: 'citation',
           message: isSpanish
-            ? `Respaldo débil de la cita: ${c.verseReference}`
-            : `Weak citation support: ${c.verseReference}`,
+            ? `Esta cita tiene respaldo débil y necesita revisión pastoral: ${c.verseReference}`
+            : `This citation has weak support and needs pastoral review: ${c.verseReference}`,
           affectedItem: c.statement
         });
       }
@@ -186,15 +197,22 @@ export class SermonIntegrityService {
     if (issues.some(i => i.category === 'application')) {
       recommendations.push(
         isSpanish
-          ? 'Fortalece la conexión entre las aplicaciones y el pasaje principal'
-          : 'Strengthen the connection between applications and the main passage',
+          ? 'Fortalece la conexión entre las aplicaciones y el pasaje principal para que el llamado pastoral nazca del texto.'
+          : 'Strengthen the connection between applications and the main passage so the pastoral call rises from the text.',
+      );
+    }
+
+    if (this.isPropheticPassage(sermonData.mainPassage)) {
+      recommendations.push(
+        isSpanish
+          ? 'En pasajes proféticos, mantén a Cristo en el centro, confirma el trasfondo histórico y evita especulación o sensacionalismo.'
+          : 'For prophetic passages, keep Christ at the center, verify the historical setting, and avoid speculation or sensationalism.',
       );
     }
 
     // Calculate overall score
     const criticalIssues = issues.filter(i => i.severity === 'critical').length;
     const warningIssues = issues.filter(i => i.severity === 'warning').length;
-    const totalItems = pointAnalysis.length + applicationAnalysis.length + citationAnalysis.length;
     
     let overallScore = 100;
     overallScore -= criticalIssues * 15;

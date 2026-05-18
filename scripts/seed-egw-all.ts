@@ -9,24 +9,14 @@ import { config } from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
 
-config({ path: path.join(__dirname, '../.env') });
+config({ path: path.join(__dirname, '../.env'), override: true });
 
 const databaseUrl = process.env.DATABASE_URL || 'postgresql://admin:secret123@localhost:5432/';
 const databaseName = process.env.DATABASE_NAME || 'clever_sermon';
 
-const urlMatch = databaseUrl.match(/postgresql?:\/\/([^:]+):([^@]+)@([^:\/]+):(\d+)/);
-if (!urlMatch) {
-  throw new Error('Invalid DATABASE_URL format');
-}
-
-const [, username, password, host, port] = urlMatch;
-
 const dataSource = new DataSource({
   type: 'postgres',
-  host,
-  port: parseInt(port),
-  username,
-  password,
+  url: databaseUrl,
   database: databaseName,
   synchronize: false,
   logging: false,

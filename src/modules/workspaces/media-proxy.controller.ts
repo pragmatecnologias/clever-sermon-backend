@@ -23,6 +23,31 @@ export class MediaProxyController {
     return this.workspaceMediaPackService.getDecks(this.extractToken(authorization));
   }
 
+  @Get('images/list/:workspaceId')
+  getImages(@Param('workspaceId') workspaceId: string, @Headers('authorization') authorization?: string) {
+    return this.workspaceMediaPackService.listImages(this.extractToken(authorization), workspaceId);
+  }
+
+  @Get('audio/list/:workspaceId')
+  getAudio(@Param('workspaceId') workspaceId: string, @Headers('authorization') authorization?: string) {
+    return this.workspaceMediaPackService.listAudio(this.extractToken(authorization), workspaceId);
+  }
+
+  @Get('music/list/:workspaceId')
+  getMusic(@Param('workspaceId') workspaceId: string, @Headers('authorization') authorization?: string) {
+    return this.workspaceMediaPackService.listMusic(this.extractToken(authorization), workspaceId);
+  }
+
+  @Get('video/list/:workspaceId')
+  getVideo(@Param('workspaceId') workspaceId: string, @Headers('authorization') authorization?: string) {
+    return this.workspaceMediaPackService.listVideo(this.extractToken(authorization), workspaceId);
+  }
+
+  @Get('social/list/:workspaceId')
+  getSocial(@Param('workspaceId') workspaceId: string, @Headers('authorization') authorization?: string) {
+    return this.workspaceMediaPackService.listSocial(this.extractToken(authorization), workspaceId);
+  }
+
   @Get('church-settings')
   getChurchSettings(@Headers('authorization') authorization?: string) {
     return this.workspaceMediaPackService.getChurchSettings(this.extractToken(authorization));

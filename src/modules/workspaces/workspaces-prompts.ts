@@ -1,6 +1,8 @@
 export const WorkspacesPrompts = {
   sermonCore(input: {
     doctrinalContext: string;
+    guardrailBlock?: string;
+    planningBlock?: string;
     mainPassage: string;
     theme: string;
     sermonGoals: string;
@@ -12,6 +14,8 @@ export const WorkspacesPrompts = {
     languageLabel: string;
   }): string {
     return `${input.doctrinalContext}
+
+${input.guardrailBlock ? `=== PASTORAL GUARDRAILS ===\n${input.guardrailBlock}\n` : ''}${input.planningBlock ? `=== SERMON PLANNING CONTEXT ===\n${input.planningBlock}\n` : ''}
 
 You are extracting the SERMON CORE - the DNA of the sermon message.
 

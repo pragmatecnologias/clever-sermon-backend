@@ -20,16 +20,24 @@ type MediaPackManifest = {
   sourceOutlineId: string | null;
   sourceManuscriptId: string | null;
   sourceStudyReportId: string | null;
+  deckIntent?: string;
+  deckModeLabel?: string;
+  activeSermonDeckId?: string | null;
+  activeSocialDeckId?: string | null;
+  latestDeckByIntent?: Record<string, string | null>;
+  archivedDeckIds?: string[];
   slideCount?: number;
   deckId?: string | null;
   sermonId?: string | null;
   exportPrepared: boolean;
+  warnings?: string[];
   artifacts: SlideExportArtifact[];
 };
 
 @Injectable()
 export class WorkspaceMediaPackService {
   private readonly slidesClient: AxiosInstance;
+  private cachedSlidesServiceToken: string | null = null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -53,14 +61,66 @@ export class WorkspaceMediaPackService {
     return raw.toLowerCase().startsWith('bearer ') ? raw.slice(7).trim() : raw;
   }
 
-  private async requestSlides<T>(path: string, token: string | null, body?: unknown) {
-    const response = await this.slidesClient.request<T>({
-      url: path,
-      method: body === undefined ? 'get' : 'post',
-      data: body,
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    });
-    return response.data;
+  private async getSlidesServiceToken() {
+    if (this.cachedSlidesServiceToken) {
+      return this.cachedSlidesServiceToken;
+    }
+
+    const email = this.configService.get<string>('SLIDES_SERVICE_EMAIL') || 'media-proxy@clever-sermon.local';
+    const password = this.configService.get<string>('SLIDES_SERVICE_PASSWORD') || 'media-proxy-password';
+    const churchName = this.configService.get<string>('SLIDES_SERVICE_CHURCH_NAME') || 'Clever Sermon Media';
+
+    try {
+      const loginResponse = await this.slidesClient.post<{ access_token: string }>('/auth/login', {
+        email,
+        password,
+      });
+      this.cachedSlidesServiceToken = loginResponse.data?.access_token || null;
+      return this.cachedSlidesServiceToken;
+    } catch (error) {
+      const status = (error as any)?.response?.status;
+      if (status !== 401 && status !== 404) {
+        throw error;
+      }
+
+      await this.slidesClient.post('/auth/register', {
+        email,
+        password,
+        churchName,
+      });
+
+      const loginResponse = await this.slidesClient.post<{ access_token: string }>('/auth/login', {
+        email,
+        password,
+      });
+      this.cachedSlidesServiceToken = loginResponse.data?.access_token || null;
+      return this.cachedSlidesServiceToken;
+    }
+  }
+
+  private async requestSlides<T>(path: string, token: string | null, body?: unknown, serviceToken?: string | null) {
+    const request = async (authToken: string | null) => {
+      const response = await this.slidesClient.request<T>({
+        url: path,
+        method: body === undefined ? 'get' : 'post',
+        data: body,
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+      });
+      return response.data;
+    };
+
+    try {
+      return await request(token);
+    } catch (error) {
+      const status = (error as any)?.response?.status;
+      if (status === 401) {
+        const fallbackToken = serviceToken || (await this.getSlidesServiceToken());
+        if (fallbackToken && token !== fallbackToken) {
+          return request(fallbackToken);
+        }
+      }
+      throw error;
+    }
   }
 
   async getThemes(token: string | null) {
@@ -101,8 +161,16 @@ export class WorkspaceMediaPackService {
     return this.requestSlides<Record<string, unknown>>('/images/generate', token, body);
   }
 
+  async listImages(token: string | null, workspaceId: string) {
+    return this.requestSlides<Record<string, unknown>[]>(`/images/list/${workspaceId}`, token);
+  }
+
   async generateAudio(token: string | null, body: unknown) {
     return this.requestSlides<Record<string, unknown>>('/audio/generate', token, body);
+  }
+
+  async listAudio(token: string | null, workspaceId: string) {
+    return this.requestSlides<Record<string, unknown>[]>(`/audio/list/${workspaceId}`, token);
   }
 
   async generateNarrationScript(token: string | null, body: unknown) {
@@ -122,12 +190,24 @@ export class WorkspaceMediaPackService {
     return this.requestSlides<Record<string, unknown>>('/music/generate', token, body);
   }
 
+  async listMusic(token: string | null, workspaceId: string) {
+    return this.requestSlides<Record<string, unknown>[]>(`/music/list/${workspaceId}`, token);
+  }
+
   async generateVideo(token: string | null, body: unknown) {
     return this.requestSlides<Record<string, unknown>>('/video/generate', token, body);
   }
 
+  async listVideo(token: string | null, workspaceId: string) {
+    return this.requestSlides<Record<string, unknown>[]>(`/video/list/${workspaceId}`, token);
+  }
+
   async generateSocialKit(token: string | null, body: unknown) {
     return this.requestSlides<Record<string, unknown>>('/social/generate', token, body);
+  }
+
+  async listSocial(token: string | null, workspaceId: string) {
+    return this.requestSlides<Record<string, unknown>[]>(`/social/list/${workspaceId}`, token);
   }
 
   async previewSermonSong(token: string | null, body: unknown) {
@@ -185,6 +265,51 @@ export class WorkspaceMediaPackService {
     return workspace.studyReports?.[0] || null;
   }
 
+  private normalizeSlidesTone(value: unknown): 'hopeful' | 'urgent' | 'reflective' | 'challenging' | 'encouraging' {
+    const text = String(value || '').toLowerCase();
+    if (text.includes('urgent') || text.includes('warning') || text.includes('appeal') || text.includes('decision')) {
+      return 'urgent';
+    }
+    if (text.includes('reflect')) {
+      return 'reflective';
+    }
+    if (text.includes('challenge') || text.includes('confront')) {
+      return 'challenging';
+    }
+    if (text.includes('hope') || text.includes('comfort')) {
+      return 'hopeful';
+    }
+    return 'encouraging';
+  }
+
+  private normalizeDeckIntent(value: unknown): 'sermon_presentation' | 'social_summary' | 'teaching_study' | 'youth_message' | 'evangelistic_appeal' {
+    const text = String(value || '').toLowerCase().trim();
+    if (
+      text === 'social_summary' ||
+      text === 'teaching_study' ||
+      text === 'youth_message' ||
+      text === 'evangelistic_appeal'
+    ) {
+      return text;
+    }
+    return 'sermon_presentation';
+  }
+
+  private deckModeLabel(intent: string) {
+    switch (intent) {
+      case 'social_summary':
+        return 'Social Promo / Summary Deck';
+      case 'teaching_study':
+        return 'Teaching Study Deck';
+      case 'youth_message':
+        return 'Youth Message Deck';
+      case 'evangelistic_appeal':
+        return 'Evangelistic Appeal Deck';
+      default:
+        return 'Sermon Presentation Deck';
+    }
+  }
+
   private buildSyncPayload(workspace: SermonWorkspace) {
     const selectedOutline = this.getSelectedOutline(workspace);
     const selectedManuscript = this.getSelectedManuscript(workspace);
@@ -214,7 +339,7 @@ export class WorkspaceMediaPackService {
       bigIdea: workspace.theme || workspace.sermonGoals || workspace.sermonCore?.bigIdea || workspace.title,
       mainPoints,
       audienceContext: workspace.audienceProfile || undefined,
-      tone: workspace.sermonCore?.sermonGoal || undefined,
+      tone: this.normalizeSlidesTone(workspace.sermonCore?.sermonGoal || workspace.theme || workspace.sermonGoals || workspace.title),
       notes,
       outline: selectedOutline || undefined,
       manuscript: selectedManuscript || undefined,
@@ -228,6 +353,10 @@ export class WorkspaceMediaPackService {
       ...(workspace.metadata || {}),
       mediaPack: manifest,
       exportPack: manifest,
+      activeSermonDeckId: manifest.activeSermonDeckId || null,
+      activeSocialDeckId: manifest.activeSocialDeckId || null,
+      latestDeckByIntent: manifest.latestDeckByIntent || {},
+      archivedDeckIds: manifest.archivedDeckIds || [],
       deliverables: {
         ...((workspace.metadata as Record<string, any>)?.deliverables || {}),
         mediaPack: manifest,
@@ -250,6 +379,7 @@ export class WorkspaceMediaPackService {
 
     const token = this.extractToken(authorization);
     const syncPayload = this.buildSyncPayload(workspace);
+    const deckIntent = this.normalizeDeckIntent(dto.deckIntent);
     const sermon = await this.requestSlides<Record<string, unknown>>('/sermons/from-workspace', token, syncPayload);
 
     const deckResult = dto.includeDeck === false
@@ -257,26 +387,57 @@ export class WorkspaceMediaPackService {
       : await this.requestSlides<Record<string, unknown>>(`/sermons/${String((sermon as any).id || (sermon as any).sermonId)}/decks`, token, {
           themeId: dto.themeId,
           deckSize: dto.deckSize || 'long',
+          deckIntent,
           backgroundProvider: dto.backgroundProvider || 'local',
           backgroundPreset: dto.backgroundPreset,
         });
 
     const deckId = String((deckResult as any)?.id || (deckResult as any)?.deckId || '');
+    const metadata = (workspace.metadata || {}) as Record<string, any>;
+    const latestDeckByIntent = {
+      ...(metadata.latestDeckByIntent || {}),
+      [deckIntent]: deckId || null,
+    };
+    const activeSermonDeckId =
+      deckIntent === 'sermon_presentation'
+        ? deckId || metadata.activeSermonDeckId || null
+        : metadata.activeSermonDeckId || latestDeckByIntent.sermon_presentation || null;
+    const activeSocialDeckId =
+      deckIntent === 'social_summary'
+        ? deckId || metadata.activeSocialDeckId || null
+        : metadata.activeSocialDeckId || latestDeckByIntent.social_summary || null;
     const exportArtifacts: SlideExportArtifact[] = [];
     for (const type of dto.exportTypes || []) {
-      const exportEntity = await this.requestSlides<Record<string, unknown>>(`/decks/${deckId}/exports`, token, { type });
-      exportArtifacts.push({
-        type,
-        label: type === 'pptx' ? 'Slide deck' : 'Slide deck PDF',
-        status: String((exportEntity as any)?.status || 'ready'),
-        fileUrl: (exportEntity as any)?.fileUrl || null,
-      });
+      try {
+        const exportEntity = await this.requestSlides<Record<string, unknown>>(`/decks/${deckId}/exports`, token, { type });
+        exportArtifacts.push({
+          type,
+          label: type === 'pptx' ? 'Slide deck' : 'Slide deck PDF',
+          status: String((exportEntity as any)?.status || 'ready'),
+          fileUrl: (exportEntity as any)?.fileUrl || null,
+        });
+      } catch (error) {
+        const message = String((error as any)?.response?.data?.message || (error as Error)?.message || 'Export unavailable');
+        exportArtifacts.push({
+          type,
+          label: type === 'pptx' ? 'Slide deck' : 'Slide deck PDF',
+          status: message.toLowerCase().includes('unsupported export type') ? 'unavailable' : 'failed',
+          fileUrl: null,
+        });
+      }
     }
 
     const selectedOutline = this.getSelectedOutline(workspace);
     const selectedManuscript = this.getSelectedManuscript(workspace);
     const selectedStudyReport = this.getSelectedStudyReport(workspace);
     const slideCount = Array.isArray((deckResult as any)?.slides) ? (deckResult as any).slides.length : undefined;
+    const warnings: string[] = [];
+    if (deckIntent === 'sermon_presentation' && typeof slideCount === 'number' && slideCount > 0 && slideCount < 8) {
+      warnings.push('Deck is shorter than a typical sermon presentation. Add outline points or mark this as a social_summary deck.');
+    }
+    if (deckIntent === 'social_summary' && typeof slideCount === 'number' && slideCount > 5) {
+      warnings.push('Social summary decks should stay short. Trim to 3-5 slides.');
+    }
 
     const manifest: MediaPackManifest = {
       status: exportArtifacts.length ? 'ready' : 'draft',
@@ -284,10 +445,17 @@ export class WorkspaceMediaPackService {
       sourceOutlineId: selectedOutline?.id || null,
       sourceManuscriptId: selectedManuscript?.id || null,
       sourceStudyReportId: selectedStudyReport?.id || null,
+      deckIntent,
+      deckModeLabel: this.deckModeLabel(deckIntent),
+      activeSermonDeckId,
+      activeSocialDeckId,
+      latestDeckByIntent,
+      archivedDeckIds: Array.isArray(metadata.archivedDeckIds) ? metadata.archivedDeckIds.filter(Boolean).map(String) : [],
       slideCount,
       deckId: deckId || null,
       sermonId: String((sermon as any)?.id || (sermon as any)?.sermonId || ''),
       exportPrepared: exportArtifacts.length > 0,
+      warnings,
       artifacts: exportArtifacts,
     };
 

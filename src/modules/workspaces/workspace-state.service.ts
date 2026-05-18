@@ -4,6 +4,7 @@ import {
   WorkspaceClaimReview,
   WorkspaceClaimSummary,
   WorkspaceExportSummary,
+  WorkspaceFeatureReadinessMap,
   WorkspaceIntegrityIssueReview,
   WorkspaceIntegrityIssueSummary,
   WorkspaceIntegritySummary,
@@ -28,6 +29,7 @@ export type WorkspaceStateParts = {
   activePhase: WorkspacePhase;
   activeSection: WorkspaceSection;
   progress: WorkspaceProgress;
+  featureReadiness: WorkspaceFeatureReadinessMap;
   artifacts: WorkspaceArtifactCounts;
   activeOutline: WorkspaceOutlineSummary | null;
   activeManuscript: WorkspaceManuscriptSummary | null;

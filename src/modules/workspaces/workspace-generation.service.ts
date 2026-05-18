@@ -212,6 +212,25 @@ export class WorkspaceGenerationService {
       await setStage('completed', 'Outline generation completed.');
       return result;
     }
+    if (payload.capability === 'manuscript') {
+      await setStage('manuscript', 'Generating manuscript.');
+      const workspace = await this.workspacesService.findOne(payload.workspaceId, payload.userId);
+      const selectedOutline =
+        (workspace.outlines || []).find((outline) => outline?.isSelected) ||
+        (workspace.outlines || [])[0];
+      if (!selectedOutline?.id) {
+        throw new BadRequestException('No selected outline found for manuscript generation.');
+      }
+      const result = await this.workspacesService.generateManuscript(
+        payload.workspaceId,
+        selectedOutline.id,
+        payload.userId,
+        payload.promptOverride,
+      );
+      this.validateGenerationResult('manuscript', result);
+      await setStage('completed', 'Manuscript generation completed.');
+      return result;
+    }
     if (payload.capability === 'sermon-core') {
       await setStage('sermon-core', 'Generating sermon core.');
       const result = await this.workspacesService.generateSermonCore(payload.workspaceId, payload.userId);

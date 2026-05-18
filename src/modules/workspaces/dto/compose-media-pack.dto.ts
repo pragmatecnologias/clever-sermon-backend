@@ -7,6 +7,10 @@ export class ComposeMediaPackDto {
 
   @IsOptional()
   @IsString()
+  deckIntent?: 'sermon_presentation' | 'social_summary' | 'teaching_study' | 'youth_message' | 'evangelistic_appeal';
+
+  @IsOptional()
+  @IsString()
   backgroundProvider?: 'local' | 'openai';
 
   @IsOptional()

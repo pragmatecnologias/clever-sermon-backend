@@ -85,7 +85,7 @@ export class CrossReferenceRankingService {
       }
     }
 
-    const llmRefined = await this.refineWithLlm(verse, sourceText, rankedRefs);
+    const llmRefined = await this.refineWithLlmWithTimeout(verse, sourceText, rankedRefs);
     return llmRefined.sort((a, b) => b.relevanceScore - a.relevanceScore);
   }
 
@@ -480,6 +480,29 @@ export class CrossReferenceRankingService {
           themes: Array.isArray(refined.themes) ? refined.themes.map((t: any) => String(t)) : item.themes,
         };
       });
+    } catch {
+      return refs;
+    }
+  }
+
+  private async refineWithLlmWithTimeout(
+    sourceVerse: string,
+    sourceText: string,
+    refs: RankedCrossReference[],
+  ): Promise<RankedCrossReference[]> {
+    if (!refs.length) return refs;
+    if (refs.length > 18) return refs;
+
+    const timeoutMs = 6000;
+    const timeout = new Promise<RankedCrossReference[]>((resolve) => {
+      setTimeout(() => resolve(refs), timeoutMs);
+    });
+
+    try {
+      return await Promise.race([
+        this.refineWithLlm(sourceVerse, sourceText, refs),
+        timeout,
+      ]);
     } catch {
       return refs;
     }

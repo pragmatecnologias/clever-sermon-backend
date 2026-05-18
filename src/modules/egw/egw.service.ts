@@ -34,6 +34,19 @@ export class EGWService {
     private scriptureRefRepository: Repository<EGWScriptureReference>
   ) {}
 
+  async getLibraryStats(): Promise<{
+    books: number;
+    paragraphs: number;
+    scriptureReferences: number;
+  }> {
+    const [books, paragraphs, scriptureReferences] = await Promise.all([
+      this.bookRepository.count(),
+      this.paragraphRepository.count(),
+      this.scriptureRefRepository.count(),
+    ]);
+    return { books, paragraphs, scriptureReferences };
+  }
+
   async getAllBooks(language?: string): Promise<EGWBook[]> {
     const where = language ? { language } : {};
     return this.bookRepository.find({
