@@ -4978,7 +4978,7 @@ Rules:
     return {
       ...sourceMetadata,
       planning: normalizedPlanning,
-      guardrailMode: guardrail.active ? guardrail.label : sourceMetadata.guardrailMode,
+      guardrailMode: guardrail.active ? guardrail.mode || sourceMetadata.guardrailMode : sourceMetadata.guardrailMode,
       guardrail,
       guardrailDetected: guardrail.active,
     };
