@@ -62,6 +62,15 @@ import { EGWModule } from '../egw/egw.module';
     StudySynthesisService,
   ],
   controllers: [ScriptureController],
-  exports: [ScriptureService, CitationValidatorService, SDADoctrinalGuardrailsService],
+  exports: [
+    ScriptureService,
+    CitationValidatorService,
+    SDADoctrinalGuardrailsService,
+    PassageSummaryService,
+    StudySynthesisService,
+    StructuralAnalysisDataService,
+    InterpretiveChallengesDataService,
+    TranslationComparisonEnhancedService,
+  ],
 })
 export class ScriptureModule {}

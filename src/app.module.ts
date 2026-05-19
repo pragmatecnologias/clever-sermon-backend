@@ -34,17 +34,18 @@ import { ChurchSettingsModule } from './modules/church-settings/church-settings.
         const hasPath = baseUrl && new URL(baseUrl).pathname && new URL(baseUrl).pathname !== '/';
         const url = baseUrl && databaseName && !hasPath ? `${baseUrl.replace(/\/$/, '')}/${databaseName}` : baseUrl;
 
+        // When using url, TypeORM parses credentials from it - don't duplicate
+        const useUrl = configService.get('DATABASE_URL') ? true : false;
+
         return {
           type: 'postgres',
-          url,
-        host: configService.get('DATABASE_URL') ? undefined : configService.get('DATABASE_HOST'),
-        port: configService.get('DATABASE_URL')
-          ? undefined
-          : parseInt(configService.get('DATABASE_PORT') || '5432', 10),
-        username: configService.get('DATABASE_URL') ? undefined : configService.get('DATABASE_USER'),
-        password: configService.get('DATABASE_URL') ? undefined : configService.get('DATABASE_PASSWORD'),
-        database: configService.get('DATABASE_URL') ? undefined : configService.get('DATABASE_NAME'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+          url: useUrl ? url : undefined,
+          host: useUrl ? undefined : (configService.get('DATABASE_HOST') || 'localhost'),
+          port: useUrl ? undefined : parseInt(configService.get('DATABASE_PORT') || '5432', 10),
+          username: useUrl ? undefined : (configService.get('DATABASE_USER') || 'admin'),
+          password: useUrl ? undefined : configService.get('DATABASE_PASSWORD'),
+          database: useUrl ? undefined : databaseName,
+          entities: [__dirname + '/**/*.entity{.ts,.js}'],
           synchronize: configService.get('TYPEORM_SYNC') === 'true',
         };
       },

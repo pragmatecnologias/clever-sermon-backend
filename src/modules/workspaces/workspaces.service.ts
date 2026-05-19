@@ -2290,15 +2290,25 @@ Rules:
   private getWorkspaceProgress(workspace: SermonWorkspace): WorkspaceProgress {
     const scriptureCache = workspace?.scriptureCache || {};
     const metadata = (workspace?.metadata || {}) as Record<string, any>;
+    const planning = this.normalizeWorkspacePlanning(metadata);
     const latestStudyReport = Array.isArray(workspace?.studyReports) ? workspace.studyReports[0] : null;
-    const latestOutline = Array.isArray(workspace?.outlines) ? workspace.outlines[0] : null;
+    const selectedOutline = Array.isArray(workspace?.outlines)
+      ? workspace.outlines.find((outline: any) => outline?.isSelected) || workspace.outlines[0] || null
+      : null;
     const latestManuscript = Array.isArray(workspace?.manuscripts) ? workspace.manuscripts[0] : null;
 
     return {
-      themeConfigured: Boolean(workspace?.theme || workspace?.sermonGoals || workspace?.audienceProfile),
+      themeConfigured: Boolean(
+        workspace?.title &&
+        workspace?.mainPassage &&
+        workspace?.language &&
+        workspace?.style &&
+        workspace?.storyArc &&
+        (workspace?.theme || workspace?.sermonGoals || workspace?.audienceProfile || planning.serviceType || planning.ministryMode || planning.appealStyle),
+      ),
       passageExplored: Boolean(scriptureCache?.scriptureResult || scriptureCache?.passageSummary || scriptureCache?.translationComparison),
       studyGenerated: Boolean(latestStudyReport),
-      outlineCreated: Boolean(latestOutline),
+      outlineCreated: Boolean(selectedOutline),
       manuscriptWritten: Boolean(latestManuscript),
       refineCompleted: Boolean(metadata?.socraticCoachLastSession || metadata?.dnaIntegrity || metadata?.integrityReport),
       deliverPrepared: Boolean(metadata?.mediaPack || metadata?.deliverables?.mediaPack || metadata?.deliverables?.export),
@@ -2401,10 +2411,17 @@ Rules:
     const claimReviewDecisions = this.getWorkspaceClaimReviews(workspace);
     const nextAction = this.getWorkspaceNextAction(workspace);
     const featureReadiness = await this.getWorkspaceFeatureReadiness(workspace);
+    const workspaceSnapshot = {
+      ...workspace,
+      planning: this.normalizeWorkspacePlanning(workspace.metadata as Record<string, any>),
+      guardrail: this.buildGuardrailProfile(workspace),
+      guardrailMode: (workspace.metadata as Record<string, any>)?.guardrailMode,
+      guardrailDetected: Boolean((workspace.metadata as Record<string, any>)?.guardrailDetected),
+    };
 
     const stateBuilder = this.workspaceStateService || new WorkspaceStateService()
     return stateBuilder.buildWorkspaceState({
-      workspace,
+      workspace: workspaceSnapshot,
       activePhase: uiState.phase,
       activeSection: uiState.section,
       progress,

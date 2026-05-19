@@ -132,6 +132,45 @@ export class MediaProxyController {
     return this.workspaceMediaPackService.generateSocialKit(this.extractToken(authorization), body || {});
   }
 
+  @Get('decks/:deckId/exports')
+  getDeckExports(@Param('deckId') deckId: string, @Headers('authorization') authorization?: string) {
+    return this.workspaceMediaPackService.getDeckExports(deckId, authorization);
+  }
+
+  @Post('decks/:deckId/exports')
+  async exportDeck(
+    @Param('deckId') deckId: string,
+    @Res() res: Response,
+    @Body() body?: unknown,
+    @Query() query: Record<string, unknown> = {},
+    @Headers('authorization') authorization?: string,
+  ) {
+    const proxied = await this.workspaceMediaPackService.proxyToSlides(
+      this.extractToken(authorization),
+      'post',
+      `/decks/${deckId}/exports`,
+      query || {},
+      body || {},
+    );
+    return this.sendProxiedResponse(res, proxied);
+  }
+
+  @Get('exports/:id/download')
+  async downloadExport(
+    @Param('id') id: string,
+    @Res() res: Response,
+    @Query() query: Record<string, unknown> = {},
+    @Headers('authorization') authorization?: string,
+  ) {
+    const proxied = await this.workspaceMediaPackService.proxyToSlides(
+      this.extractToken(authorization),
+      'get',
+      `/exports/${id}/download`,
+      query || {},
+    );
+    return this.sendProxiedResponse(res, proxied);
+  }
+
   @All('*')
   async proxyRemaining(@Req() req: Request, @Res() res: Response, @Headers('authorization') authorization?: string) {
     const url = new URL(req.originalUrl, 'http://localhost');
@@ -171,5 +210,19 @@ export class MediaProxyController {
     const raw = String(authorization || '').trim();
     if (!raw) return null;
     return raw.toLowerCase().startsWith('bearer ') ? raw.slice(7).trim() : raw;
+  }
+
+  private sendProxiedResponse(res: Response, proxied: { status: number; headers?: Record<string, unknown>; data: Buffer }) {
+    res.status(proxied.status);
+    Object.entries(proxied.headers || {}).forEach(([key, value]) => {
+      const lower = key.toLowerCase();
+      if (['content-length', 'transfer-encoding', 'connection'].includes(lower)) return;
+      if (Array.isArray(value)) {
+        res.setHeader(key, value.join(', '));
+      } else if (value !== undefined) {
+        res.setHeader(key, String(value));
+      }
+    });
+    return res.send(proxied.data);
   }
 }

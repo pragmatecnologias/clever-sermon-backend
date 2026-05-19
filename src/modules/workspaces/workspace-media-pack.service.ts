@@ -221,14 +221,54 @@ export class WorkspaceMediaPackService {
     query: Record<string, unknown>,
     body?: unknown,
   ) {
+    const request = async (token: string | null) => {
+      const response = await this.slidesClient.request({
+        url: path,
+        method: method.toLowerCase() as 'get' | 'post' | 'patch' | 'put' | 'delete',
+        params: query,
+        data: body,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        responseType: 'arraybuffer',
+      });
+
+      return {
+        status: response.status,
+        headers: {
+          'content-type': response.headers['content-type'],
+          'content-disposition': response.headers['content-disposition'],
+        },
+        data: Buffer.from(response.data),
+      };
+    };
+
+    try {
+      return await request(authorization);
+    } catch (error) {
+      const status = (error as any)?.response?.status;
+      if (status === 401) {
+        const fallbackToken = await this.getSlidesServiceToken();
+        if (fallbackToken && fallbackToken !== authorization) {
+          return request(fallbackToken);
+        }
+      }
+      throw error;
+    }
+  }
+
+  async proxyToSlidesAsService(
+    method: string,
+    path: string,
+    query: Record<string, unknown>,
+    body?: unknown,
+  ) {
+    const serviceToken = await this.getSlidesServiceToken();
     const response = await this.slidesClient.request({
       url: path,
       method: method.toLowerCase() as 'get' | 'post' | 'patch' | 'put' | 'delete',
       params: query,
       data: body,
-      headers: authorization ? { Authorization: `Bearer ${authorization}` } : undefined,
+      headers: serviceToken ? { Authorization: `Bearer ${serviceToken}` } : undefined,
       responseType: 'arraybuffer',
-      validateStatus: () => true,
     });
 
     return {
@@ -239,6 +279,12 @@ export class WorkspaceMediaPackService {
       },
       data: Buffer.from(response.data),
     };
+  }
+
+  async getDeckExports(deckId: string, authorization?: string) {
+    const token = this.extractToken(authorization);
+    const serviceToken = await this.getSlidesServiceToken();
+    return this.requestSlides<Record<string, unknown>[]>(`/decks/${deckId}/exports`, token, undefined, serviceToken);
   }
 
   async generateSermonSong(token: string | null, body: unknown) {
@@ -263,6 +309,29 @@ export class WorkspaceMediaPackService {
 
   private getSelectedStudyReport(workspace: SermonWorkspace) {
     return workspace.studyReports?.[0] || null;
+  }
+
+  private normalizeWorkspacePlanning(metadata?: Record<string, any>) {
+    const planningSource =
+      metadata && typeof metadata === 'object' && metadata.planning && typeof metadata.planning === 'object'
+        ? metadata.planning
+        : metadata || {};
+    const targetLength = Number(planningSource?.targetLengthMinutes);
+    const planning: Record<string, any> = {};
+    const sermonDate = String(planningSource?.sermonDate || '').trim();
+    const serviceType = String(planningSource?.serviceType || '').trim();
+    const appealStyle = String(planningSource?.appealStyle || '').trim();
+    const ministryMode = String(planningSource?.ministryMode || '').trim();
+    const bilingualMode = String(planningSource?.bilingualMode || '').trim();
+
+    if (sermonDate) planning.sermonDate = sermonDate;
+    if (Number.isFinite(targetLength) && targetLength > 0) planning.targetLengthMinutes = Math.round(targetLength);
+    if (serviceType) planning.serviceType = serviceType;
+    if (appealStyle) planning.appealStyle = appealStyle;
+    if (ministryMode) planning.ministryMode = ministryMode;
+    if (bilingualMode) planning.bilingualMode = bilingualMode;
+
+    return planning;
   }
 
   private normalizeSlidesTone(value: unknown): 'hopeful' | 'urgent' | 'reflective' | 'challenging' | 'encouraging' {
@@ -314,6 +383,7 @@ export class WorkspaceMediaPackService {
     const selectedOutline = this.getSelectedOutline(workspace);
     const selectedManuscript = this.getSelectedManuscript(workspace);
     const selectedStudyReport = this.getSelectedStudyReport(workspace);
+    const planning = this.normalizeWorkspacePlanning(workspace.metadata as Record<string, any>);
     const outlinePoints = Array.isArray((selectedOutline as any)?.structure?.points)
       ? (selectedOutline as any).structure.points
       : [];
@@ -345,6 +415,28 @@ export class WorkspaceMediaPackService {
       manuscript: selectedManuscript || undefined,
       applications: workspace.applications || [],
       questions: workspace.discussionQuestions || [],
+      planning: {
+        title: workspace.title,
+        seriesTitle: workspace.seriesTitle || undefined,
+        mainPassage: workspace.mainPassage,
+        additionalPassages: Array.isArray(workspace.additionalPassages) ? workspace.additionalPassages : [],
+        language: workspace.language || 'en',
+        theologicalLens: workspace.theologicalLens || undefined,
+        style: workspace.style || undefined,
+        storyArc: workspace.storyArc || undefined,
+        theme: workspace.theme || undefined,
+        audienceProfile: workspace.audienceProfile || undefined,
+        sermonGoals: workspace.sermonGoals || undefined,
+        sermonDate: planning.sermonDate || undefined,
+        targetLengthMinutes: planning.targetLengthMinutes || undefined,
+        serviceType: planning.serviceType || undefined,
+        appealStyle: planning.appealStyle || undefined,
+        ministryMode: planning.ministryMode || undefined,
+        bilingualMode: planning.bilingualMode || undefined,
+        egwEnabled: workspace.egwEnabled,
+        guardrailMode: (workspace.metadata as Record<string, any>)?.guardrailMode || undefined,
+        guardrailDetected: Boolean((workspace.metadata as Record<string, any>)?.guardrailDetected),
+      },
     };
   }
 
@@ -381,12 +473,18 @@ export class WorkspaceMediaPackService {
     const syncPayload = this.buildSyncPayload(workspace);
     const deckIntent = this.normalizeDeckIntent(dto.deckIntent);
     const sermon = await this.requestSlides<Record<string, unknown>>('/sermons/from-workspace', token, syncPayload);
+    const planning = this.normalizeWorkspacePlanning(workspace.metadata as Record<string, any>);
+    const resolvedDeckSize =
+      dto.deckSize ||
+      (deckIntent === 'sermon_presentation'
+        ? (planning.targetLengthMinutes && planning.targetLengthMinutes >= 35 ? 'long' : 'standard')
+        : 'short');
 
     const deckResult = dto.includeDeck === false
       ? null
       : await this.requestSlides<Record<string, unknown>>(`/sermons/${String((sermon as any).id || (sermon as any).sermonId)}/decks`, token, {
           themeId: dto.themeId,
-          deckSize: dto.deckSize || 'long',
+          deckSize: resolvedDeckSize,
           deckIntent,
           backgroundProvider: dto.backgroundProvider || 'local',
           backgroundPreset: dto.backgroundPreset,

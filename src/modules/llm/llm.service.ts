@@ -393,8 +393,9 @@ export class LlmService {
       );
     }
 
+    const rawContent = response.data.choices[0].message.content || '';
     return {
-      response: response.data.choices[0].message.content,
+      response: rawContent.replace(/^```json\s*/i, '').replace(/\s*```$/, ''),
       model,
     };
   }
