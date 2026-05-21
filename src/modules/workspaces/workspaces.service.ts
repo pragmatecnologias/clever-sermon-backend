@@ -3128,6 +3128,61 @@ Rules:
     return cues;
   }
 
+  private normalizeCueSearchText(value: string) {
+    return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  private scoreCueMatch(cueText: string, candidateText: string) {
+    const cueNorm = this.normalizeCueSearchText(cueText);
+    const candNorm = this.normalizeCueSearchText(candidateText);
+    if (!cueNorm || !candNorm) return 0;
+    if (candNorm.includes(cueNorm)) return 1;
+    const probe = cueNorm.slice(0, Math.min(90, cueNorm.length));
+    if (probe && candNorm.includes(probe)) return 0.92;
+    const cueTokens = cueNorm.split(' ').filter(Boolean);
+    const candTokens = new Set(candNorm.split(' ').filter(Boolean));
+    if (!cueTokens.length || !candTokens.size) return 0;
+    const overlap = cueTokens.filter((token) => candTokens.has(token)).length;
+    return overlap / cueTokens.length;
+  }
+
+  private buildCueAnchorsFromManuscriptHtml(html: string, cues: ManuscriptCues) {
+    const segments = String(html || '')
+      .replace(/<[^>]+>/g, '\n')
+      .split(/\n+/)
+      .map((item) => this.asString(item).trim())
+      .filter(Boolean);
+    const anchors: Record<string, any> = {};
+    (['slide', 'keyLine', 'transition', 'pause', 'read', 'quote', 'cta'] as Array<keyof ManuscriptCues>).forEach((cueType) => {
+      cues[cueType].forEach((cueText, cueIndex) => {
+        const cueNorm = this.normalizeCueSearchText(cueText);
+        if (!cueNorm) return;
+        let bestIndex = -1;
+        let bestScore = 0;
+        let bestText = '';
+        segments.forEach((segment, index) => {
+          const score = this.scoreCueMatch(cueText, segment);
+          if (score > bestScore) {
+            bestScore = score;
+            bestIndex = index;
+            bestText = segment;
+          }
+        });
+        if (bestIndex >= 0 && bestScore >= 0.35) {
+          anchors[`${cueType}:${cueIndex}`] = {
+            cueType,
+            cueIndex,
+            excerpt: bestText.slice(0, 240),
+            paragraphIndex: bestIndex,
+            paragraphHash: this.normalizeCueSearchText(bestText),
+            confidence: Number(bestScore.toFixed(3)),
+          };
+        }
+      });
+    });
+    return anchors;
+  }
+
   private stripModelTransportArtifacts(value: string) {
     return String(value || '')
       .replace(/<\|[^|>]+?\|>/g, ' ')
@@ -6645,6 +6700,7 @@ Rules:
       (sum, list) => sum + (Array.isArray(list) ? list.length : 0),
       0,
     );
+    const cueAnchors = this.buildCueAnchorsFromManuscriptHtml(parsedManuscript.text, parsedManuscript.cues);
 
     if ((normalizedOptions.includeSlideCues || normalizedOptions.includeKeyLines) && cueCount < 2) {
       try {
@@ -6691,6 +6747,8 @@ Rules:
           title: this.asString(outline?.title || workspace?.title || 'Manuscript'),
           options: normalizedOptions,
           generatedFromOutlineId: outlineId,
+          cueAnchors,
+          cueAnchorUpdatedAt: new Date().toISOString(),
           quality: {
             wordCount,
             targetWords: quality.targets.targetWords,
@@ -7855,10 +7913,18 @@ Rules:
     const text = typeof dto?.content === 'string' ? dto.content : dto?.content?.text;
     if (typeof text === 'string') {
       const incomingContent = typeof dto.content === 'string' ? { text } : dto.content;
+      const incomingMetadata = (incomingContent?.metadata || {}) as Record<string, any>;
+      const existingMetadata = (manuscript?.content?.metadata || {}) as Record<string, any>;
       const safeContent = {
         ...(incomingContent || {}),
         formatVersion: incomingContent?.formatVersion || manuscript?.content?.formatVersion || 'v2',
         cues: this.sanitizeCueObject(incomingContent?.cues || manuscript?.content?.cues),
+        metadata: {
+          ...existingMetadata,
+          ...incomingMetadata,
+          cueAnchors: incomingMetadata.cueAnchors || existingMetadata.cueAnchors || {},
+          cueAnchorUpdatedAt: incomingMetadata.cueAnchorUpdatedAt || existingMetadata.cueAnchorUpdatedAt,
+        },
       };
       updatePayload.content = safeContent;
       const plainText = this.stripHtmlForWordCount(text);
