@@ -39,12 +39,17 @@ export class EGWService {
     paragraphs: number;
     scriptureReferences: number;
   }> {
-    const [books, paragraphs, scriptureReferences] = await Promise.all([
-      this.bookRepository.count(),
-      this.paragraphRepository.count(),
-      this.scriptureRefRepository.count(),
-    ]);
-    return { books, paragraphs, scriptureReferences };
+    try {
+      const [books, paragraphs, scriptureReferences] = await Promise.all([
+        this.bookRepository.count(),
+        this.paragraphRepository.count(),
+        this.scriptureRefRepository.count(),
+      ]);
+      return { books, paragraphs, scriptureReferences };
+    } catch (error) {
+      console.warn(`EGW library stats unavailable: ${(error as Error)?.message || 'unknown error'}`);
+      return { books: 0, paragraphs: 0, scriptureReferences: 0 };
+    }
   }
 
   async getAllBooks(language?: string): Promise<EGWBook[]> {
@@ -138,25 +143,30 @@ export class EGWService {
     const [, book, chapterStr] = refParts;
     const chapter = parseInt(chapterStr);
 
-    // Find scripture references matching this passage
-    const scriptureRefs = await this.scriptureRefRepository
-      .createQueryBuilder('ref')
-      .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
-      .where('ref.book = :book', { book })
-      .andWhere('ref.chapter = :chapter', { chapter })
-      .andWhere('ref.language = :language', { language })
-      .take(limit)
-      .getMany();
+    try {
+      // Find scripture references matching this passage
+      const scriptureRefs = await this.scriptureRefRepository
+        .createQueryBuilder('ref')
+        .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
+        .where('ref.book = :book', { book })
+        .andWhere('ref.chapter = :chapter', { chapter })
+        .andWhere('ref.language = :language', { language })
+        .take(limit)
+        .getMany();
 
-    // Map to EGWQuote format
-    return scriptureRefs
-      .filter(ref => ref.egwParagraph)
-      .map(ref => ({
-        reference: ref.egwParagraph.reference,
-        text: ref.egwParagraph.content,
-        bookTitle: ref.egwParagraph.bookTitle,
-        context: ref.egwParagraph.chapterTitle
-      }));
+      // Map to EGWQuote format
+      return scriptureRefs
+        .filter(ref => ref.egwParagraph)
+        .map(ref => ({
+          reference: ref.egwParagraph.reference,
+          text: ref.egwParagraph.content,
+          bookTitle: ref.egwParagraph.bookTitle,
+          context: ref.egwParagraph.chapterTitle
+        }));
+    } catch (error) {
+      console.warn(`EGW insights unavailable for ${scriptureReference}: ${(error as Error)?.message || 'unknown error'}`);
+      return [];
+    }
   }
 
   async getSuggestedReading(topic: string): Promise<{
@@ -202,36 +212,69 @@ export class EGWService {
     reference: string;
     excerpt: string;
   }[]> {
-    // Find scripture references matching this passage
-    const where: any = { book, chapter };
-    if (language) {
-      where.language = language;
+    try {
+      // Build an overlap query: ref.verseStart <= verseEnd AND (ref.verseEnd >= verseStart OR ref.verseEnd IS NULL)
+      if (verseStart) {
+        const qb = this.scriptureRefRepository.createQueryBuilder('ref')
+          .leftJoinAndSelect('ref.egwParagraph', 'paragraph')
+          .where('ref.book = :book', { book })
+          .andWhere('ref.chapter = :chapter', { chapter })
+          .andWhere('ref.verseStart <= :verseEnd', { verseEnd: verseEnd || verseStart })
+          .andWhere('(ref.verseEnd >= :verseStart OR ref.verseEnd IS NULL)')
+          .setParameter('verseStart', verseStart);
+
+        if (language) {
+          qb.andWhere('ref.language = :language', { language });
+        }
+
+        qb.orderBy('ref.verseStart', 'ASC')
+          .take(limit);
+
+        const scriptureRefs = await qb.getMany();
+
+        return scriptureRefs
+          .filter(ref => ref.egwParagraph)
+          .map(ref => {
+            const para = ref.egwParagraph;
+            const excerpt = para.content.length > 200
+              ? para.content.substring(0, 200) + '...'
+              : para.content;
+            return {
+              paragraph: para,
+              bookTitle: para.bookTitle,
+              reference: para.reference,
+              excerpt
+            };
+          });
+      }
+
+      // No verseStart: return refs for entire chapter
+      const where: any = { book, chapter };
+      if (language) {
+        where.language = language;
+      }
+      const scriptureRefs = await this.scriptureRefRepository.find({
+        where,
+        relations: ['egwParagraph'],
+        take: limit
+      });
+
+      return scriptureRefs.map(ref => {
+        const para = ref.egwParagraph;
+        const excerpt = para.content.length > 200
+          ? para.content.substring(0, 200) + '...'
+          : para.content;
+        return {
+          paragraph: para,
+          bookTitle: para.bookTitle,
+          reference: para.reference,
+          excerpt
+        };
+      });
+    } catch (error) {
+      console.warn(`EGW passage insights unavailable for ${book} ${chapter}: ${(error as Error)?.message || 'unknown error'}`);
+      return [];
     }
-    if (verseStart) {
-      // Find references that overlap with the requested verse range
-      where.verseStart = verseStart;
-    }
-
-    const scriptureRefs = await this.scriptureRefRepository.find({
-      where,
-      relations: ['egwParagraph'],
-      take: limit
-    });
-
-    return scriptureRefs.map(ref => {
-      const para = ref.egwParagraph;
-      // Create excerpt (first 200 chars)
-      const excerpt = para.content.length > 200 
-        ? para.content.substring(0, 200) + '...'
-        : para.content;
-
-      return {
-        paragraph: para,
-        bookTitle: para.bookTitle,
-        reference: para.reference,
-        excerpt
-      };
-    });
   }
 
   private calculateRelevance(content: string, query: string): number {

@@ -3,6 +3,7 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackPassageSummary } from './scripture-fallbacks';
 
 export interface PassageSummaryData {
   passage: string;
@@ -21,10 +22,10 @@ export class PassageSummaryService {
   ) {}
 
   async getPassageSummary(reference: string, userId?: string, language?: string): Promise<PassageSummaryData> {
+    let passageText = '';
     try {
       const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
       // Fetch actual passage text to prevent LLM hallucination
-      let passageText = '';
       try {
         const result = await this.scriptureService.getPassage(reference, analysisTranslation);
         if (result && result.verses && result.verses.length > 0) {
@@ -41,21 +42,25 @@ export class PassageSummaryService {
         {
           temperature: 0.3,
           maxTokens: 1000,
+          timeoutMs: 12000,
         }
       );
 
       const parsed = this.parseResponse(response, reference);
+      if (
+        !String(parsed.summary || '').trim() ||
+        !String(parsed.interpretiveCenter || '').trim() ||
+        String(parsed.summary || '').trim().length < 90 ||
+        String(parsed.interpretiveCenter || '').trim().length < 60 ||
+        !Array.isArray(parsed.movement) ||
+        parsed.movement.length < 2
+      ) {
+        return buildFallbackPassageSummary(reference, passageText, language);
+      }
       return parsed;
     } catch (error) {
       console.error('Error generating passage summary:', error);
-      return {
-        passage: reference,
-        summary: '',
-        interpretiveCenter: '',
-        mainTension: '',
-        movement: [],
-        dataSource: 'unavailable',
-      };
+      return buildFallbackPassageSummary(reference, passageText, language);
     }
   }
 

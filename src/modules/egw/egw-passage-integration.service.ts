@@ -61,47 +61,72 @@ export class EGWPassageIntegrationService {
     language: string = 'en',
     limit: number = 5
   ): Promise<EGWPanelData> {
-    const passage = this.formatPassageReference(book, chapter, verseStart, verseEnd);
-    const collectRankedInsights = async (lang: string): Promise<PassageEGWInsight[]> => {
-      const exactMatches = await this.findExactVerseCitations(book, chapter, verseStart, verseEnd, lang);
-      const chapterMatches = await this.findChapterCitations(book, chapter, lang);
-      const thematicMatches = await this.findThematicMatches(book, chapter, lang);
+    try {
+      const passage = this.formatPassageReference(book, chapter, verseStart, verseEnd);
+      const collectRankedInsights = async (lang: string): Promise<PassageEGWInsight[]> => {
+        const exactMatches = await this.findExactVerseCitations(book, chapter, verseStart, verseEnd, lang);
+        const chapterMatches = await this.findChapterCitations(book, chapter, lang);
+        const thematicMatches = await this.findThematicMatches(book, chapter, lang);
 
-      const allInsights = [
-        ...this.rankInsights(exactMatches, 'exact_verse', 100),
-        ...this.rankInsights(chapterMatches, 'same_chapter', 75),
-        ...this.rankInsights(thematicMatches, 'thematic', 50),
-      ];
+        const allInsights = [
+          ...this.rankInsights(exactMatches, 'exact_verse', 100),
+          ...this.rankInsights(chapterMatches, 'same_chapter', 75),
+          ...this.rankInsights(thematicMatches, 'thematic', 50),
+        ];
 
-      return this.deduplicateByParagraph(allInsights).sort((a, b) => b.rankingScore - a.rankingScore);
-    };
+        return this.deduplicateByParagraph(allInsights).sort((a, b) => b.rankingScore - a.rankingScore);
+      };
 
-    let sortedInsights = await collectRankedInsights(language);
+      let sortedInsights = await collectRankedInsights(language);
 
-    if (sortedInsights.length === 0) {
-      const bookLevelMatches = await this.findBookCitations(book, language);
-      sortedInsights = this
-        .deduplicateByParagraph(this.rankInsights(bookLevelMatches, 'thematic', 40))
-        .sort((a, b) => b.rankingScore - a.rankingScore);
-    }
-
-    // Fallback 2: retry in English if locale dataset is sparse
-    if (sortedInsights.length === 0 && language !== 'en') {
-      sortedInsights = await collectRankedInsights('en');
       if (sortedInsights.length === 0) {
-        const bookLevelEnglish = await this.findBookCitations(book, 'en');
+        const bookLevelMatches = await this.findBookCitations(book, language);
         sortedInsights = this
-          .deduplicateByParagraph(this.rankInsights(bookLevelEnglish, 'thematic', 40))
+          .deduplicateByParagraph(this.rankInsights(bookLevelMatches, 'thematic', 40))
           .sort((a, b) => b.rankingScore - a.rankingScore);
       }
+
+      // Fallback 2: retry in English if locale dataset is sparse
+      if (sortedInsights.length === 0 && language !== 'en') {
+        sortedInsights = await collectRankedInsights('en');
+        if (sortedInsights.length === 0) {
+          const bookLevelEnglish = await this.findBookCitations(book, 'en');
+          sortedInsights = this
+            .deduplicateByParagraph(this.rankInsights(bookLevelEnglish, 'thematic', 40))
+            .sort((a, b) => b.rankingScore - a.rankingScore);
+        }
+      }
+
+      if (sortedInsights.length === 0) {
+        sortedInsights = await this.findGeneralFallbackInsights(language, limit);
+      }
+
+      return {
+        passage,
+        insights: sortedInsights.slice(0, limit),
+        totalAvailable: sortedInsights.length,
+        hasMore: sortedInsights.length > limit
+      };
+    } catch (error) {
+      console.warn(`EGW passage panel unavailable for ${book} ${chapter}: ${(error as Error)?.message || 'unknown error'}`);
+      try {
+        const fallbackInsights = await this.findGeneralFallbackInsights(language, limit);
+        return {
+          passage: this.formatPassageReference(book, chapter, verseStart, verseEnd),
+          insights: fallbackInsights.slice(0, limit),
+          totalAvailable: fallbackInsights.length,
+          hasMore: fallbackInsights.length > limit,
+        };
+      } catch (fallbackError) {
+        console.warn(`EGW general fallback unavailable for ${book} ${chapter}: ${(fallbackError as Error)?.message || 'unknown error'}`);
+      }
+      return {
+        passage: this.formatPassageReference(book, chapter, verseStart, verseEnd),
+        insights: [],
+        totalAvailable: 0,
+        hasMore: false,
+      };
     }
-    
-    return {
-      passage,
-      insights: sortedInsights.slice(0, limit),
-      totalAvailable: sortedInsights.length,
-      hasMore: sortedInsights.length > limit
-    };
   }
 
   private normalizeBookKey(book: string): string {
@@ -155,18 +180,79 @@ export class EGWPassageIntegrationService {
     language: string,
     limit: number,
   ): Promise<PassageEGWInsight[]> {
-    let paragraphs = await this.paragraphRepository
-      .createQueryBuilder('p')
-      .where('p.language = :language', { language })
-      .take(limit)
-      .getMany();
-
-    if (!paragraphs.length && language !== 'en') {
+    let paragraphs: EGWParagraph[] = [];
+    try {
       paragraphs = await this.paragraphRepository
         .createQueryBuilder('p')
-        .where('p.language = :language', { language: 'en' })
+        .where('p.language = :language', { language })
         .take(limit)
         .getMany();
+
+      if (!paragraphs.length && language !== 'en') {
+        paragraphs = await this.paragraphRepository
+          .createQueryBuilder('p')
+          .where('p.language = :language', { language: 'en' })
+          .take(limit)
+          .getMany();
+      }
+    } catch (error) {
+      console.warn(`EGW fallback paragraph lookup unavailable for ${language}: ${(error as Error)?.message || 'unknown error'}`);
+      paragraphs = [];
+    }
+
+    if (!paragraphs.length) {
+      const isSpanish = String(language || '').toLowerCase().startsWith('es');
+      const generalReference = isSpanish ? 'Consejo general del Espíritu de Profecía' : 'General Spirit of Prophecy counsel';
+      const fallbackContent = isSpanish
+        ? 'No se encontró una cita directa para este pasaje en la biblioteca cargada. Use este resumen general del Espíritu de Profecía: mantenga la Escritura en el centro, presente a Cristo como el foco del mensaje, y conduzca a la congregación a una respuesta de fe concreta. No reduzca el pasaje a una línea; exponga su peso devocional, doctrinal y pastoral.'
+        : 'No direct citation was found for this passage in the loaded library. Use this general Spirit of Prophecy counsel: keep Scripture at the center, present Christ as the focus of the message, and lead the congregation toward a concrete response of faith. Do not shrink the passage into a single line; preach its devotional, doctrinal, and pastoral weight.';
+
+      return [
+        {
+          paragraphId: `fallback-general-1-${language}`,
+          bookCode: 'general',
+          bookTitle: isSpanish ? 'Consejo general' : 'General counsel',
+          chapterTitle: isSpanish ? 'Resumen pastoral' : 'Pastoral summary',
+          reference: generalReference,
+          content: fallbackContent,
+          preview: fallbackContent,
+          scriptureReference: 'General EGW insight',
+          rankingScore: 20,
+          rankingReason: 'doctrinal' as const,
+        },
+        {
+          paragraphId: `fallback-general-2-${language}`,
+          bookCode: 'general',
+          bookTitle: isSpanish ? 'Consejo general' : 'General counsel',
+          chapterTitle: isSpanish ? 'Aplicación práctica' : 'Practical application',
+          reference: generalReference,
+          content: isSpanish
+            ? 'Predique la gracia de Dios con claridad, pero no deje fuera el llamado a la obediencia. La verdad bíblica debe llegar al corazón y a la vida diaria, no quedarse como dato religioso.'
+            : 'Preach God’s grace clearly, but do not leave out the call to obedience. Biblical truth should reach the heart and daily life, not remain as a religious data point.',
+          preview: isSpanish
+            ? 'Predique la gracia de Dios con claridad, pero no deje fuera el llamado a la obediencia.'
+            : 'Preach God’s grace clearly, but do not leave out the call to obedience.',
+          scriptureReference: 'General EGW insight',
+          rankingScore: 19,
+          rankingReason: 'thematic' as const,
+        },
+        {
+          paragraphId: `fallback-general-3-${language}`,
+          bookCode: 'general',
+          bookTitle: isSpanish ? 'Consejo general' : 'General counsel',
+          chapterTitle: isSpanish ? 'Centro en Cristo' : 'Christ-centered center',
+          reference: generalReference,
+          content: isSpanish
+            ? 'Toda aplicación de Spirit of Prophecy debe mantenerse secundaria respecto a la Escritura. Sirve para reforzar el punto bíblico, no para reemplazarlo ni volverlo sensacionalista.'
+            : 'Every Spirit of Prophecy application must remain secondary to Scripture. It should reinforce the biblical point, not replace it or turn it sensational.',
+          preview: isSpanish
+            ? 'Toda aplicación de Spirit of Prophecy debe mantenerse secundaria respecto a la Escritura.'
+            : 'Every Spirit of Prophecy application must remain secondary to Scripture.',
+          scriptureReference: 'General EGW insight',
+          rankingScore: 18,
+          rankingReason: 'doctrinal' as const,
+        },
+      ].slice(0, limit);
     }
 
     return paragraphs.map((p, index) => ({
@@ -361,30 +447,35 @@ export class EGWPassageIntegrationService {
     theme?: string;
     frequentlyCited?: PassageEGWInsight[];
   }> {
-    const doctrinalPatterns = [
-      { pattern: /daniel\s+[2789]/i, theme: 'Prophecy - Daniel' },
-      { pattern: /revelation\s+[1-14]/i, theme: 'Prophecy - Revelation' },
-      { pattern: /hebrews\s+[89]/i, theme: 'Sanctuary - Heavenly Ministry' },
-      { pattern: /exodus\s+20/i, theme: 'Law - Ten Commandments' },
-      { pattern: /genesis\s+[12]/i, theme: 'Creation - Sabbath' },
-      { pattern: /ecclesiastes\s+[912]/i, theme: 'State of the Dead' },
-      { pattern: /malachi\s+[34]/i, theme: 'Final Judgment' }
-    ];
+    try {
+      const doctrinalPatterns = [
+        { pattern: /daniel\s+[2789]/i, theme: 'Prophecy - Daniel' },
+        { pattern: /revelation\s+[1-14]/i, theme: 'Prophecy - Revelation' },
+        { pattern: /hebrews\s+[89]/i, theme: 'Sanctuary - Heavenly Ministry' },
+        { pattern: /exodus\s+20/i, theme: 'Law - Ten Commandments' },
+        { pattern: /genesis\s+[12]/i, theme: 'Creation - Sabbath' },
+        { pattern: /ecclesiastes\s+[912]/i, theme: 'State of the Dead' },
+        { pattern: /malachi\s+[34]/i, theme: 'Final Judgment' }
+      ];
 
-    for (const { pattern, theme } of doctrinalPatterns) {
-      if (pattern.test(passage)) {
-        // This is a key doctrinal passage - surface frequently cited EGW
-        const insights = await this.getFrequentlyCitedForTheme(theme);
-        
-        return {
-          isDoctrinalPassage: true,
-          theme,
-          frequentlyCited: insights.slice(0, 5)
-        };
+      for (const { pattern, theme } of doctrinalPatterns) {
+        if (pattern.test(passage)) {
+          // This is a key doctrinal passage - surface frequently cited EGW
+          const insights = await this.getFrequentlyCitedForTheme(theme);
+
+          return {
+            isDoctrinalPassage: true,
+            theme,
+            frequentlyCited: insights.slice(0, 5)
+          };
+        }
       }
-    }
 
-    return { isDoctrinalPassage: false };
+      return { isDoctrinalPassage: false };
+    } catch (error) {
+      console.warn(`EGW SDA smart boost unavailable for ${passage}: ${(error as Error)?.message || 'unknown error'}`);
+      return { isDoctrinalPassage: false };
+    }
   }
 
   /**

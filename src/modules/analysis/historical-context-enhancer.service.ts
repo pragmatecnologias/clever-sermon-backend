@@ -32,10 +32,12 @@ export class HistoricalContextEnhancerService {
     try {
       const response = await this.llmService.generateCompletion(prompt, userId, {
         temperature: 0.3,
-        maxTokens: 2500,
+        maxTokens: 8000,
       });
 
-      const parsed = JSON.parse(response);
+      // Unescape literal \n sequences that MINIMAX returns in JSON strings
+      const unescaped = response.replace(/\\n/g, '\n');
+      const parsed = JSON.parse(unescaped);
 
       const context = this.contextRepository.create({
         workspaceId,

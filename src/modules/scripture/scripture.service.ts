@@ -286,16 +286,6 @@ export class ScriptureService {
     const lookupReference = this.normalizeReferenceForLookup(rawReference);
     const normalizedReference = this.normalizeReferenceForApi(lookupReference);
     const requestedTranslation = (translationCode || 'KJV').trim().toUpperCase();
-    const requiresApiBible = ['RVR1960', 'RVR60', 'NBLA', 'NVI'].includes(requestedTranslation);
-
-    if ((!apiKey || !apiUrl) && requiresApiBible) {
-      return {
-        reference: lookupReference || normalizedReference,
-        translation: requestedTranslation,
-        verses: [],
-        error: `Translation ${requestedTranslation} requires API.Bible. Configure BIBLE_API_KEY to fetch Spanish passages without fallback.`,
-      };
-    }
 
     if (apiKey && apiUrl) {
       try {
@@ -696,7 +686,6 @@ export class ScriptureService {
   }
 
   private async fetchBibleApiPassage(reference: string, translationCode: string, alternateReference?: string): Promise<any> {
-    const fallbackCodes = this.getFallbackTranslationCodes(translationCode);
     const references = Array.from(
       new Set(
         [reference, alternateReference]
@@ -706,10 +695,19 @@ export class ScriptureService {
     );
 
     for (const ref of references) {
-      for (const code of fallbackCodes) {
+      const bibleGateway = await this.fetchBibleGatewayPassage(ref, translationCode);
+      if (Array.isArray(bibleGateway?.verses) && bibleGateway.verses.length > 0) {
+        return bibleGateway;
+      }
+
+      for (const code of this.getFallbackTranslationCodes(translationCode)) {
         try {
           const response = await axios.get(`https://bible-api.com/${encodeURIComponent(ref)}`, {
             params: { translation: code },
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; CleverSermon/1.0)',
+              Accept: 'application/json,text/plain,*/*',
+            },
           });
           const data = response.data;
           const verses = (data.verses || []).map((verse: any) => ({
@@ -734,8 +732,83 @@ export class ScriptureService {
       reference,
       translation: translationCode,
       verses: [],
-      error: `No verses found for ${translationCode}. Fallback provider could not resolve this translation for the requested reference.`,
+      error: `No verses found for ${translationCode}. Public passage sources could not resolve this translation for the requested reference.`,
     };
+  }
+
+  private async fetchBibleGatewayPassage(reference: string, translationCode: string): Promise<any> {
+    const version = (translationCode || 'KJV').trim().toUpperCase();
+    const encodedReference = encodeURIComponent(reference);
+    const url = `https://www.biblegateway.com/passage/?search=${encodedReference}&version=${encodeURIComponent(version)}`;
+
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; CleverSermon/1.0)',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+        timeout: 15000,
+      });
+
+      const html = String(response.data || '');
+      const passageHtml = html.match(/<div class="passage-text">([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/i)?.[1] || html;
+      const verseMatches = Array.from(passageHtml.matchAll(/<span[^>]*class="text [^"]*"[^>]*>([\s\S]*?)<\/span>/g));
+      const verses = verseMatches
+        .map((match) => this.parseBibleGatewayVerse(match[1], reference))
+        .filter((verse): verse is { reference: string; text: string } => Boolean(verse?.text));
+
+      return {
+        reference,
+        translation: version,
+        verses,
+      };
+    } catch (error) {
+      console.error('[Scripture] BibleGateway fallback error:', error?.response?.status || error?.message || error);
+      return {
+        reference,
+        translation: version,
+        verses: [],
+      };
+    }
+  }
+
+  private parseBibleGatewayVerse(verseHtml: string, reference: string): { reference: string; text: string } | null {
+    const verseNumber = verseHtml.match(/<sup class="versenum">\s*(\d+)/i)?.[1] || '';
+    const cleanedText = this.decodeHtmlEntities(
+      verseHtml
+        .replace(/<sup class="versenum">[\s\S]*?<\/sup>/i, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    );
+
+    if (!cleanedText) {
+      return null;
+    }
+
+    const baseReference = reference.match(/^(.+?)\s+(\d+)(?::.*)?$/);
+    const bookAndChapter = baseReference ? `${baseReference[1]} ${baseReference[2]}` : reference;
+    const verseReference = verseNumber ? `${bookAndChapter}:${verseNumber}` : reference;
+
+    return {
+      reference: verseReference,
+      text: cleanedText,
+    };
+  }
+
+  private decodeHtmlEntities(value: string): string {
+    return value
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&ldquo;/g, '“')
+      .replace(/&rdquo;/g, '”')
+      .replace(/&lsquo;/g, '‘')
+      .replace(/&rsquo;/g, '’')
+      .replace(/&ndash;/g, '–')
+      .replace(/&mdash;/g, '—');
   }
 
   private async resolveTranslationForApi(requestedCode: string): Promise<BibleTranslation | null> {

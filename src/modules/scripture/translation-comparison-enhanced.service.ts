@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ScriptureService } from './scripture.service';
 import { LlmService } from '../llm/llm.service';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackTranslationComparison } from './scripture-fallbacks';
 
 export interface EnhancedTranslationComparison {
   reference: string;
@@ -138,16 +139,16 @@ export class TranslationComparisonEnhancedService {
   }
 
   async getEnhancedComparison(reference: string, language: string = 'en', userId?: string): Promise<EnhancedTranslationComparison | null> {
+    const translationCodes = this.getTranslationsForLanguage(language);
+    const translations: TranslationText[] = [];
+
     try {
-      // Select translations based on language
-      const translationCodes = this.getTranslationsForLanguage(language);
-      
       if (translationCodes.length < 2) {
-        return null; // Need at least 2 translations to compare
+        const fallbackTranslations = await this.buildFallbackTranslations(reference, translationCodes.slice(0, 2));
+        return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
       }
 
       // Fetch passage text from multiple translations
-      const translations: TranslationText[] = [];
       for (const code of translationCodes) {
         try {
           const result = await this.scriptureService.getPassage(reference, code);
@@ -178,7 +179,10 @@ export class TranslationComparisonEnhancedService {
       }
 
       if (translations.length < 2) {
-        return null; // Not enough translations fetched successfully
+        const fallbackTranslations = translations.length > 0
+          ? translations
+          : await this.buildFallbackTranslations(reference, translationCodes.slice(0, 3));
+        return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
       }
 
       // Use LLM to analyze differences
@@ -192,8 +196,51 @@ export class TranslationComparisonEnhancedService {
       };
     } catch (error) {
       console.error('Error generating translation comparison:', error);
-      return null;
+      const fallbackTranslations = translations.length > 0
+        ? translations
+        : await this.buildFallbackTranslations(reference, translationCodes.slice(0, 3));
+      return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
     }
+  }
+
+  private async buildFallbackTranslations(reference: string, translationCodes: string[]): Promise<TranslationText[]> {
+    const codes = translationCodes.length > 0 ? translationCodes : ['KJV', 'WEB'];
+    const translated: TranslationText[] = []
+    for (const code of codes) {
+      try {
+        const result = await this.scriptureService.getPassage(reference, code)
+        if (result && result.verses && result.verses.length > 0) {
+          const verses = result.verses.map((v: any, index: number) => {
+            const ref = String(v?.reference || '');
+            const verseMatch = ref.match(/:(\d+)\b/);
+            return {
+              number: verseMatch?.[1] || String(index + 1),
+              text: String(v?.text || '').trim(),
+              reference: ref || undefined,
+            };
+          });
+          translated.push({
+            code,
+            name: this.getTranslationName(code),
+            text: result.verses.map((v: any) => String(v?.text || '').trim()).join(' '),
+            verses,
+            type: this.getTranslationType(code),
+          });
+        }
+      } catch {
+        // continue
+      }
+    }
+    if (translated.length === 0) {
+      translated.push({
+        code: codes[0] || 'KJV',
+        name: this.getTranslationName(codes[0] || 'KJV'),
+        text: reference,
+        verses: [{ number: '1', text: reference, reference }],
+        type: this.getTranslationType(codes[0] || 'KJV'),
+      });
+    }
+    return translated;
   }
 
   private getTranslationsForLanguage(language: string): string[] {
@@ -262,6 +309,7 @@ export class TranslationComparisonEnhancedService {
         {
           temperature: 0.3,
           maxTokens: 1500,
+          timeoutMs: 12000,
         }
       );
 
@@ -297,6 +345,17 @@ export class TranslationComparisonEnhancedService {
         }
       };
 
+      if (
+        !result.analysis.overallAssessment ||
+        result.keyDifferences.length < 1 ||
+        result.analysis.overallAssessment.length < 60
+      ) {
+        const fallbackTranslations = translations.length > 0
+          ? translations
+          : await this.buildFallbackTranslations(reference, this.getTranslationsForLanguage(language).slice(0, 3));
+        return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
+      }
+
       if (!result.analysis.overallAssessment) {
         result.analysis.overallAssessment = isSpanish
           ? 'Se identificaron diferencias de traduccion relevantes para la predicacion.'
@@ -310,19 +369,10 @@ export class TranslationComparisonEnhancedService {
       return result;
     } catch (error) {
       console.error('Error analyzing translation differences:', error);
-      // Return empty analysis on error
-      return {
-        keyDifferences: [],
-        analysis: {
-          verbDifferences: [],
-          theologicalTermDifferences: [],
-          literalVsDynamic: [],
-          overallAssessment:
-            language === 'es' || language === 'spanish'
-              ? 'No fue posible analizar las diferencias en este momento.'
-              : 'Unable to analyze differences at this time.'
-        }
-      };
+      const fallbackTranslations = translations.length > 0
+        ? translations
+        : await this.buildFallbackTranslations(reference, this.getTranslationsForLanguage(language).slice(0, 3));
+      return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
     }
   }
 
@@ -350,6 +400,7 @@ export class TranslationComparisonEnhancedService {
       const response = await this.llmService.generateCompletion(prompt, userId || 'system', {
         temperature: 0.1,
         maxTokens: 1500,
+        timeoutMs: 12000,
       });
 
       const jsonMatch = response.match(/\{[\s\S]*\}/);

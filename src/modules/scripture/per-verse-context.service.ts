@@ -3,6 +3,7 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackVerseContext, extractBookName } from './scripture-fallbacks';
 
 export interface PerVerseContext {
   reference: string;
@@ -60,13 +61,25 @@ export class PerVerseContextService {
     // Generate context dynamically using LLM
     try {
       const generatedContext = await this.generateContextWithLLM(reference, language || 'en');
-      return generatedContext;
+      if (
+        (Array.isArray(generatedContext.historical) && generatedContext.historical.length > 0) ||
+        (Array.isArray(generatedContext.cultural) && generatedContext.cultural.length > 0) ||
+        (Array.isArray(generatedContext.geographical) && generatedContext.geographical.length > 0) ||
+        (Array.isArray(generatedContext.timeline) && generatedContext.timeline.length > 0)
+      ) {
+        const totalCount =
+          (generatedContext.historical?.length || 0) +
+          (generatedContext.cultural?.length || 0) +
+          (generatedContext.geographical?.length || 0) +
+          (generatedContext.timeline?.length || 0);
+        if (totalCount >= 6) {
+          return generatedContext;
+        }
+      }
+      return this.buildFallbackContext(reference, language || 'en');
     } catch (error) {
       console.error('Failed to generate verse context:', error);
-      return {
-        reference,
-        dataSource: 'unavailable'
-      };
+      return this.buildFallbackContext(reference, language || 'en');
     }
   }
 
@@ -95,7 +108,8 @@ export class PerVerseContextService {
 
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.3,
-      maxTokens: 900,
+      maxTokens: 4000,
+      timeoutMs: 12000,
     });
 
     let parsed: any;
@@ -116,6 +130,30 @@ export class PerVerseContextService {
       timeline: parsed.timeline || parsed.línea || parsed.linea || [],
       dataSource: 'llm-generated',
     };
+  }
+
+  private async buildFallbackContext(reference: string, language?: string): Promise<PerVerseContext> {
+    const book = extractBookName(reference);
+    const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
+    let passageText = '';
+    try {
+      const result = await this.scriptureService.getPassage(reference, analysisTranslation);
+      if (result && result.verses && result.verses.length > 0) {
+        passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
+      }
+    } catch {
+      // keep fallback
+    }
+
+    const [bookMetadata, historical, cultural, geography, timeline] = await Promise.all([
+      this.scriptureService.getBookMetadata(book),
+      this.scriptureService.getHistoricalContext(book),
+      this.scriptureService.getCulturalContext(book),
+      this.scriptureService.getGeography(book),
+      this.scriptureService.getTimeline(book),
+    ]);
+
+    return buildFallbackVerseContext(reference, passageText, language, bookMetadata, historical, cultural, geography, timeline);
   }
 
   private normalizeReference(ref: string): string {

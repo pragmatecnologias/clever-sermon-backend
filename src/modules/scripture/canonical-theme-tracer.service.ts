@@ -3,6 +3,7 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackCanonicalThemes } from './scripture-fallbacks';
 
 export interface ThemeThread {
   theme: string;
@@ -37,10 +38,10 @@ export class CanonicalThemeTracerService {
   ) {}
 
   async getThemesForPassage(reference: string, language?: string, userId?: string): Promise<CanonicalThemesResponse> {
+    let passageText = '';
     try {
       // Fetch actual passage text to prevent LLM hallucination
       const translationCode = language === 'es' ? 'RVR1960' : 'KJV';
-      let passageText = '';
       try {
         const result = await this.scriptureService.getPassage(reference, translationCode);
         if (result && result.verses && result.verses.length > 0) {
@@ -63,7 +64,8 @@ export class CanonicalThemeTracerService {
           userId || 'system',
           {
             temperature: 0.3,
-            maxTokens: 1800,
+            maxTokens: 4000,
+            timeoutMs: 12000,
           }
         );
 
@@ -80,18 +82,10 @@ export class CanonicalThemeTracerService {
       if (lastParseError) {
         console.error('Canonical themes parse failed after retries:', lastParseError.message);
       }
-      return {
-        passage: reference,
-        themes: [],
-        dataSource: 'unavailable',
-      };
+      return buildFallbackCanonicalThemes(reference, passageText, language);
     } catch (error) {
       console.error('Error generating canonical themes:', error);
-      return {
-        passage: reference,
-        themes: [],
-        dataSource: 'unavailable',
-      };
+      return buildFallbackCanonicalThemes(reference, passageText, language);
     }
   }
 
@@ -111,9 +105,14 @@ export class CanonicalThemeTracerService {
     try {
       const parsed: any = parseJsonObjectFromLlm(response);
 
-      // Handle Spanish field names (temas instead of themes)
-      const themesArray = parsed.themes || parsed.temas;
-      
+      // Handle both "themes" and Spanish "temas" field names
+      let themesArray = parsed.themes || parsed.temas;
+
+      // If themes is not an array directly, check if it's wrapped in another object
+      if (!Array.isArray(themesArray) && parsed.themes && typeof parsed.themes === 'object') {
+        themesArray = parsed.themes.themes || parsed.themes.temas || parsed.themes;
+      }
+
       if (!themesArray || !Array.isArray(themesArray)) {
         throw new Error('Invalid themes structure - missing or invalid themes array');
       }
@@ -142,6 +141,10 @@ export class CanonicalThemeTracerService {
 
       if (themes.length === 0) {
         throw new Error('No valid themes extracted from response');
+      }
+
+      if (themes.length < 2 || themes.some((theme) => String(theme.description || '').trim().length < 30)) {
+        throw new Error('Canonical themes response too thin');
       }
 
       return {

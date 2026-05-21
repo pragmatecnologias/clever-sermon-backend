@@ -114,6 +114,16 @@ export class WorkspacesController {
     return cache;
   }
 
+  private hasRichDemoTranslationComparison(scriptureCache: Record<string, any> | null | undefined) {
+    const translationComparison = scriptureCache?.translationComparison;
+    if (!translationComparison || typeof translationComparison !== 'object') {
+      return false;
+    }
+
+    const translations = Array.isArray(translationComparison.translations) ? translationComparison.translations : [];
+    return translations.length >= 3;
+  }
+
   private async findLatestDemoWorkspace(userId: string) {
     const workspaces = await this.workspacesService.findAll(userId);
     const candidates = [...workspaces]
@@ -173,10 +183,11 @@ export class WorkspacesController {
   private async prepareDemoWorkspaceArtifacts(workspaceId: string, userId: string, authorization?: string) {
     const workspace = await this.workspacesService.findOne(workspaceId, userId);
     const beforeState = await this.workspacesService.getWorkspaceState(workspace.id, userId);
+    const scriptureCache = (workspace.scriptureCache || {}) as Record<string, any>;
 
-    if (!beforeState.progress?.passageExplored) {
-      const scriptureCache = await this.buildDemoScriptureCache(userId, workspace.language || 'en');
-      await this.workspacesService.updateScriptureCache(workspace.id, userId, scriptureCache);
+    if (!beforeState.progress?.passageExplored || !this.hasRichDemoTranslationComparison(scriptureCache)) {
+      const refreshedScriptureCache = await this.buildDemoScriptureCache(userId, workspace.language || 'en');
+      await this.workspacesService.updateScriptureCache(workspace.id, userId, refreshedScriptureCache);
     }
 
     if (!beforeState.progress?.studyGenerated) {
@@ -297,7 +308,9 @@ export class WorkspacesController {
     }
 
     const beforeState = await this.workspacesService.getWorkspaceState(workspace.id, userId);
-    if (this.isCompleteProgress(beforeState.progress)) {
+    const scriptureCache = (workspace.scriptureCache || {}) as Record<string, any>;
+    const needsDemoRefresh = !this.hasRichDemoTranslationComparison(scriptureCache);
+    if (this.isCompleteProgress(beforeState.progress) && !needsDemoRefresh) {
       if (workspace.status !== WorkspaceStatus.COMPLETED) {
         workspace = await this.workspacesService.update(workspace.id, userId, {
           status: WorkspaceStatus.COMPLETED,
@@ -311,6 +324,28 @@ export class WorkspacesController {
           },
         });
       }
+
+      return {
+        workspaceId: workspace.id,
+        created: false,
+        prepared: true,
+        state: await this.workspacesService.getWorkspaceState(workspace.id, userId),
+      };
+    }
+
+    if (this.isCompleteProgress(beforeState.progress) && needsDemoRefresh) {
+      await this.prepareDemoWorkspaceArtifacts(workspace.id, userId, authorization);
+      workspace = await this.workspacesService.update(workspace.id, userId, {
+        status: WorkspaceStatus.COMPLETED,
+        metadata: {
+          ...(workspace.metadata || {}),
+          demo: {
+            enabled: true,
+            kind: 'john_3_16',
+            completedAt: new Date().toISOString(),
+          },
+        },
+      });
 
       return {
         workspaceId: workspace.id,
@@ -462,7 +497,7 @@ export class WorkspacesController {
     if (this.wantsAsync(asyncMode)) {
       return this.workspaceGenerationService.queueWorkspaceGeneration(id, req.user.userId, 'outline', promptOverride);
     }
-    return this.workspacesService.generateOutlines(id, req.user.userId, 3, promptOverride);
+    return this.workspacesService.generateOutlines(id, req.user.userId, 1, promptOverride);
   }
 
   @Post(':id/manuscript')

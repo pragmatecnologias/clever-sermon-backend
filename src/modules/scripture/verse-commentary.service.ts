@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EGWService } from '../egw/egw.service';
 import { LlmService } from '../llm/llm.service';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackVerseCommentary } from './scripture-fallbacks';
 
 export interface VerseCommentary {
   verseReference: string;
@@ -53,6 +54,21 @@ export class VerseCommentaryService {
         notes.push(...llmNotes);
       }
 
+      if (notes.length === 0) {
+        const fallback = buildFallbackVerseCommentary(verseReference, '', requestedLanguage);
+        notes.push(...fallback.notes);
+      }
+
+      if (notes.length < 4) {
+        const fallback = buildFallbackVerseCommentary(verseReference, '', requestedLanguage);
+        for (const item of fallback.notes) {
+          if (notes.length >= 4) break;
+          if (!notes.some((existing) => existing.type === item.type)) {
+            notes.push(item);
+          }
+        }
+      }
+
       return {
         verseReference,
         notes,
@@ -60,11 +76,8 @@ export class VerseCommentaryService {
       };
     } catch (error) {
       console.error('Error generating verse commentary:', error);
-      return {
-        verseReference,
-        notes: [],
-        dataSource: 'unavailable'
-      };
+      const fallback = buildFallbackVerseCommentary(verseReference, '', language);
+      return fallback;
     }
   }
 
@@ -84,9 +97,14 @@ export class VerseCommentaryService {
         userId || 'system',
         {
           temperature: 0.3,
-          maxTokens: 200,
+          maxTokens: 1000,
+          timeoutMs: 12000,
         }
       );
+
+      if (!response || response.trim().length === 0) {
+        return null;
+      }
 
       return {
         type: 'context',
@@ -116,6 +134,7 @@ export class VerseCommentaryService {
         {
           temperature: 0.3,
           maxTokens: 800,
+          timeoutMs: 12000,
         }
       );
 

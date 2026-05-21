@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackStudySynthesis } from './scripture-fallbacks';
 
 export interface StudySynthesisData {
   passage: string;
@@ -20,10 +21,10 @@ export class StudySynthesisService {
   ) {}
 
   async getStudySynthesis(reference: string, userId?: string, language?: string): Promise<StudySynthesisData> {
+    let passageText = '';
     try {
       const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
       // Fetch actual passage text to prevent LLM hallucination
-      let passageText = '';
       try {
         const result = await this.scriptureService.getPassage(reference, analysisTranslation);
         if (result && result.verses && result.verses.length > 0) {
@@ -40,21 +41,27 @@ export class StudySynthesisService {
         {
           temperature: 0.3,
           maxTokens: 1200,
+          timeoutMs: 12000,
         }
       );
 
       const parsed = this.parseResponse(response, reference);
+      if (
+        !String(parsed.centralClaim || '').trim() ||
+        !String(parsed.canonicalSignificance || '').trim() ||
+        !String(parsed.pastoralTakeaway || '').trim() ||
+        !String(parsed.preachingFocus || '').trim() ||
+        String(parsed.centralClaim || '').trim().length < 90 ||
+        String(parsed.canonicalSignificance || '').trim().length < 70 ||
+        String(parsed.pastoralTakeaway || '').trim().length < 70 ||
+        String(parsed.preachingFocus || '').trim().length < 70
+      ) {
+        return buildFallbackStudySynthesis(reference, passageText, language);
+      }
       return parsed;
     } catch (error) {
       console.error('Error generating study synthesis:', error);
-      return {
-        passage: reference,
-        centralClaim: '',
-        canonicalSignificance: '',
-        pastoralTakeaway: '',
-        preachingFocus: '',
-        dataSource: 'unavailable',
-      };
+      return buildFallbackStudySynthesis(reference, passageText, language);
     }
   }
 

@@ -8,6 +8,8 @@ import { DataSource } from 'typeorm';
 import { config } from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
+import { CreateEGWTables1709577500000 } from '../src/migrations/1709577500000-CreateEGWTables';
+import { CreateEGWScriptureReferences1709577600000 } from '../src/migrations/1709577600000-CreateEGWScriptureReferences';
 
 config({ path: path.join(__dirname, '../.env'), override: true });
 
@@ -21,6 +23,19 @@ const dataSource = new DataSource({
   synchronize: false,
   logging: false,
 });
+
+async function tableExists(tableName: string): Promise<boolean> {
+  const rows = await dataSource.query(
+    `SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = $1
+    ) AS exists`,
+    [tableName]
+  );
+
+  return Boolean(rows?.[0]?.exists);
+}
 
 async function seedAllEGW() {
   console.log('\n' + '='.repeat(60));
@@ -55,6 +70,28 @@ async function seedAllEGW() {
   console.log('🔌 Connecting to database...');
   await dataSource.initialize();
   console.log('✅ Connected\n');
+
+  const queryRunner = dataSource.createQueryRunner();
+  await queryRunner.connect();
+  try {
+    const booksExists = await tableExists('egw_books');
+    const paragraphsExists = await tableExists('egw_paragraphs');
+    const refsExists = await tableExists('egw_scripture_references');
+
+    if (!booksExists || !paragraphsExists) {
+      console.log('🧱 EGW tables missing, creating books and paragraphs...');
+      await new CreateEGWTables1709577500000().up(queryRunner);
+      console.log('✅ EGW books and paragraphs tables ready\n');
+    }
+
+    if (!refsExists) {
+      console.log('🧱 EGW scripture references missing, creating references table...');
+      await new CreateEGWScriptureReferences1709577600000().up(queryRunner);
+      console.log('✅ EGW scripture references table ready\n');
+    }
+  } finally {
+    await queryRunner.release();
+  }
 
   // Clear existing EGW data to prevent duplicates
   console.log('🗑️  Clearing existing EGW data...');

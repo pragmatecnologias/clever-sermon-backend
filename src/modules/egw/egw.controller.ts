@@ -1,6 +1,7 @@
 import { Controller, Get, Query, Param, UseGuards } from '@nestjs/common';
 import { EGWService } from './egw.service';
 import { EGWIntegrationService } from './egw-integration.service';
+import { EGWPassageIntegrationService } from './egw-passage-integration.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('egw')
@@ -8,7 +9,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 export class EGWController {
   constructor(
     private egwService: EGWService,
-    private egwIntegrationService: EGWIntegrationService
+    private egwIntegrationService: EGWIntegrationService,
+    private egwPassageIntegrationService: EGWPassageIntegrationService,
   ) {}
 
   @Get('books')
@@ -148,13 +150,7 @@ export class EGWController {
     const lang = language || 'en';
     const limitNum = limit ? parseInt(limit) : 5;
 
-    const { EGWPassageIntegrationService } = require('./egw-passage-integration.service');
-    const passageService = new EGWPassageIntegrationService(
-      this.egwService['paragraphRepository'],
-      this.egwService['scriptureRefRepository']
-    );
-
-    return passageService.getPassageInsights(
+    return this.egwPassageIntegrationService.getPassageInsights(
       book,
       chapterNum,
       verseStartNum,
@@ -166,12 +162,6 @@ export class EGWController {
 
   @Get('sda-smart-boost-check')
   async checkSDASmartBoost(@Query('passage') passage: string) {
-    const { EGWPassageIntegrationService } = require('./egw-passage-integration.service');
-    const passageService = new EGWPassageIntegrationService(
-      this.egwService['paragraphRepository'],
-      this.egwService['scriptureRefRepository']
-    );
-
-    return passageService.getSDASmartBoost(passage);
+    return this.egwPassageIntegrationService.getSDASmartBoost(passage);
   }
 }

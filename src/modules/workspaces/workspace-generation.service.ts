@@ -196,8 +196,8 @@ export class WorkspaceGenerationService {
       await setStage('outline', 'Generating outlines.');
       const result =
         payload.capability === 'outline-points'
-          ? await this.workspacesService.generateOutlines(payload.workspaceId, payload.userId, 3, payload.promptOverride)
-          : await this.workspacesService.generateOutlines(payload.workspaceId, payload.userId, 3, payload.promptOverride);
+          ? await this.workspacesService.generateOutlines(payload.workspaceId, payload.userId, 1, payload.promptOverride)
+          : await this.workspacesService.generateOutlines(payload.workspaceId, payload.userId, 1, payload.promptOverride);
       if (payload.capability === 'outline-points') {
         this.validateGenerationResult(
           'outline-points',

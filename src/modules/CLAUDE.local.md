@@ -5,5 +5,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #11783 | 1:21 PM | 🔵 | Login working with admin@example.com | ~113 |
+| #11857 | 6:29 PM | 🔵 | EGW insights passage endpoint fully implemented | ~353 |
 </claude-mem-context>

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackInterpretiveChallenge } from './scripture-fallbacks';
 
 export interface InterpretiveChallenge {
   passage: string;
@@ -54,7 +55,7 @@ export class InterpretiveChallengesDataService {
       const generated = await this.generateInterpretiveChallenge(passage, language || 'en');
       if (!generated || !Array.isArray(generated.views) || generated.views.length === 0) {
         this.logger.warn(`Interpretive challenge unavailable for "${passage}" (language=${language || 'en'}): empty generated views`);
-        return this.buildUnavailableChallenge(passage, language || 'en', 'empty_views');
+        return this.buildFallbackChallenge(passage, language || 'en');
       }
       return generated;
     } catch (error) {
@@ -63,7 +64,7 @@ export class InterpretiveChallengesDataService {
         `Failed to generate interpretive challenge for "${passage}" (language=${language || 'en'}): ${message}`,
         error instanceof Error ? error.stack : undefined,
       );
-      return this.buildUnavailableChallenge(passage, language || 'en', 'generation_failed');
+      return this.buildFallbackChallenge(passage, language || 'en');
     }
   }
 
@@ -95,7 +96,8 @@ export class InterpretiveChallengesDataService {
 
     const response = await this.llmService.generateCompletion(prompt, 'system', {
       temperature: 0.3,
-      maxTokens: 800,
+      maxTokens: 3000,
+      timeoutMs: 12000,
     });
 
     if (!response || !response.trim()) {
@@ -144,6 +146,14 @@ export class InterpretiveChallengesDataService {
       reasoning: sdaPerspective.reasoning || sdaPerspective.razonamiento || '',
       supportingTexts: sdaPerspective.supportingTexts || sdaPerspective.textosDeApoyo || sdaPerspective.textos || [],
     } : undefined;
+
+    if (
+      !challenge ||
+      normalizedViews.length < 3 ||
+      normalizedViews.some((view: InterpretiveView) => String(view.summary || '').trim().length < 20 || view.keyArguments.length < 2)
+    ) {
+      throw new Error('LLM response too thin for interpretive challenge');
+    }
 
     return {
       passage,
@@ -356,5 +366,21 @@ export class InterpretiveChallengesDataService {
       dataSource: 'unavailable',
       sdaPerspective: undefined,
     };
+  }
+
+  private async buildFallbackChallenge(passage: string, language: string): Promise<InterpretiveChallenge> {
+    const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
+    let passageText = '';
+    try {
+      const result = await this.scriptureService.getPassage(passage, analysisTranslation);
+      if (result && result.verses && result.verses.length > 0) {
+        passageText = result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
+      }
+    } catch {
+      // keep fallback
+    }
+
+    const fallback = buildFallbackInterpretiveChallenge(passage, passageText, language);
+    return fallback;
   }
 }

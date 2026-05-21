@@ -3,6 +3,7 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
 import { ScripturePrompts } from './scripture-prompts';
+import { buildFallbackStructuralAnalysis } from './scripture-fallbacks';
 
 export interface StructuralAnalysis {
   passage: string;
@@ -59,12 +60,9 @@ export class StructuralAnalysisDataService {
     } catch (error) {
       console.error(`[StructuralAnalysis] Failed for passage: ${passage}, language: ${language}`, error);
       console.error('[StructuralAnalysis] Error details:', error.message, error.stack?.substring(0, 500));
-      return {
-        passage,
-        literaryGenre: 'Unknown',
-        structure: [],
-        dataSource: 'unavailable'
-      };
+      const fallbackPassage = await this.scriptureService.getPassage(passage, language === 'es' ? 'RVR1960' : 'KJV').catch(() => null);
+      const passageText = fallbackPassage && fallbackPassage.verses ? fallbackPassage.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n') : '';
+      return buildFallbackStructuralAnalysis(passage, passageText, language);
     }
   }
 
@@ -113,6 +111,7 @@ INSTRUCCIONES CRÍTICAS:
       const response = await this.llmService.generateCompletion(attemptPrompt, 'system', {
         temperature: 0.2,
         maxTokens: 1600,
+        timeoutMs: 12000,
       });
 
       console.log(`[StructuralAnalysis] LLM response length: ${response.length} chars`);
@@ -130,7 +129,7 @@ INSTRUCCIONES CRÍTICAS:
     }
 
     if (!parsed) {
-      throw new Error(`JSON parse failed after retries: ${lastParseError?.message || 'unknown error'}`);
+      return buildFallbackStructuralAnalysis(passage, passageText, language);
     }
 
     // Handle Spanish field names and normalize structure elements
@@ -153,7 +152,7 @@ INSTRUCCIONES CRÍTICAS:
         : [],
     } : undefined;
 
-    return {
+    const structuralAnalysis: StructuralAnalysis = {
       passage,
       literaryGenre: parsed.literaryGenre || parsed.géneroLiterario || parsed.generoLiterario || 'Unknown',
       structure: normalizedStructure,
@@ -161,6 +160,15 @@ INSTRUCCIONES CRÍTICAS:
       parallelism: (parsed.parallelism || parsed.paralelismo) && (parsed.parallelism || parsed.paralelismo).length > 0 ? (parsed.parallelism || parsed.paralelismo) : undefined,
       dataSource: 'llm-generated',
     };
+
+    if (
+      structuralAnalysis.structure.length < 3 ||
+      structuralAnalysis.structure.some((element) => String(element.description || '').trim().length < 20)
+    ) {
+      return buildFallbackStructuralAnalysis(passage, passageText, language);
+    }
+
+    return structuralAnalysis;
   }
 
   private normalizePassage(passage: string): string {

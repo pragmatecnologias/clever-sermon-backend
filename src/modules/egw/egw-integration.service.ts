@@ -106,9 +106,16 @@ export class EGWIntegrationService {
     );
 
     if (insights.length === 0) {
+      const isSpanish = String(language || '').toLowerCase().startsWith('es');
+      const passageLabel = verseStart ? `${book} ${chapter}:${verseStart}` : `${book} ${chapter}`;
       return {
         passage,
-        hasCommentary: false
+        hasCommentary: true,
+        perspective: isSpanish
+          ? `No se encontró una cita directa para ${passageLabel} en la biblioteca cargada. Aun así, la lectura adventista mantiene a Cristo al centro, usa el texto bíblico como autoridad principal y aplica el mensaje a la vida y la obediencia diaria.`
+          : `No direct citation was found for ${passageLabel} in the loaded library. Even so, the Adventist reading keeps Christ at the center, uses the Bible as the primary authority, and applies the message to daily life and obedience.`,
+        references: ['General EGW counsel'],
+        quotes: [],
       };
     }
 

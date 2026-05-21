@@ -11,6 +11,7 @@ import { DiscussionQuestion } from '../../entities/discussion-question.entity';
 import { SermonIllustration } from '../../entities/sermon-illustration.entity';
 import { SermonCitation, StatementType } from '../../entities/sermon-citation.entity';
 import { SermonStudyReport } from '../../entities/sermon-study-report.entity';
+import { SermonDnaAnalysis } from '../../entities/sermon-dna-analysis.entity';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { LlmService } from '../llm/llm.service';
@@ -161,6 +162,33 @@ export class WorkspacesService {
   private extractOutlinePointTexts = WorkspaceHelpers.extractOutlinePointTexts;
   private extractMalformedManuscriptPayload = WorkspaceHelpers.extractMalformedManuscriptPayload;
 
+  private getPrimaryStudyReport(workspace: SermonWorkspace) {
+    const reports = Array.isArray(workspace?.studyReports) ? workspace.studyReports.filter(Boolean) : [];
+    if (!reports.length) return null;
+    const passage = this.asString(workspace?.mainPassage || '').trim().toLowerCase();
+    const sortByRecent = (left: any, right: any) => {
+      const leftTime = new Date(this.asString(right?.updatedAt || right?.createdAt || '')).getTime();
+      const rightTime = new Date(this.asString(left?.updatedAt || left?.createdAt || '')).getTime();
+      return leftTime - rightTime;
+    };
+    const matchingPassage = reports.filter((report: any) => {
+      const sections = report?.sections || {};
+      const haystack = [
+        sections?.passageOverview,
+        sections?.exegeticalSummary,
+        sections?.literaryContext,
+        sections?.historicalContext,
+        sections?.canonicalContext,
+        sections?.mainTheologicalClaim,
+      ]
+        .map((value) => this.asString(value).toLowerCase())
+        .join(' ');
+      return passage ? haystack.includes(passage) : false;
+    });
+    const pool = matchingPassage.length ? matchingPassage : reports;
+    return [...pool].sort(sortByRecent)[0] || null;
+  }
+
   private buildSocraticCoachPrompt(
     workspace: SermonWorkspace,
     payload: {
@@ -177,7 +205,7 @@ export class WorkspacesService {
     const selectedOutline = workspace.outlines?.find((o: any) => o.isSelected) || workspace.outlines?.[0];
     const outlinePoints = this.extractOutlinePointTexts(selectedOutline?.structure || {}).slice(0, 8);
     const manuscriptText = this.asString(workspace.manuscripts?.[0]?.content?.text || '');
-    const reportSections = workspace.studyReports?.[0]?.sections || {};
+    const reportSections = this.getPrimaryStudyReport(workspace)?.sections || {};
     const cache = workspace.scriptureCache || {};
     const integritySignals = {
       latestDnaSummary: this.asString(workspace.dnaAnalyses?.[0]?.summary || ''),
@@ -2680,29 +2708,6 @@ Return ONLY valid JSON with this exact top-level shape:
 {
   "introduction": "string",
   "points": ["Point 1", "Point 2", "Point 3"],
-  "pointNodes": [
-    {
-      "title": "string (full point description)",
-      "slideTitle": "string (SHORT 2-4 word title for slides, max 25 characters)",
-      "summary": "string",
-      "subpoints": ["string"],
-      "supportingVerses": ["Book 1:1"],
-      "canonicalThemes": ["string"],
-      "crossReferences": ["Book 1:1"],
-      "applications": ["string"],
-      "discussionQuestions": ["string"],
-      "illustrationIdeas": ["string"],
-      "mediaSuggestions": ["string"],
-      "egwSupport": [
-        {
-          "citation": "string",
-          "quote": "string",
-          "relevance": "string"
-        }
-      ],
-      "references": ["Book 1:1"]
-    }
-  ],
   "outlineType": "string",
   "sermonMovement": "string",
   "conclusion": "string",
@@ -2713,12 +2718,15 @@ CRITICAL for slideTitle:
 - slideTitle must be SHORT and PUNCHY (2-4 words, max 25 characters)
 - Examples: "Muerte espiritual", "Obra redentora", "Nueva vida", "Fe viva"
 - The full point description goes in "title", the short slide-friendly version goes in "slideTitle"
+- Keep each summary to 1-2 short paragraphs max.
+- Keep each array to 3 items or fewer.
+- Do not generate pointNodes in this step. Those are generated separately from the canonical points.
+- Do not generate applications, discussion questions, illustration ideas, media suggestions, or EGW support here. Those are attached later from study assets.
 
 Rules:
 - "points" is required and canonical; it must contain 3-5 concise points.
 - "pointNodes" is optional enrichment aligned by index to "points".
 - Use study assets from the Study Report Context when present.
-- Keep applications, questions, illustration ideas, media suggestions, EGW support, and references tied to each point instead of treating them as separate tabs.
 - Ensure each point remains faithful to the passage and avoids drift.
 - In Adventist context, never use Sunday/Domingo worship framing. Use Sabbath/Sábado.
 - Do not include markdown, prose outside JSON, or code fences.`;
@@ -2750,9 +2758,6 @@ Return ONLY valid JSON as an array aligned by index to the canonical points:
     "slideTitle": "string (SHORT 2-4 word title for slides, max 25 characters)",
     "summary": "string",
     "supportingVerses": ["Book 1:1"],
-    "applications": ["string"],
-    "discussionQuestions": ["string"],
-    "illustrationIdeas": ["string"],
     "references": ["Book 1:1"]
   }
 ]
@@ -2763,6 +2768,8 @@ Rules:
 - "slideTitle" must be punchy, meaningful, and not a truncation of the first words.
 - Keep all metadata tightly related to its point.
 - If a field is unknown, return an empty string or empty array instead of inventing unrelated content.
+- Keep the summary brief. Do not exceed 3 short sentences.
+- Do not generate applications, discussion questions, or illustration ideas here; those come from study assets later.
 - In Adventist context, never use Sunday/Domingo worship framing. Use Sabbath/Sábado.
 - Do not include markdown, prose outside JSON, or code fences.`;
   }
@@ -2783,13 +2790,30 @@ Rules:
 
     return points.map((point, index) => {
       const node = normalizedNodes[index] || {};
+      const pointText = this.asString(point);
+      const pointParts = pointText.split(/\s[-–—]\s/);
+      const fallbackSummary = this.asString(
+        node?.summary ||
+          (pointParts.length > 1 ? pointParts.slice(1).join(' - ') : pointText) ||
+          pointText,
+      );
+      const fallbackSlideTitle = this.asString(
+        node?.slideTitle ||
+          pointText
+            .split(/\s[-–—:]\s/)
+            .shift()
+            ?.split(/\s+/)
+            .slice(0, 4)
+            .join(' ') ||
+          `Point ${index + 1}`,
+      );
       return {
         id: this.asString(node?.id || `point-${index + 1}`),
         level: Number(node?.level) || 1,
-        title: this.asString(point),
-        slideTitle: this.asString(node?.slideTitle),
-        summary: this.asString(node?.summary),
-        movement: this.asString(node?.movement),
+        title: pointText,
+        slideTitle: fallbackSlideTitle,
+        summary: fallbackSummary,
+        movement: this.asString(node?.movement || fallbackSummary),
         supportingVerses: this.asStringArray(node?.supportingVerses, 10),
         canonicalThemes: this.asStringArray(node?.canonicalThemes, 8),
         crossReferences: this.asStringArray(node?.crossReferences, 10),
@@ -2833,7 +2857,7 @@ Rules:
     const pointNodesPrompt = this.buildOutlinePointNodesPrompt(workspace, canonicalPoints, reportText);
     const pointNodesResponse = await this.llmService.generateCompletion(pointNodesPrompt, userId, {
       temperature: 0.2,
-      maxTokens: 1100,
+      maxTokens: 500,
     });
     const parsedPointNodes = this.parseJsonSafe(pointNodesResponse);
     const normalizedPointNodes = this.normalizeGeneratedPointNodes(parsedPointNodes, canonicalPoints);
@@ -2864,7 +2888,7 @@ Rules:
       audienceMode: audienceMode || 'general congregation',
       includeSlideCues: options?.includeSlideCues !== false,
       includeKeyLines: options?.includeKeyLines !== false,
-      includeStudyInsights: options?.includeStudyInsights === true,
+      includeStudyInsights: options?.includeStudyInsights !== false,
     };
   }
 
@@ -3648,18 +3672,22 @@ LENGTH ENFORCEMENT:
     passIndex: number = 0,
   ): string {
     const isSpanish = workspace.language === 'es';
+    const studyReportRaw = this.getPrimaryStudyReport(workspace)?.sections || {};
     const structure = this.normalizeOutlineData(outline?.structure || {}) || {};
     const pointNodes = Array.isArray(structure.pointNodes) ? structure.pointNodes : [];
     const points = this.extractOutlinePointTexts(structure).slice(0, 4);
     const audience = this.asString(workspace.audienceProfile || '');
     const goal = this.asString(workspace.sermonGoals || '');
     const theme = this.asString(workspace.theme || '');
+    const studyAssets = (studyReportRaw?.studyAssets || {}) as Record<string, any>;
+    const categoryAssets = (studyAssets.categoryAssets || {}) as Record<string, any>;
+    const movementAssets = Array.isArray(studyAssets.movementAssets) ? studyAssets.movementAssets : [];
     const blocks: string[] = [];
 
     blocks.push(
       isSpanish
-        ? `<h2>Profundización Pastoral</h2><p>Antes de concluir, ampliemos cómo este pasaje transforma la vida diaria de la iglesia. Este desarrollo adicional conecta la verdad bíblica con decisiones concretas para ${this.formatManuscriptInline(audience || 'la congregación')}.</p>`
-        : `<h2>Pastoral Deepening</h2><p>Before concluding, we deepen how this passage transforms everyday church life. This additional development connects biblical truth with concrete decisions for ${this.formatManuscriptInline(audience || 'the congregation')}.</p>`,
+        ? `<h2>Profundización Pastoral</h2><p>Antes de concluir, ampliemos cómo este pasaje transforma la vida diaria de la iglesia. Este desarrollo adicional conecta la verdad bíblica con decisiones concretas para ${this.formatManuscriptInline(audience || 'la congregación')} y retoma el hilo del estudio ya realizado.</p><p><strong>Resumen de estudio:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.exegeticalSummary || studyReportRaw.passageOverview || ''))}</p><p><strong>Contexto literario:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.literaryContext || ''))}</p><p><strong>Contexto histórico:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.historicalContext || ''))}</p><p><strong>Contexto canónico:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.canonicalContext || ''))}</p>`
+        : `<h2>Pastoral Deepening</h2><p>Before concluding, we deepen how this passage transforms everyday church life. This additional development connects biblical truth with concrete decisions for ${this.formatManuscriptInline(audience || 'the congregation')} and reuses the study work already completed.</p><p><strong>Study summary:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.exegeticalSummary || studyReportRaw.passageOverview || ''))}</p><p><strong>Literary context:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.literaryContext || ''))}</p><p><strong>Historical context:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.historicalContext || ''))}</p><p><strong>Canonical context:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.canonicalContext || ''))}</p>`,
     );
 
     points.forEach((point, index) => {
@@ -3672,14 +3700,49 @@ LENGTH ENFORCEMENT:
       const questions = this.asStringArray(node?.discussionQuestions || [], 2);
       const illustrations = this.asStringArray(node?.illustrationIdeas || [], 2);
       const themes = this.asStringArray(node?.canonicalThemes || [], 2);
+      const studyThemes = this.asStringArray(studyReportRaw?.theologicalThemes || [], 4);
+      const keyTerms = Array.isArray(studyReportRaw?.keyTerms)
+        ? studyReportRaw.keyTerms.slice(0, 2).map((item: any) => this.asString(item?.term || item?.word || '')).filter(Boolean)
+        : [];
+      const crossRefs = Array.isArray(studyReportRaw?.crossReferences)
+        ? studyReportRaw.crossReferences.slice(0, 2).map((item: any) => this.asString(item?.reference || item?.verse || '')).filter(Boolean)
+        : [];
 
       if (isSpanish) {
         blocks.push(
           `<h3>${this.formatManuscriptInline(title)}</h3>` +
             `<p><strong>Desarrollo:</strong> ${this.formatManuscriptInline(summary || 'Este punto llama a una respuesta espiritual profunda y constante.')}</p>` +
+            `<p><strong>Conexión con el estudio:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.mainTheologicalClaim || theme || ''))}.</p>` +
+            `<p><strong>Énfasis doctrinal:</strong> ${this.formatManuscriptInline(studyThemes.join('; ') || 'La gracia de Dios, la fe respondida y la nueva vida en Cristo.')}</p>` +
             `<p><strong>Aplicación congregacional:</strong> Como iglesia, necesitamos llevar esta verdad al hogar, al servicio y a la misión semanal. ` +
-            `Esto implica oración intencional, discipulado activo y testimonio práctico para que la gracia de Cristo se vea en nuestras relaciones.</p>` +
+              `Esto implica oración intencional, discipulado activo y testimonio práctico para que la gracia de Cristo se vea en nuestras relaciones.</p>` +
             `<p><strong>Acompañamiento bíblico:</strong> ${this.formatManuscriptInline(refsText || workspace.mainPassage)} nos recuerda que la obediencia nace de la gracia y se expresa en obras preparadas por Dios.</p>` +
+            (movementAssets[index]
+              ? `<p><strong>Apoyo del estudio:</strong> ${this.formatManuscriptInline(this.asString(movementAssets[index]?.summary || ''))} ` +
+                `${this.formatManuscriptInline(this.asStringArray(movementAssets[index]?.applications || [], 4).join(' '))} ` +
+                `${this.formatManuscriptInline(this.asStringArray(movementAssets[index]?.discussionQuestions || [], 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.applications) && categoryAssets.applications.length
+              ? `<p><strong>Aplicaciones extendidas:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.applications, 4).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.discussionQuestions) && categoryAssets.discussionQuestions.length
+              ? `<p><strong>Preguntas pastorales:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.discussionQuestions, 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.illustrationIdeas) && categoryAssets.illustrationIdeas.length
+              ? `<p><strong>Ilustraciones:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.illustrationIdeas, 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.mediaSuggestions) && categoryAssets.mediaSuggestions.length
+              ? `<p><strong>Sugerencias de medios:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.mediaSuggestions, 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.egwSupport) && categoryAssets.egwSupport.length
+              ? `<p><strong>Apoyo de Espíritu de Profecía:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.egwSupport.slice(0, 3).map((item: any) => item?.quote || item?.citation || ''), 3).join(' '))}</p>`
+              : '') +
+            (keyTerms.length
+              ? `<p><strong>Términos clave:</strong> ${this.formatManuscriptInline(keyTerms.join('; '))}</p>`
+              : '') +
+            (crossRefs.length
+              ? `<p><strong>Referencias de apoyo:</strong> ${this.formatManuscriptInline(crossRefs.join(', '))}</p>`
+              : '') +
             (themes.length
               ? `<p><strong>Enfoque temático:</strong> ${this.formatManuscriptInline(themes.join('; '))}.</p>`
               : '') +
@@ -3697,8 +3760,36 @@ LENGTH ENFORCEMENT:
         blocks.push(
           `<h3>${this.formatManuscriptInline(title)}</h3>` +
             `<p><strong>Development:</strong> ${this.formatManuscriptInline(summary || 'This point calls for deep and sustained spiritual response.')}</p>` +
+            `<p><strong>Study connection:</strong> ${this.formatManuscriptInline(this.asString(studyReportRaw.mainTheologicalClaim || theme || ''))}.</p>` +
+            `<p><strong>Doctrinal emphasis:</strong> ${this.formatManuscriptInline(studyThemes.join('; ') || 'God’s grace, responsive faith, and new life in Christ.')}</p>` +
             `<p><strong>Congregational application:</strong> As a church we bring this truth into home life, service, and weekly mission through intentional prayer, active discipleship, and practical witness.</p>` +
             `<p><strong>Biblical grounding:</strong> ${this.formatManuscriptInline(refsText || workspace.mainPassage)} reminds us that obedience flows from grace and is expressed in works prepared by God.</p>` +
+            (movementAssets[index]
+              ? `<p><strong>Study support:</strong> ${this.formatManuscriptInline(this.asString(movementAssets[index]?.summary || ''))} ` +
+                `${this.formatManuscriptInline(this.asStringArray(movementAssets[index]?.applications || [], 4).join(' '))} ` +
+                `${this.formatManuscriptInline(this.asStringArray(movementAssets[index]?.discussionQuestions || [], 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.applications) && categoryAssets.applications.length
+              ? `<p><strong>Extended applications:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.applications, 4).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.discussionQuestions) && categoryAssets.discussionQuestions.length
+              ? `<p><strong>Pastoral questions:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.discussionQuestions, 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.illustrationIdeas) && categoryAssets.illustrationIdeas.length
+              ? `<p><strong>Illustrative support:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.illustrationIdeas, 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.mediaSuggestions) && categoryAssets.mediaSuggestions.length
+              ? `<p><strong>Media suggestions:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.mediaSuggestions, 3).join(' '))}</p>`
+              : '') +
+            (Array.isArray(categoryAssets.egwSupport) && categoryAssets.egwSupport.length
+              ? `<p><strong>Spirit of Prophecy support:</strong> ${this.formatManuscriptInline(this.asStringArray(categoryAssets.egwSupport.slice(0, 3).map((item: any) => item?.quote || item?.citation || ''), 3).join(' '))}</p>`
+              : '') +
+            (keyTerms.length
+              ? `<p><strong>Key terms:</strong> ${this.formatManuscriptInline(keyTerms.join('; '))}</p>`
+              : '') +
+            (crossRefs.length
+              ? `<p><strong>Supporting references:</strong> ${this.formatManuscriptInline(crossRefs.join(', '))}</p>`
+              : '') +
             (themes.length
               ? `<p><strong>Thematic focus:</strong> ${this.formatManuscriptInline(themes.join('; '))}.</p>`
               : '') +
@@ -3727,16 +3818,16 @@ LENGTH ENFORCEMENT:
     }
 
     let html = blocks.join('\n');
-    const minReasonableWords = Math.max(220, Math.min(1200, neededWords));
+    const minReasonableWords = Math.max(650, Math.min(3600, neededWords));
     const dynamicPointTitles = points.map((item, idx) => this.asString(pointNodes[idx]?.title || item)).filter(Boolean);
     let safetyCounter = 0;
     while (this.countWords(this.stripHtmlForWordCount(html)) < minReasonableWords && dynamicPointTitles.length) {
       const title = dynamicPointTitles[(passIndex + safetyCounter) % dynamicPointTitles.length];
       html += isSpanish
-        ? `<p><strong>Profundización adicional:</strong> Retoma el énfasis de ${this.formatManuscriptInline(title)} y desarrolla su aplicación directa al contexto de ${this.formatManuscriptInline(audience || 'la congregación')}.</p>`
-        : `<p><strong>Additional deepening:</strong> Revisit ${this.formatManuscriptInline(title)} and develop direct application for ${this.formatManuscriptInline(audience || 'the congregation')}.</p>`;
+        ? `<p><strong>Profundización adicional:</strong> Retoma el énfasis de ${this.formatManuscriptInline(title)} y desarrolla cómo esta verdad cambia las decisiones del hogar, la iglesia y la misión. Conecta nuevamente el resumen del estudio, el contexto literario, el contexto histórico y el énfasis canónico para mostrar por qué este punto importa para ${this.formatManuscriptInline(audience || 'la congregación')}. Luego vuelve a mencionar la gracia de Dios, la respuesta de fe y el llamado pastoral a vivir con obediencia, gratitud y esperanza.</p>`
+        : `<p><strong>Additional deepening:</strong> Revisit ${this.formatManuscriptInline(title)} and show how this truth reshapes home life, church life, and mission. Reconnect the study summary, literary context, historical setting, and canonical significance so the congregation sees why this point matters for ${this.formatManuscriptInline(audience || 'the congregation')}. Then restate the grace of God, the human response of faith, and the pastoral call to live with obedience, gratitude, and hope.</p>`;
       safetyCounter += 1;
-      if (safetyCounter > 8) break;
+      if (safetyCounter > 12) break;
     }
 
     return html;
@@ -3748,14 +3839,19 @@ LENGTH ENFORCEMENT:
     options: Required<ManuscriptGenerationOptions>,
   ): { text: string; cues: ManuscriptCues } {
     const isSpanish = workspace.language === 'es';
+    const guardrail = this.buildGuardrailProfile(workspace);
     const normalizedStructure = this.normalizeOutlineData(outline?.structure || {}) || {};
     const pointNodes = Array.isArray(normalizedStructure.pointNodes) ? normalizedStructure.pointNodes : [];
     const pointTitles = this.extractOutlinePointTexts(normalizedStructure).slice(0, 4);
     const targetWords = Math.max(options.targetMinutes * this.manuscriptWpm, 220);
     const expandedBody = this.buildUnderLengthExpansionBlock(workspace, outline, targetWords, 0);
     const intro = isSpanish
-      ? `<h2>Manuscrito con guardrail profético</h2><p>Este borrador mantiene el pasaje en primer lugar, conserva a Cristo en el centro y evita especulación. Está diseñado para ayudar a predicar el mensaje con claridad pastoral y fidelidad bíblica.</p>`
-      : `<h2>Prophetic guardrail manuscript</h2><p>This draft keeps the passage first, keeps Christ at the center, and avoids speculation. It is designed to help preach the message with pastoral clarity and biblical fidelity.</p>`;
+      ? guardrail.active
+        ? `<h2>Manuscrito con guardrail profético</h2><p>Este borrador mantiene el pasaje en primer lugar, conserva a Cristo en el centro y evita especulación. Está diseñado para ayudar a predicar el mensaje con claridad pastoral y fidelidad bíblica.</p>`
+        : `<h2>Manuscrito pastoral</h2><p>Este borrador desarrolla con amplitud el mensaje del pasaje, usa el estudio ya generado y mantiene un tono pastoral, bíblico y claro. Está diseñado para que la congregación vea el flujo completo del sermón sin perder la conexión con el estudio previo.</p>`
+      : guardrail.active
+        ? `<h2>Prophetic guardrail manuscript</h2><p>This draft keeps the passage first, keeps Christ at the center, and avoids speculation. It is designed to help preach the message with pastoral clarity and biblical fidelity.</p>`
+        : `<h2>Pastoral manuscript</h2><p>This draft develops the passage in full, reuses the study already generated, and keeps a pastoral, biblical, and clear tone. It is designed so the congregation can follow the full sermon flow without losing the study work completed earlier.</p>`;
     const conclusion = isSpanish
       ? `<h2>Conclusión y llamado</h2><p>Invitemos a la congregación a responder al evangelio eterno con fe, adoración fiel y confianza en Jesucristo, el único que salva, sostiene y envía a su pueblo.</p>`
       : `<h2>Conclusion and appeal</h2><p>Invite the congregation to respond to the everlasting gospel with faith, faithful worship, and confidence in Jesus Christ, the only One who saves, sustains, and sends His people.</p>`;
@@ -3854,20 +3950,47 @@ Return ONLY valid JSON:
     // ============================================
     // STUDY REPORT - Background intelligence layer
     // ============================================
-    const studyReportRaw = workspace.studyReports?.[0]?.sections || {};
+    const studyReportRaw = this.getPrimaryStudyReport(workspace)?.sections || {};
     const studyReport = {
       passageOverview: this.asString(studyReportRaw.passageOverview || ''),
       literaryContext: this.asString(studyReportRaw.literaryContext || ''),
       historicalContext: this.asString(studyReportRaw.historicalContext || ''),
       canonicalContext: this.asString(studyReportRaw.canonicalContext || ''),
-      exegeticalFlow: this.asStringArray(studyReportRaw.exegeticalFlow || [], 8),
       exegeticalSummary: this.asString(studyReportRaw.exegeticalSummary || ''),
       mainTheologicalClaim: this.asString(studyReportRaw.mainTheologicalClaim || ''),
-      theologicalThemes: this.asStringArray(studyReportRaw.theologicalThemes || [], 8),
-      interpretiveChallenges: Array.isArray(studyReportRaw.interpretiveChallenges) 
-        ? studyReportRaw.interpretiveChallenges.slice(0, 5) 
+      theologicalThemes: this.asStringArray(studyReportRaw.theologicalThemes || [], 6),
+      interpretiveChallenges: Array.isArray(studyReportRaw.interpretiveChallenges)
+        ? studyReportRaw.interpretiveChallenges.slice(0, 3)
         : [],
-      pastoralImplications: studyReportRaw.pastoralImplications || {},
+      pastoralImplications: {
+        personalLife: this.asStringArray(studyReportRaw?.pastoralImplications?.personalLife || [], 4),
+        churchLife: this.asStringArray(studyReportRaw?.pastoralImplications?.churchLife || [], 4),
+        mission: this.asStringArray(studyReportRaw?.pastoralImplications?.mission || [], 4),
+      },
+      structureOfPassage: Array.isArray(studyReportRaw.structureOfPassage)
+        ? studyReportRaw.structureOfPassage.slice(0, 4).map((item: any) => ({
+            movement: this.asString(item?.movement || ''),
+            verses: this.asString(item?.verses || ''),
+            summary: this.asString(item?.summary || ''),
+          }))
+        : [],
+      keyTerms: Array.isArray(studyReportRaw.keyTerms)
+        ? studyReportRaw.keyTerms.slice(0, 6).map((item: any) => ({
+            term: this.asString(item?.term || item?.word || ''),
+            language: this.asString(item?.language || ''),
+            transliteration: this.asString(item?.transliteration || ''),
+            definition: this.asString(item?.definition || item?.meaning || ''),
+            nuance: this.asString(item?.nuance || item?.significance || ''),
+          }))
+        : [],
+      crossReferences: Array.isArray(studyReportRaw.crossReferences)
+        ? studyReportRaw.crossReferences.slice(0, 6).map((item: any) => ({
+            reference: this.asString(item?.reference || item?.verse || ''),
+            connection: this.asString(item?.connection || item?.explanation || item?.reason || ''),
+            category: this.asString(item?.category || ''),
+            tier: this.asString(item?.tier || ''),
+          })).filter((item: any) => item.reference)
+        : [],
     };
 
     // ============================================
@@ -4222,6 +4345,104 @@ Rules:
 - Return ONLY a numbered list (1., 2., 3., etc.).
 - End each question with a verse reference in the format "(Verse: Book 1:1)".
 - No tables, no pipes, no markdown, no headings, no extra commentary.`;
+  }
+
+  private buildDiscussionQuestionFallbacks(workspace: SermonWorkspace, seededQuestions: string[] = []): string[] {
+    const passage = this.asString(workspace?.mainPassage || '').trim() || 'the selected passage';
+    const theme = this.asString(workspace?.theme || 'God’s grace and invitation').trim();
+    const audience = this.asString(workspace?.audienceProfile || 'the congregation').trim();
+    const sermonGoals = this.asString(workspace?.sermonGoals || 'respond in faith').trim();
+    const verseReference = `(Verse: ${passage})`;
+    const baseQuestions = [
+      `What does ${passage} reveal about God’s character, and how should that shape the way ${audience.toLowerCase()} approaches Him? ${verseReference}`,
+      `How does this passage call us to trust ${theme.toLowerCase()} more deeply in our daily lives? ${verseReference}`,
+      `What response of faith is being invited in this passage, and how can we practice it this week? ${verseReference}`,
+      `How does the promise in ${passage} speak to people who feel distant, ashamed, or unworthy? ${verseReference}`,
+      `What does believing in Christ look like in concrete choices, habits, and relationships? ${verseReference}`,
+      `How does this passage help us understand salvation as a gift rather than something earned? ${verseReference}`,
+      `What would it look like for our church to live out the ${sermonGoals.toLowerCase()} in this passage? ${verseReference}`,
+      `How does this passage challenge us to share hope with others without becoming judgmental or defensive? ${verseReference}`,
+      `Which words or ideas in this passage deserve a closer look during group discussion, and why? ${verseReference}`,
+      `How does this passage reshape our understanding of identity, dignity, and belonging in Christ? ${verseReference}`,
+      `What practical step can you take this week to respond more fully to God’s invitation here? ${verseReference}`,
+      `Where do you most need to receive the good news of this passage personally before you can share it with others? ${verseReference}`,
+    ];
+
+    const combined = Array.from(
+      new Set([
+        ...this.asStringArray(seededQuestions, 12),
+        ...baseQuestions,
+      ].map((item) => this.asString(item).trim()).filter(Boolean)),
+    );
+    const normalized = workspace.language === 'es'
+      ? combined.map((item) => this.normalizeSpanishGeneratedText(item))
+      : combined;
+    return normalized.slice(0, 12);
+  }
+
+  private buildIllustrationFallbackItems(
+    workspace: SermonWorkspace,
+    mainPoints: string[] = [],
+    seededIllustrations: string[] = [],
+  ): Array<{ title: string; content: string; source?: string; relatedPoint?: string; tags?: string[] }> {
+    const passage = this.asString(workspace?.mainPassage || '').trim() || 'the selected passage';
+    const theme = this.asString(workspace?.theme || 'God’s grace and invitation').trim();
+    const audience = this.asString(workspace?.audienceProfile || 'the congregation').trim();
+    const points = Array.isArray(mainPoints) ? mainPoints.filter(Boolean) : [];
+    const sources = Array.from(new Set([passage, ...points].filter(Boolean)));
+    const ideas = [
+      {
+        title: 'Storm and rescue',
+        content: `Picture a person being pulled from rough water at the last moment, mirroring how ${passage} presents rescue as a gift rather than a reward.`,
+      },
+      {
+        title: 'Open door',
+        content: `An open door with warm light spilling into the room can illustrate how ${theme.toLowerCase()} invites ${audience.toLowerCase()} home.`,
+      },
+      {
+        title: 'Wrapped gift',
+        content: `A costly, carefully wrapped gift waiting on a table helps explain that God’s love in ${passage} is given, not earned.`,
+      },
+      {
+        title: 'Father on the porch',
+        content: `A father waiting on the porch for a returning child can help the congregation feel the welcome embedded in ${passage}.`,
+      },
+      {
+        title: 'Lighthouse in the storm',
+        content: `A lighthouse cutting through storm-dark waves works well for the way ${passage} offers direction and hope in chaos.`,
+      },
+      {
+        title: 'Seed and new growth',
+        content: `A seed breaking open into new life can help show how faith receives life and begins a new way of living.`,
+      },
+      {
+        title: 'Courtroom grace',
+        content: `A judge paying the penalty himself can help the audience grasp the costliness of God’s gift in ${passage}.`,
+      },
+      {
+        title: 'Bridge home',
+        content: `A bridge spanning a gap can illustrate how ${passage} moves people from distance into relationship with God.`,
+      },
+    ];
+
+    const seedIdeas = Array.from(new Set(seededIllustrations.map((item) => this.asString(item).trim()).filter(Boolean)));
+    const built = [
+      ...seedIdeas.map((content, index) => ({
+        title: `Illustration ${index + 1}`,
+        content,
+        source: sources[index % sources.length] || passage,
+      })),
+      ...ideas.map((item, index) => ({
+        ...item,
+        source: sources[index % sources.length] || passage,
+      })),
+    ];
+
+    return built.slice(0, 8).map((item, index) => ({
+      ...item,
+      relatedPoint: points[index % points.length] || null,
+      tags: [theme, passage].filter(Boolean).slice(0, 4),
+    }));
   }
 
   buildMediaSuggestionsPrompt(
@@ -5659,7 +5880,6 @@ Rules:
       theologicalThemes: Array.isArray(sections?.theologicalThemes) ? sections.theologicalThemes : [],
       interpretiveChallenges: Array.isArray(sections?.interpretiveChallenges) ? sections.interpretiveChallenges : [],
       pastoralImplications: sections?.pastoralImplications || null,
-      studyAssets: sections?.studyAssets || null,
       references: this.normalizeReferenceEntries(workspace?.references || [], 12),
     };
   }
@@ -5775,33 +5995,12 @@ Rules:
       const after = JSON.stringify(sanitizedStructure || {});
       if (before !== after) {
         await this.outlineRepository.update({ id: outline.id }, { structure: sanitizedStructure });
+        outline.structure = sanitizedStructure;
         touched = true;
       }
     }
 
-    workspace.outlines = [];
-    if (!touched) {
-      return workspace;
-    }
-
-    return this.workspaceRepository.findOne({
-      where: { id: workspace.id, userId: workspace.userId },
-      relations: [
-        'outlines',
-        'manuscripts',
-        'applications',
-        'illustrations',
-        'discussionQuestions',
-        'citations',
-        'dnaAnalyses',
-        'studyReports',
-        'theologicalCenterAnalyses',
-        'tensionAnalyses',
-        'doctrinalChecks',
-        'blindSpotAnalyses',
-        'preachingStrategies',
-      ],
-    });
+    return workspace;
   }
 
   private normalizeStudyReportSections(raw: any): Record<string, any> {
@@ -5959,11 +6158,8 @@ Rules:
     const discussionQuestions = this.flattenStudyAssetStrings(studyAssets, 'discussionQuestions', 18);
     const illustrationIdeas = this.flattenStudyAssetStrings(studyAssets, 'illustrationIdeas', 18);
 
-    await this.applicationRepository.delete({ workspaceId });
-    await this.questionRepository.delete({ workspaceId });
-    await this.illustrationRepository.delete({ workspaceId });
-
     if (applications.length) {
+      await this.applicationRepository.delete({ workspaceId });
       await this.applicationRepository.save(
         applications.map((content, index) =>
           this.applicationRepository.create({
@@ -5977,6 +6173,7 @@ Rules:
     }
 
     if (discussionQuestions.length) {
+      await this.questionRepository.delete({ workspaceId });
       await this.questionRepository.save(
         discussionQuestions.map((question, index) =>
           this.questionRepository.create({
@@ -5990,6 +6187,7 @@ Rules:
     }
 
     if (illustrationIdeas.length) {
+      await this.illustrationRepository.delete({ workspaceId });
       await this.illustrationRepository.save(
         illustrationIdeas.map((content, index) =>
           this.illustrationRepository.create({
@@ -6009,6 +6207,7 @@ Rules:
     promptOverride?: string,
   ): Promise<SermonOutline[]> {
     const workspace = await this.findOne(workspaceId, userId);
+    const outlineCount = 1;
 
     if (Array.isArray(workspace.outlines) && workspace.outlines.length) {
       const outlineHistoryBase = Array.isArray((workspace.metadata as any)?.outlineHistory)
@@ -6090,10 +6289,10 @@ Rules:
     const studyReport = workspace.studyReports?.[0];
     const studyContext = this.buildOutlineStudyContext(studyReport, workspace);
     const reportText = studyReport?.sections ? JSON.stringify(studyContext, null, 2) : '';
-    const pointsPrompt = promptOverride || this.buildOutlinePointsPrompt(workspace, count, reportText);
+    const pointsPrompt = promptOverride || this.buildOutlinePointsPrompt(workspace, outlineCount, reportText);
     const pointsResponse = await this.llmService.generateCompletion(pointsPrompt, userId, {
       temperature: 0.6,
-      maxTokens: 900,
+      maxTokens: 700,
     });
     this.logLlmOutput('outline:points', pointsResponse);
 
@@ -6169,22 +6368,19 @@ Rules:
     this.validateGenerationResult('outline-points', pointsVariations);
     const generatedPointSignatures = new Set<string>();
 
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < outlineCount; i++) {
       const variationData = pointsVariations[i];
       const points = variationData?.points?.length ? variationData.points : fallbackPoints;
       const variation = variationData?.angle
         ? `Angle: ${variationData.angle}. Style: ${variationData.style || 'N/A'}. Theological Emphasis: ${variationData.theologicalEmphasis || 'N/A'}. Audience Focus: ${variationData.audienceFocus || 'N/A'}. Structure: ${variationData.sermonStructure || 'N/A'}. Keep this outline distinct in tone and structure.`
         : `Outline variation ${i + 1} with a distinct angle and tone.`;
       const prompt = this.buildOutlineFromPointsPrompt(workspace, points, variation, reportText);
-      console.log('[OUTLINE PROMPT]', prompt.substring(0, 500));
       let response = await this.llmService.generateCompletion(prompt, userId, {
         temperature: 0.9,
-        maxTokens: 2200,
+        maxTokens: 1200,
       });
-      console.log('[OUTLINE RAW RESPONSE]', response);
       this.logLlmOutput('outline', response);
       let outlineData = this.parseJsonSafe(response);
-      console.log('[OUTLINE PARSED pointNodes]', JSON.stringify(outlineData?.pointNodes?.map((p: any) => ({ title: p?.title?.substring(0, 30), slideTitle: p?.slideTitle })), null, 2));
       outlineData = outlineData ? this.normalizeOutlineData(outlineData) : null;
       if (!outlineData) {
         outlineData = this.parseOutlineFromResponse(response);
@@ -6205,7 +6401,7 @@ Rules:
         const diversityPrompt = `${prompt}\n\nIMPORTANT: Previous options are too similar. Regenerate with significantly different point wording, progression, and framing.`;
         response = await this.llmService.generateCompletion(diversityPrompt, userId, {
           temperature: 1.0,
-          maxTokens: 2200,
+          maxTokens: 1200,
         });
         this.logLlmOutput('outline:diversity-regenerate', response);
         let retriedOutlineData = this.parseJsonSafe(response);
@@ -6228,7 +6424,7 @@ Rules:
         }
       }
       outlineData = await this.ensureOutlinePointNodes(workspace, userId, outlineData, reportText);
-      outlineData = this.attachStudyAssetsToOutline(outlineData, studyContext?.studyAssets);
+      outlineData = this.attachStudyAssetsToOutline(outlineData, studyReport?.sections?.studyAssets);
       outlineData = this.sanitizeOutputForLens(outlineData, workspace);
       outlineData = this.sanitizePropheticOutlineReferences(outlineData || {}, workspace);
       const outlineSeedPoints = Array.isArray(points) ? points.map((item) => this.asString(item)).filter(Boolean) : [];
@@ -6307,29 +6503,35 @@ Rules:
       await this.workspaceRepository.save(workspace);
     }
 
-    const outline = await this.outlineRepository.findOne({ where: { id: outlineId } });
-    if (!outline) {
+    const outlineFromWorkspace = Array.isArray(workspace.outlines)
+      ? (workspace.outlines as any[]).find((item: any) => item?.id === outlineId || item?.isSelected) || workspace.outlines[0]
+      : null;
+    const outline = outlineId ? await this.outlineRepository.findOne({ where: { id: outlineId } }) : null;
+    const selectedOutline = outline || outlineFromWorkspace;
+    if (!selectedOutline) {
       throw new Error('Outline not found');
     }
     // Keep only the newest manuscript draft per workspace.
     await this.manuscriptRepository.delete({ workspaceId });
     const normalizedOptions = this.normalizeManuscriptOptions(workspace, manuscriptOptions);
-    const prompt = promptOverride || this.buildManuscriptPrompt(workspace, outline, normalizedOptions);
+    const prompt = promptOverride || this.buildManuscriptPrompt(workspace, selectedOutline, normalizedOptions);
     // Manuscripts need much higher token limits - calculate based on target minutes
     // For comprehensive manuscripts with HTML overhead, keep a generous token buffer for long-form outputs.
     // Add 50% buffer for rich content with illustrations, word studies, cross-references
-    const targetTokens = Math.max(6000, Math.ceil((normalizedOptions.targetMinutes || 22) * 450));
+    const targetTokens = Math.max(4500, Math.ceil((normalizedOptions.targetMinutes || 22) * 200));
+    const manuscriptTimeoutMs = 60000;
     const useGuardrailFallback = this.buildGuardrailProfile(workspace).active;
     let parsedManuscript: { text: string; cues: ManuscriptCues };
     let usedFallback = useGuardrailFallback;
     if (useGuardrailFallback) {
       console.warn('[manuscript] guardrail fallback activated for prophetic passage');
-      parsedManuscript = this.buildManuscriptGuardrailFallback(workspace, outline, normalizedOptions);
+      parsedManuscript = this.buildManuscriptGuardrailFallback(workspace, selectedOutline, normalizedOptions);
     } else {
       try {
         const manuscriptResponse = await this.llmService.generateCompletion(prompt, userId, {
           maxTokens: targetTokens,
           temperature: 0.65, // Slightly lower for more coherent long-form content
+          timeoutMs: manuscriptTimeoutMs,
         });
         this.logLlmOutput('manuscript', manuscriptResponse);
         parsedManuscript = this.normalizeManuscriptForWorkspace(
@@ -6341,7 +6543,7 @@ Rules:
         console.warn(
           `[manuscript] fallback activated: ${(error as Error)?.message || 'unknown error'}`,
         );
-        parsedManuscript = this.buildManuscriptGuardrailFallback(workspace, outline, normalizedOptions);
+        parsedManuscript = this.buildManuscriptGuardrailFallback(workspace, selectedOutline, normalizedOptions);
       }
     }
 
@@ -6354,6 +6556,7 @@ Rules:
       const rewrittenResponse = await this.llmService.generateCompletion(rewritePrompt, userId, {
         maxTokens: targetTokens,
         temperature: 0.2,
+        timeoutMs: manuscriptTimeoutMs,
       });
       this.logLlmOutput('manuscript:spanish-rewrite', rewrittenResponse);
       parsedManuscript = this.normalizeManuscriptForWorkspace(
@@ -6366,7 +6569,7 @@ Rules:
       if (!usedFallback) {
         throw new BadRequestException('Unable to generate a usable manuscript draft. Please regenerate.');
       }
-      parsedManuscript = this.buildManuscriptGuardrailFallback(workspace, outline, normalizedOptions);
+      parsedManuscript = this.buildManuscriptGuardrailFallback(workspace, selectedOutline, normalizedOptions);
     }
 
     let quality = this.assessManuscriptQuality(parsedManuscript.text, normalizedOptions);
@@ -6392,6 +6595,7 @@ Rules:
       const repairedResponse = await this.llmService.generateCompletion(repairPrompt, userId, {
         maxTokens: targetTokens,
         temperature: shouldPrioritizeLength ? 0.4 : 0.35,
+        timeoutMs: manuscriptTimeoutMs,
       });
       repairAttemptsExecuted += 1;
       this.logLlmOutput(`manuscript:quality-repair:${repairAttemptsExecuted}`, repairedResponse);
@@ -6409,6 +6613,7 @@ Rules:
         const rewrittenResponse = await this.llmService.generateCompletion(rewritePrompt, userId, {
           maxTokens: targetTokens,
           temperature: 0.2,
+          timeoutMs: manuscriptTimeoutMs,
         });
         this.logLlmOutput(`manuscript:quality-repair:${repairAttemptsExecuted}:spanish-rewrite`, rewrittenResponse);
         candidateManuscript = this.normalizeManuscriptForWorkspace(
@@ -6447,6 +6652,7 @@ Rules:
         const refreshResponse = await this.llmService.generateCompletion(refreshPrompt, userId, {
           temperature: 0.2,
           maxTokens: 1400,
+          timeoutMs: manuscriptTimeoutMs,
         });
         this.logLlmOutput('manuscript:cues-auto-refresh', refreshResponse);
         let refreshedCues = this.sanitizeCueObject(this.parseJsonSafe(refreshResponse) || {});
@@ -6651,17 +6857,52 @@ Rules:
     const prompt = promptOverride || this.buildDiscussionPrompt(workspace, seededQuestions);
     const response = await this.llmService.generateCompletion(prompt, userId);
     this.logLlmOutput('questions', response);
-    const questionTexts = this.parseListFromResponse(response);
+    const parsed = this.parseJsonSafe(response);
+    const parsedQuestions = Array.from(
+      new Set([
+        ...this.parseListFromResponse(response),
+        ...(Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.discussionQuestions)
+            ? parsed.discussionQuestions
+            : Array.isArray(parsed?.questions)
+            ? parsed.questions
+              : []),
+        ...seededQuestions,
+      ].map((item) => this.asString(item).trim()).filter(Boolean)),
+    ).slice(0, 12);
+    const fallbackQuestions = this.buildDiscussionQuestionFallbacks(workspace, seededQuestions);
+    const questionTexts = parsedQuestions.filter((item) => item.split(/\s+/).filter(Boolean).length >= 5);
+    const finalQuestionTexts = questionTexts.length >= 6 ? questionTexts : fallbackQuestions;
 
     const questions = [];
-    for (let i = 0; i < questionTexts.length; i++) {
+    for (let i = 0; i < finalQuestionTexts.length; i++) {
       const question = this.questionRepository.create({
         workspaceId,
-        question: workspace.language === 'es' ? this.normalizeSpanishGeneratedText(questionTexts[i]) : questionTexts[i],
+        question: workspace.language === 'es' ? this.normalizeSpanishGeneratedText(finalQuestionTexts[i]) : finalQuestionTexts[i],
         orderIndex: i,
       });
 
       questions.push(await this.questionRepository.save(question));
+    }
+
+    const latestReport = workspace.studyReports?.[0] || null;
+    if (latestReport) {
+      const latestSections = latestReport.sections || {};
+      const latestStudyAssets = latestSections.studyAssets || {};
+      const latestCategoryAssets = latestStudyAssets.categoryAssets || {};
+      latestReport.sections = {
+        ...latestSections,
+        studyAssets: {
+          ...latestStudyAssets,
+          categoryAssets: {
+            ...latestCategoryAssets,
+            discussionQuestions: finalQuestionTexts,
+          },
+          discussionQuestions: finalQuestionTexts,
+        },
+      };
+      await this.studyReportRepository.save(latestReport);
     }
 
     return questions;
@@ -6765,6 +7006,21 @@ Rules:
       illustrations.push(await this.illustrationRepository.save(illustration));
     }
 
+    if (!illustrations.length) {
+      const fallbackIllustrations = this.buildIllustrationFallbackItems(workspace, mainPoints, seededIllustrations);
+      for (const item of fallbackIllustrations) {
+        const illustration = this.illustrationRepository.create({
+          workspaceId,
+          title: item.title || null,
+          content: workspace.language === 'es' ? this.normalizeSpanishGeneratedText(item.content) : item.content,
+          source: item.source || null,
+          relatedPoint: item.relatedPoint || null,
+          tags: Array.isArray(item.tags) && item.tags.length ? item.tags : null,
+        });
+        illustrations.push(await this.illustrationRepository.save(illustration));
+      }
+    }
+
     return illustrations;
   }
 
@@ -6812,9 +7068,6 @@ Rules:
     promptOverride?: string,
   ): Promise<SermonStudyReport> {
     const workspace = await this.findOne(workspaceId, userId);
-
-    // Delete existing study reports before regenerating
-    await this.studyReportRepository.delete({ workspaceId });
 
     const mainPassage = await this.scriptureService.getPassage(workspace.mainPassage);
     const passageText = Array.isArray(mainPassage?.verses)
@@ -7178,7 +7431,7 @@ Rules:
       persistedReport = await this.studyReportRepository.save(created);
     }
 
-    workspace.metadata = {
+    const nextMetadata = {
       ...(workspace.metadata || {}),
       mediaPack,
       exportPack: {
@@ -7238,7 +7491,8 @@ Rules:
         },
       },
     };
-    await this.workspaceRepository.save(workspace);
+    workspace.metadata = nextMetadata;
+    await this.workspaceRepository.update(workspaceId, { metadata: nextMetadata as any });
 
     return persistedReport;
   }
@@ -7340,17 +7594,64 @@ Rules:
   async findOne(id: string, userId: string): Promise<SermonWorkspace> {
     const workspace = await this.workspaceRepository.findOne({
       where: { id, userId },
-      relations: [
-        'outlines',
-        'manuscripts',
-        'applications',
-        'illustrations',
-        'discussionQuestions',
-        'citations',
-        'dnaAnalyses',
-        'studyReports',
-      ],
     });
+    if (!workspace) {
+      return workspace;
+    }
+
+    const [
+      outlines,
+      manuscripts,
+      applications,
+      illustrations,
+      discussionQuestions,
+      citations,
+      dnaAnalyses,
+      studyReports,
+    ] = await Promise.all([
+      this.outlineRepository.find({
+        where: { workspaceId: workspace.id },
+        order: { createdAt: 'DESC' },
+      }),
+      this.manuscriptRepository.find({
+        where: { workspaceId: workspace.id },
+        order: { createdAt: 'DESC' },
+      }),
+      this.applicationRepository.find({
+        where: { workspaceId: workspace.id },
+        order: { orderIndex: 'ASC', createdAt: 'ASC' },
+      }),
+      this.illustrationRepository.find({
+        where: { workspaceId: workspace.id },
+        order: { createdAt: 'ASC' },
+      }),
+      this.questionRepository.find({
+        where: { workspaceId: workspace.id },
+        order: { orderIndex: 'ASC', createdAt: 'ASC' },
+      }),
+      this.citationRepository.find({
+        where: { workspaceId: workspace.id },
+        order: { createdAt: 'DESC' },
+      }),
+      this.workspaceRepository.manager.getRepository(SermonDnaAnalysis).find({
+        where: { workspaceId: workspace.id },
+        order: { createdAt: 'DESC' },
+      }),
+      this.studyReportRepository.find({
+        where: { workspaceId: workspace.id },
+        order: { createdAt: 'DESC' },
+      }),
+    ]);
+
+    workspace.outlines = outlines || [];
+    workspace.manuscripts = manuscripts || [];
+    workspace.applications = applications || [];
+    workspace.illustrations = illustrations || [];
+    workspace.discussionQuestions = discussionQuestions || [];
+    workspace.citations = citations || [];
+    workspace.dnaAnalyses = dnaAnalyses as SermonDnaAnalysis[] || [];
+    workspace.studyReports = studyReports || [];
+
     return this.upgradeWorkspaceContracts(workspace);
   }
 

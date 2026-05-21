@@ -22,10 +22,16 @@ import { LlmRequest } from '../entities/llm-request.entity';
 import { LlmProvider } from '../entities/enums/llm-provider.enum';
 import { SermonDnaAnalysis } from '../entities/sermon-dna-analysis.entity';
 import { ChurchSettings } from '../entities/church-settings.entity';
+import { SermonStudyReport } from '../entities/sermon-study-report.entity';
+import { TheologicalCenterAnalysis } from '../entities/theological-center-analysis.entity';
+import { TensionAnalysis } from '../entities/tension-analysis.entity';
+import { DoctrinalPrecisionCheck, DoctrinalCategory } from '../entities/doctrinal-precision-check.entity';
+import { PreachingStrategy, PreachingGenre, EmotionalArc } from '../entities/preaching-strategy.entity';
+import { HistoricalContextEnhanced } from '../entities/historical-context-enhanced.entity';
 
 config();
 
-async function seed() {
+export async function seed() {
   const baseUrl = process.env.DATABASE_URL;
   const databaseName = process.env.DATABASE_NAME;
   const dbUser = process.env.DATABASE_USER;
@@ -76,6 +82,12 @@ async function seed() {
   const llmRequestRepository = dataSource.getRepository(LlmRequest);
   const dnaRepository = dataSource.getRepository(SermonDnaAnalysis);
   const churchSettingsRepository = dataSource.getRepository(ChurchSettings);
+  const studyReportRepository = dataSource.getRepository(SermonStudyReport);
+  const theologicalCenterRepository = dataSource.getRepository(TheologicalCenterAnalysis);
+  const tensionRepository = dataSource.getRepository(TensionAnalysis);
+  const doctrinalCheckRepository = dataSource.getRepository(DoctrinalPrecisionCheck);
+  const preachingStrategyRepository = dataSource.getRepository(PreachingStrategy);
+  const historicalContextRepository = dataSource.getRepository(HistoricalContextEnhanced);
 
   let adminUser = await userRepository.findOne({ where: { email: 'admin@example.com' } });
   if (!adminUser) {
@@ -514,8 +526,448 @@ async function seed() {
     );
   }
 
+  const demoWorkspaceTitle = 'Demo Sermon: John 3:16';
+  const demoSeriesTitle = 'Demo Sermons';
+  const demoNow = new Date();
+  const demoNowIso = demoNow.toISOString();
+  const demoPlanning = {
+    sermonDate: '2026-05-18',
+    targetLengthMinutes: 25,
+    serviceType: 'sabbath_worship',
+    appealStyle: 'invitation',
+    ministryMode: 'evangelistic',
+    bilingualMode: 'none',
+  };
+  const demoMetadata = {
+    demo: {
+      enabled: true,
+      kind: 'john_3_16',
+      completedAt: demoNowIso,
+    },
+    planning: demoPlanning,
+    integrityReport: {
+      overallScore: 96,
+      balanced: true,
+      issues: [
+        {
+          severity: 'warning',
+          category: 'application',
+          message: 'Keep the invitation clear and personal.',
+          affectedItem: 'appeal',
+        },
+      ],
+      strengths: ['Scripture-first', 'Christ-centered', 'Pastoral clarity'],
+      updatedAt: demoNowIso,
+    },
+    mediaPack: {
+      status: 'ready',
+      generatedAt: demoNowIso,
+      sourceOutlineId: null,
+      sourceManuscriptId: null,
+      sourceStudyReportId: null,
+      slideCount: 13,
+      audioEnabled: true,
+      musicEnabled: true,
+      videoEnabled: true,
+      exportPrepared: true,
+    },
+    exportPack: {
+      status: 'ready',
+      generatedAt: demoNowIso,
+      sourceOutlineId: null,
+      sourceManuscriptId: null,
+      sourceStudyReportId: null,
+      artifacts: [
+        {
+          type: 'pptx',
+          label: 'Slide deck (PPTX)',
+          status: 'ready',
+          filename: 'sermon-deck-demo-sermon-john-3-16.pptx',
+        },
+        {
+          type: 'pdf',
+          label: 'Slide deck (PDF)',
+          status: 'ready',
+          filename: 'sermon-deck-demo-sermon-john-3-16.pdf',
+        },
+      ],
+    },
+  };
+
+  let demoWorkspace = await workspaceRepository.findOne({
+    where: { userId: adminUser.id, title: demoWorkspaceTitle },
+  });
+
+  const demoWorkspacePayload = {
+    userId: adminUser.id,
+    title: demoWorkspaceTitle,
+    seriesTitle: demoSeriesTitle,
+    mainPassage: 'John 3:16',
+    additionalPassages: ['Romans 5:8', 'Ephesians 2:8-9'],
+    theme: 'God’s love and salvation',
+    audienceProfile: 'General Sabbath congregation with members, visitors, young people, and people who may feel spiritually distant from God.',
+    sermonGoals: 'Help people see God as a loving Father who welcomes repentant sinners, restores dignity, and invites them back into relationship.',
+    theologicalLens: 'adventist',
+    style: SermonStyle.EXPOSITORY,
+    storyArc: StoryArc.PROBLEM_TRUTH_RESPONSE,
+    status: WorkspaceStatus.COMPLETED,
+    language: 'en',
+    egwEnabled: true,
+    sermonCore: {
+      bigIdea: 'God’s love is revealed in Christ’s gift of salvation.',
+      fallenCondition: 'Sin leaves humanity separated and in need of rescue.',
+      centralTruth: 'Jesus is God’s gift so that believers may not perish but have eternal life.',
+      sermonGoal: 'Invite listeners to trust the Son and receive eternal life.',
+      audienceNeed: 'People need assurance that God loves them and makes salvation available now.',
+    },
+    scriptureCache: {
+      scriptureResult: {
+        reference: 'John 3:16',
+        translation: 'KJV',
+        verses: [
+          {
+            reference: 'John 3:16',
+            text: 'For God so loved the world, that he gave his only begotten Son...',
+          },
+        ],
+      },
+      scriptureTranslation: 'KJV',
+      scriptureLastLookup: 'John 3:16:KJV',
+      passageSummary: {
+        reference: 'John 3:16',
+        summary: 'John 3:16 centers salvation in God’s love, gift, and invitation to believe.',
+      },
+      translationComparison: {
+        reference: 'John 3:16',
+        translations: ['KJV', 'NIV', 'ESV'],
+        summary: 'All major translations present the same gospel invitation with slightly different wording.',
+      },
+      cachedAt: demoNow,
+    } as any,
+    references: [
+      {
+        reference: 'John 3:16',
+        context: 'Canonical demo verse',
+        addedAt: demoNowIso,
+      },
+      {
+        reference: 'Romans 5:8',
+        context: 'Supporting cross-reference',
+        addedAt: demoNowIso,
+      },
+    ],
+    metadata: demoMetadata,
+  };
+
+  if (!demoWorkspace) {
+    demoWorkspace = workspaceRepository.create(demoWorkspacePayload);
+    await workspaceRepository.save(demoWorkspace);
+    console.log('✅ Created canonical demo sermon workspace');
+  } else {
+    Object.assign(demoWorkspace, demoWorkspacePayload);
+    await workspaceRepository.save(demoWorkspace);
+    console.log('✅ Upserted canonical demo sermon workspace');
+  }
+
+  await studyReportRepository.delete({ workspaceId: demoWorkspace.id });
+  const demoStudyReport = studyReportRepository.create({
+    workspaceId: demoWorkspace.id,
+    sections: {
+      title: 'John 3:16 Study Report',
+      passageSummary: {
+        summary: 'God’s love is the center of the passage and the basis of salvation.',
+      },
+      structureOfPassage: [
+        { movement: 'Love declared', verses: 'John 3:16a', summary: 'God initiates salvation in love.' },
+        { movement: 'Gift given', verses: 'John 3:16b', summary: 'The Son is given for the world.' },
+        { movement: 'Faith invited', verses: 'John 3:16c', summary: 'Belief opens the way to eternal life.' },
+      ],
+      keyTerms: [
+        { term: 'love', language: 'Greek', transliteration: 'agapaō', definition: 'Self-giving covenant love.', nuance: 'God’s love acts first.' },
+        { term: 'believe', language: 'Greek', transliteration: 'pisteuō', definition: 'Trust and rely upon.', nuance: 'Faith is personal trust, not mere assent.' },
+      ],
+      crossReferences: [
+        { reference: 'Romans 5:8', connection: 'God demonstrates love through Christ.', category: 'thematic', tier: 'primary' },
+        { reference: 'Ephesians 2:8-9', connection: 'Salvation is by grace through faith.', category: 'doctrinal', tier: 'secondary' },
+      ],
+      interpretiveChallenges: [
+        { issue: 'Scope of the word world', explanation: 'The verse speaks to humanity broadly, not a narrow group.' },
+      ],
+      egwSection: {
+        enabled: true,
+        notes: ['Christ’s gift reveals the heart of God.'],
+      },
+    },
+    generatedBy: LlmProvider.LOCAL,
+    generatedModel: 'seed',
+  });
+  await studyReportRepository.save(demoStudyReport);
+
+  let demoOutline = await outlineRepository.findOne({ where: { workspaceId: demoWorkspace.id } });
+  if (!demoOutline) {
+    demoOutline = outlineRepository.create({
+      workspaceId: demoWorkspace.id,
+      title: 'John 3:16 Sermon Outline',
+      structure: {
+        introduction: 'God’s love is not abstract; it moves toward us in Christ.',
+        points: [
+          'God loves the world with saving love',
+          'God gives His Son for our rescue',
+          'We are invited to believe and live',
+        ],
+        pointNodes: [
+          {
+            title: 'God loves the world with saving love',
+            slideTitle: 'Love Revealed',
+            summary: 'The gospel begins with God’s initiative.',
+            supportingVerses: ['1 John 4:9-10'],
+          },
+          {
+            title: 'God gives His Son for our rescue',
+            slideTitle: 'Gift Given',
+            summary: 'Salvation rests on Christ’s sacrificial gift.',
+            supportingVerses: ['Romans 5:8'],
+          },
+          {
+            title: 'We are invited to believe and live',
+            slideTitle: 'Believe Today',
+            summary: 'Faith receives the life God offers.',
+            supportingVerses: ['Ephesians 2:8-9'],
+          },
+        ],
+        outlineType: 'expository',
+        sermonMovement: 'problem_truth_response',
+        conclusion: 'Invite the congregation to trust Jesus personally.',
+        callToAction: 'Believe in the Son and receive eternal life.',
+      },
+      isSelected: true,
+      generatedBy: LlmProvider.LOCAL,
+      generatedModel: 'seed',
+    });
+    await outlineRepository.save(demoOutline);
+  } else if (!demoOutline.isSelected) {
+    demoOutline.isSelected = true;
+    await outlineRepository.save(demoOutline);
+  }
+
+  let demoManuscript = await manuscriptRepository.findOne({ where: { workspaceId: demoWorkspace.id } });
+  if (!demoManuscript) {
+    demoManuscript = manuscriptRepository.create({
+      workspaceId: demoWorkspace.id,
+      outlineId: demoOutline.id,
+      content: {
+        intro: 'John 3:16 begins with the biggest news in the gospel: God loved the world.',
+        sections: [
+          {
+            heading: 'God loves the world',
+            body: 'The Father does not wait for humanity to earn His affection. Love moves first.',
+          },
+          {
+            heading: 'God gave His Son',
+            body: 'The cross shows that salvation is not sentimental; it is sacrificial.',
+          },
+          {
+            heading: 'Believe and live',
+            body: 'The invitation is personal. The response is faith, trust, and surrender.',
+          },
+        ],
+        conclusion: 'Call the church to receive Christ again with gratitude and faith.',
+        appeal: 'If you have never trusted Jesus, do it today. If you know Him, thank Him anew for His love.',
+      },
+      wordCount: 1180,
+      estimatedMinutes: 25,
+      transitions: {
+        betweenPoints: 'Move from God’s love, to God’s gift, to our response.',
+      },
+      generatedBy: LlmProvider.LOCAL,
+      generatedModel: 'seed',
+    });
+    await manuscriptRepository.save(demoManuscript);
+  }
+
+  if ((await citationRepository.count({ where: { workspaceId: demoWorkspace.id } })) === 0) {
+    await citationRepository.save([
+      citationRepository.create({
+        workspaceId: demoWorkspace.id,
+        statementType: StatementType.OBSERVATION,
+        statement: 'God’s love initiates the rescue of humanity.',
+        verseReferences: ['John 3:16', 'Romans 5:8'],
+        isVerified: true,
+      }),
+      citationRepository.create({
+        workspaceId: demoWorkspace.id,
+        statementType: StatementType.APPLICATION,
+        statement: 'Belief is a real response to a real gift.',
+        verseReferences: ['Ephesians 2:8-9'],
+        isVerified: true,
+      }),
+    ]);
+  }
+
+  if ((await dnaRepository.count({ where: { workspaceId: demoWorkspace.id } })) === 0) {
+    await dnaRepository.save(
+      dnaRepository.create({
+        userId: adminUser.id,
+        workspaceId: demoWorkspace.id,
+        summary: 'John 3:16 centers the sermon on God’s love, Christ’s gift, and a clear invitation to faith.',
+        themes: ['Love', 'Gift', 'Faith', 'Salvation'],
+        scores: {
+          clarity: 9,
+          structure: 9,
+          scriptureFocus: 10,
+          applicationDepth: 8,
+        },
+      }),
+    );
+  }
+
+  if ((await theologicalCenterRepository.count({ where: { workspaceId: demoWorkspace.id } })) === 0) {
+    await theologicalCenterRepository.save(
+      theologicalCenterRepository.create({
+        workspaceId: demoWorkspace.id,
+        dominantCenter: 'God’s love revealed in Christ',
+        textualWarrant: 'John 3:16 names God’s love, gift, and invitation to believe.',
+        alignmentScore: 0.98,
+        deviations: [
+          {
+            point: 'Avoid turning the sermon into a generic moral appeal.',
+            severity: 'minor',
+            explanation: 'Keep the focus on God’s gift before moving to response.',
+          },
+        ],
+        secondaryThemes: ['Grace', 'Faith', 'Eternal Life'],
+        suppressionSuggestions: [
+          {
+            theme: 'Self-help framing',
+            reason: 'It weakens the gospel center.',
+            impact: 'Maintain Christ-centered clarity.',
+          },
+        ],
+      }),
+    );
+  }
+
+  if ((await tensionRepository.count({ where: { workspaceId: demoWorkspace.id } })) === 0) {
+    await tensionRepository.save(
+      tensionRepository.create({
+        workspaceId: demoWorkspace.id,
+        tensions: [
+          {
+            type: 'theological_friction',
+            text: 'Love and judgment are both present in the wider John 3 context.',
+            verseReference: 'John 3:16-18',
+            explanation: 'The passage should not minimize the seriousness of unbelief.',
+            preservationStrategy: 'Let the invitation stay warm while the warning remains clear.',
+          },
+        ],
+        sermonTensionHandling: [
+          {
+            tension: 'Invitation vs. warning',
+            isPreserved: true,
+            resolutionTiming: 'appropriate',
+            recommendation: 'Hold both with pastoral clarity.',
+          },
+        ],
+        tensionPreservationScore: 0.95,
+      }),
+    );
+  }
+
+  if ((await doctrinalCheckRepository.count({ where: { workspaceId: demoWorkspace.id } })) === 0) {
+    await doctrinalCheckRepository.save(
+      doctrinalCheckRepository.create({
+        workspaceId: demoWorkspace.id,
+        checks: [
+          {
+            category: DoctrinalCategory.GRACE,
+            isConsistent: true,
+            concern: null,
+            recommendation: null,
+            severity: 'info',
+          },
+          {
+            category: DoctrinalCategory.LAW_AND_GOSPEL,
+            isConsistent: true,
+            concern: null,
+            recommendation: null,
+            severity: 'info',
+          },
+        ],
+        overallConsistencyScore: 0.98,
+        summary: 'The sermon remains Christ-centered, grace-filled, and faithful to the gospel invitation.',
+      }),
+    );
+  }
+
+  if ((await preachingStrategyRepository.count({ where: { workspaceId: demoWorkspace.id } })) === 0) {
+    await preachingStrategyRepository.save(
+      preachingStrategyRepository.create({
+        workspaceId: demoWorkspace.id,
+        recommendedGenre: PreachingGenre.EXPOSITORY,
+        genreRationale: 'John 3:16 is text-driven and best served by a clear verse-by-verse movement.',
+        emotionalArc: EmotionalArc.CONVICTION_TO_HOPE,
+        tone: 'hopeful',
+        targetLengthMinutes: 25,
+        tensionLevel: 0.45,
+        applicationDensity: 0.7,
+        invitationDriven: true,
+        structuralGuidance: {
+          introduction: 'Begin with God’s love.',
+          bodyStructure: 'Move from love to gift to faith.',
+          conclusion: 'End with a direct invitation to believe.',
+        },
+      }),
+    );
+  }
+
+  if ((await historicalContextRepository.count({ where: { workspaceId: demoWorkspace.id } })) === 0) {
+    await historicalContextRepository.save(
+      historicalContextRepository.create({
+        workspaceId: demoWorkspace.id,
+        passage: 'John 3:16',
+        socialRealities: [
+          {
+            aspect: 'Religious expectation',
+            description: 'Listeners would hear Jesus in conversation about kingdom life and belief.',
+            impact: 'The verse calls for a personal response to divine initiative.',
+          },
+        ],
+        powerStructures: [
+          {
+            structure: 'Roman occupation',
+            dynamics: 'Politics and pressure shaped daily life.',
+            relevance: 'The gospel offers a greater hope than earthly systems.',
+          },
+        ],
+        economicContext: [
+          {
+            factor: 'Ordinary households',
+            description: 'The promise of eternal life speaks to everyday people, not elites only.',
+          },
+        ],
+        religiousClimate: [
+          {
+            element: 'Temple-centered piety',
+            description: 'Many expected God to work through established forms.',
+            tension: 'Jesus redirects attention to faith in Him.',
+          },
+        ],
+        audiencePressures: [
+          {
+            pressure: 'Fear of exclusion',
+            source: 'Religious and social boundaries',
+            pastoralResponse: 'The gospel extends welcome to the believing world.',
+          },
+        ],
+        synthesisStatement: 'The passage is a public invitation to trust God’s love made visible in Christ.',
+      }),
+    );
+  }
+
   console.log('✅ Seed completed successfully!');
   await dataSource.destroy();
 }
 
-seed().catch(console.error);
+if (require.main === module) {
+  seed().catch(console.error);
+}
