@@ -32,6 +32,19 @@ const LUKE_15_PASSAGE = [
   'for this my son was dead and is alive again; he was lost and is found. And they began to be merry.',
 ].join(' ');
 
+const PSALM_37_PASSAGE = [
+  'The steps of a good man are ordered by the LORD: and he delighteth in his way.',
+  'Though he fall, he shall not be utterly cast down: for the LORD upholdeth him with his hand.',
+].join(' ');
+
+const REVELATION_14_PASSAGE = [
+  'And I saw another angel fly in the midst of heaven, having the everlasting gospel to preach unto them that dwell on the earth.',
+  'Saying with a loud voice, Fear God, and give glory to him; for the hour of his judgment is come: and worship him that made heaven, and earth, and the sea, and the fountains of waters.',
+  'And there followed another angel, saying, Babylon is fallen, is fallen.',
+  'And the third angel followed them, saying with a loud voice, If any man worship the beast and his image, and receive his mark.',
+  'Here is the patience of the saints: here are they that keep the commandments of God, and the faith of Jesus.',
+].join(' ');
+
 describe('SermonClaimReviewService', () => {
   let service: SermonClaimReviewService;
 
@@ -45,6 +58,11 @@ describe('SermonClaimReviewService', () => {
     it('classifies porch claim as textual_observation', () => {
       const claim = makeClaim({ claimText: 'The father watched from the porch.' });
       expect(service.classifyClaimType(claim, claim.claimText)).toBe('textual_observation');
+    });
+
+    it('preserves meaningful original claim type over generic textual observation', () => {
+      expect(service.classifyClaimType(makeClaim({ claimType: 'application' }), 'We should welcome sinners.')).toBe('application');
+      expect(service.classifyClaimType(makeClaim({ claimType: 'interpretation' }), 'The ring means restoration.')).toBe('interpretation');
     });
 
     it('classifies theological extension with "represents"', () => {
@@ -65,6 +83,11 @@ describe('SermonClaimReviewService', () => {
     it('classifies illustration with "Imagine"', () => {
       const text = 'Imagine the father scanning the horizon every day.';
       expect(service.classifyClaimType(makeClaim(), text)).toBe('illustration');
+    });
+
+    it('classifies original-language claims with mixed script as original_language_claim', () => {
+      const text = 'Hebrew:夸德, paqad means divine oversight.';
+      expect(service.classifyClaimType(makeClaim(), text)).toBe('original_language_claim');
     });
   });
 
@@ -90,6 +113,13 @@ describe('SermonClaimReviewService', () => {
       const result = service.detectHomileticalImagination(claim, LUKE_15_PASSAGE);
       expect(result.detected).toBe(false);
     });
+
+    it('detects softer inferred details like watching', () => {
+      const claim = 'The father was watching for his son from afar.';
+      const result = service.detectHomileticalImagination(claim, LUKE_15_PASSAGE);
+      expect(result.detected).toBe(true);
+      expect(result.suggestedRepair).toContain('stated in the text or inferred');
+    });
   });
 
   // ─── Outside-Range Detection ─────────────────────────────
@@ -99,13 +129,51 @@ describe('SermonClaimReviewService', () => {
       const claim = 'The elder brother reveals religious resentment Luke 15:25-32.';
       const result = service.detectOutsideRange(claim, { book: 'Luke', startChapter: 15, startVerse: 11, endChapter: 15, endVerse: 24 });
       expect(result.isOutsideRange).toBe(true);
-      expect(result.note).toContain('outside the selected passage');
+      expect(result.category).toBe('wider_literary_context');
+      expect(result.note).toContain('wider literary context');
+    });
+
+    it('detects outside range from source references even when the claim text is generic', () => {
+      const claims = [makeClaim({
+        claimText: 'The elder brother reveals religious resentment.',
+        sourceIds: ['Luke 15:25-32'],
+      })];
+      const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
+      expect(enriched[0].outsideSelectedRange).toBe(true);
+      expect(enriched[0].claimSubType).toBe('wider_context');
+      expect(enriched[0].outsideReferenceCategory).toBe('wider_literary_context');
     });
 
     it('does not flag Luke 15:22 within range 15:11-24', () => {
       const claim = 'The robe, ring, and sandals show public restoration (Luke 15:22).';
       const result = service.detectOutsideRange(claim, { book: 'Luke', startChapter: 15, startVerse: 11, endChapter: 15, endVerse: 24 });
       expect(result.isOutsideRange).toBe(false);
+    });
+
+    it('classifies Revelation 20 as broader canonical support for Revelation 14:6-12', () => {
+      const result = service.detectOutsideRange(
+        'The final judgment is completed in Revelation 20:11-15.',
+        { book: 'Revelation', startChapter: 14, startVerse: 6, endChapter: 14, endVerse: 12 },
+      );
+      expect(result.isOutsideRange).toBe(true);
+      expect(result.category).toBe('broader_canonical_support');
+    });
+
+    it('classifies Psalm 23, Romans 8, and John 10 as broader canonical support for Psalm 37:23-24', () => {
+      const refs = [
+        'Psalm 23:1-4',
+        'Romans 8:28-39',
+        'John 10:27-29',
+      ];
+
+      refs.forEach((ref) => {
+        const result = service.detectOutsideRange(
+          `This claim cites ${ref}.`,
+          { book: 'Psalm', startChapter: 37, startVerse: 23, endChapter: 37, endVerse: 24 },
+        );
+        expect(result.isOutsideRange).toBe(true);
+        expect(result.category).toBe('broader_canonical_support');
+      });
     });
   });
 
@@ -130,6 +198,58 @@ describe('SermonClaimReviewService', () => {
 
     it('returns medium for outside-range claims', () => {
       expect(service.assessPastoralRisk('', 'interpretation', 'needs_review', false, true, false)).toBe('medium');
+    });
+  });
+
+  describe('risk reason', () => {
+    it('never returns "No issues detected" for medium or high risk', () => {
+      const riskReasonHigh = (service as any).buildRiskReason(
+        'application',
+        'supported',
+        { detected: false, imaginedDetail: '', suggestedRepair: '' },
+        { isOutsideRange: false, outsideVerses: [], note: '' },
+        { detected: false, theme: '', riskLevel: 'none', reason: '', suggestedRepair: '' },
+        'high',
+      );
+      const riskReasonMedium = (service as any).buildRiskReason(
+        'application',
+        'supported',
+        { detected: false, imaginedDetail: '', suggestedRepair: '' },
+        { isOutsideRange: false, outsideVerses: [], note: '' },
+        { detected: false, theme: '', riskLevel: 'none', reason: '', suggestedRepair: '' },
+        'medium',
+      );
+
+      expect(riskReasonHigh).not.toBe('No issues detected.');
+      expect(riskReasonMedium).not.toBe('No issues detected.');
+    });
+
+    it('marks original-language claims with a high-risk lexical warning', () => {
+      const enriched = service.enrichClaims([
+        makeClaim({
+          claimText: 'Hebrew:夸德, paqad means divine oversight.',
+          sourceIds: ['Psalm 37:23'],
+        }),
+      ], 'Psalm 37:23-24', PSALM_37_PASSAGE);
+
+      expect(enriched[0].claimSubType).toBe('original_language_claim');
+      expect(enriched[0].pastoralRisk).toBe('high');
+      expect(enriched[0].riskReason).toContain('Original-language claims require verification');
+      expect(enriched[0].suggestedRepair).toContain('trusted lexicon');
+    });
+
+    it('deduplicates repeated risk-reason fragments', () => {
+      const repeated = 'This claim depends on broader canonical support outside the selected passage.';
+      const riskReason = (service as any).buildRiskReason(
+        'wider_context',
+        'needs_review',
+        { detected: false, imaginedDetail: '', suggestedRepair: '' },
+        { isOutsideRange: true, outsideVerses: ['Romans 8:28'], category: 'broader_canonical_support', note: repeated },
+        { detected: true, theme: 'duplicate', riskLevel: 'medium', reason: repeated, suggestedRepair: '' },
+        'medium',
+      );
+
+      expect(riskReason.match(/broader canonical support outside the selected passage/g)?.length).toBe(1);
     });
   });
 
@@ -202,7 +322,13 @@ describe('SermonClaimReviewService', () => {
         claimText: 'The elder brother in Luke 15:28 reveals resentment.',
       })];
       const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
-      expect(enriched[0].riskReason).toContain('outside the selected passage');
+      expect(enriched[0].riskReason).toContain('wider literary context');
+    });
+
+    it('splits compound claims without breaking abbreviations', () => {
+      const splits = service.detectCompoundClaims('See v. 3. The son confesses sin. Dr. Jones argues this represents imputed righteousness.', 'textual_observation');
+      expect(splits.length).toBeGreaterThanOrEqual(2);
+      expect(splits.some((split) => /^(v|vv|e\.g|i\.e|Mr|Dr)\.$/i.test(split.claimText.trim()))).toBe(false);
     });
 
     it('enriches application claim', () => {
@@ -215,6 +341,56 @@ describe('SermonClaimReviewService', () => {
       const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
       // Does not contain explicit "should"/"must" so classification may vary
       expect(enriched[0].pastoralRisk).toBe('none');
+    });
+
+    it('uses Psalm-aware repair wording instead of Luke restoration wording', () => {
+      const claims = [makeClaim({
+        claimText: 'Psalm 37:23-24 teaches imputed righteousness through the ordered steps of the believer.',
+        supportLevel: 'needs_review',
+      })];
+      const enriched = service.enrichClaims(claims, 'Psalm 37:23-24', PSALM_37_PASSAGE);
+      expect(enriched[0].suggestedRepair).toContain('broader theological application of God\'s sustaining care');
+      expect(enriched[0].suggestedRepair).not.toContain('This restoration can illustrate');
+    });
+
+    it('marks direct textual observations as supported when the wording tracks the cited verse', () => {
+      const claims = [
+        makeClaim({
+          claimText: 'The son confesses sin.',
+          sourceIds: ['Luke 15:18', 'Luke 15:21'],
+          claimType: 'textual_observation',
+        }),
+        makeClaim({
+          claimText: 'The first angel\'s proclamation is described as an eternal gospel.',
+          sourceIds: ['Revelation 14:6'],
+          claimType: 'textual_observation',
+        }),
+        makeClaim({
+          claimText: 'Psalm 37:23-24 presents divine guidance and upholding.',
+          sourceIds: ['Psalm 37:23-24'],
+          claimType: 'textual_observation',
+        }),
+      ];
+
+      const luke = service.enrichClaims([claims[0]], 'Luke 15:11-24', LUKE_15_PASSAGE);
+      const revelation = service.enrichClaims([claims[1]], 'Revelation 14:6-12', REVELATION_14_PASSAGE);
+      const psalm = service.enrichClaims([claims[2]], 'Psalm 37:23-24', PSALM_37_PASSAGE);
+
+      expect(luke[0].supportLevel).toBe('supported');
+      expect(revelation[0].supportLevel).toBe('supported');
+      expect(psalm[0].supportLevel).toBe('supported');
+    });
+
+    it('does not create split suggestions for ordinary applications', () => {
+      const enriched = service.enrichClaims([
+        makeClaim({
+          claimText: 'We should welcome repentant sinners with compassion and patience.',
+          claimType: 'application',
+          sourceIds: ['Luke 15:20-24'],
+        }),
+      ], 'Luke 15:11-24', LUKE_15_PASSAGE);
+
+      expect(enriched[0].claimSplitSuggestion).toEqual([]);
     });
   });
 

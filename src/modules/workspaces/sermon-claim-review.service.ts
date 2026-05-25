@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   WorkspaceClaimSubType,
+  WorkspaceOutsideReferenceCategory,
   WorkspacePastoralRisk,
   WorkspaceClaimSplitSuggestion,
   WorkspaceClaimSummary,
@@ -16,6 +17,7 @@ interface HomileticalImaginationResult {
 interface OutsideRangeResult {
   isOutsideRange: boolean;
   outsideVerses: string[];
+  category: WorkspaceOutsideReferenceCategory;
   note: string;
 }
 
@@ -26,6 +28,17 @@ interface TheologicalOverreachResult {
   reason: string;
   suggestedRepair: string;
 }
+
+const MEANINGFUL_CLAIM_TYPES = new Set<WorkspaceClaimSubType>([
+  'textual_observation',
+  'interpretation',
+  'theological_extension',
+  'application',
+  'illustration',
+  'external_reference',
+  'wider_context',
+  'original_language_claim',
+]);
 
 @Injectable()
 export class SermonClaimReviewService {
@@ -43,16 +56,29 @@ export class SermonClaimReviewService {
     return claims.map((claim) => {
       const enriched = { ...claim };
       const claimText = claim.claimText || '';
+      const sourceClaimType = this.normalizeClaimSubType(claim.claimType);
 
       // Re-classify support level more intelligently
       enriched.supportLevel = this.refineSupportLevel(claimText, claim);
 
       // Classification
-      const outsideRange = this.detectOutsideRange(claimText, parsedRange);
+      const outsideRange = this.detectOutsideRange(
+        [
+          claimText,
+          ...(Array.isArray(claim.sourceIds) ? claim.sourceIds : []),
+          claim.location || '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        parsedRange,
+      );
       if (outsideRange.isOutsideRange) {
         enriched.claimSubType = 'wider_context';
       } else {
-        enriched.claimSubType = this.classifyClaimType(claim, claimText);
+        const derivedType = this.classifyClaimType(claim, claimText);
+        enriched.claimSubType = this.shouldPreferSourceClaimType(sourceClaimType, derivedType)
+          ? sourceClaimType
+          : derivedType;
       }
 
       // Flags
@@ -61,6 +87,7 @@ export class SermonClaimReviewService {
 
       enriched.homileticalImagination = homiletical.detected;
       enriched.outsideSelectedRange = outsideRange.isOutsideRange;
+      enriched.outsideReferenceCategory = outsideRange.category;
       enriched.outsideRangeReason = outsideRange.isOutsideRange ? outsideRange.note : undefined;
       enriched.theologicalExtension = enriched.claimSubType === 'theological_extension' || overreach.detected;
 
@@ -91,15 +118,40 @@ export class SermonClaimReviewService {
       // Repair
       if (homiletical.detected) {
         enriched.suggestedRepair = homiletical.suggestedRepair;
+      } else if (enriched.claimSubType === 'original_language_claim') {
+        enriched.suggestedRepair = 'Remove the Hebrew/Greek claim or verify it with a trusted lexicon before preaching.';
       } else if (overreach.detected) {
-        enriched.suggestedRepair = overreach.suggestedRepair;
+        enriched.suggestedRepair = this.buildContextualOverreachRepair(claimText, passageText, overreach.suggestedRepair);
+      } else if (enriched.claimSubType === 'theological_extension' && enriched.supportLevel !== 'supported') {
+        enriched.suggestedRepair = this.buildContextualOverreachRepair(claimText, passageText, '');
       }
 
       // Questions
-      enriched.socraticQuestions = this.generateSocraticQuestions(
-        enriched.claimSubType,
-        claimText,
-      );
+      const socraticQuestions = this.generateSocraticQuestions(enriched.claimSubType, claimText);
+      const questionSet = new Set<string>();
+      const normalizedQuestions = socraticQuestions
+        .map((question) => this.cleanQuestionText(question))
+        .filter((question) => {
+          if (!question) return false;
+          if (questionSet.has(question)) return false;
+          questionSet.add(question);
+          return true;
+        });
+      if (outsideRange.isOutsideRange) {
+        const question = 'Does this claim stay within the selected passage, or is it drawing from wider context?';
+        if (!questionSet.has(question)) {
+          normalizedQuestions.unshift(question);
+          questionSet.add(question);
+        }
+      }
+      if (homiletical.detected) {
+        const question = 'Is this detail stated in the text or inferred for illustration?';
+        if (!questionSet.has(question)) {
+          normalizedQuestions.unshift(question);
+          questionSet.add(question);
+        }
+      }
+      enriched.socraticQuestions = normalizedQuestions.length ? normalizedQuestions.slice(0, 4) : undefined;
 
       return enriched;
     });
@@ -123,6 +175,10 @@ export class SermonClaimReviewService {
   refineSupportLevel(claimText: string, claim: WorkspaceClaimSummary): WorkspaceClaimSummary['supportLevel'] {
     const lower = claimText.toLowerCase();
 
+    if (this.looksLikeOriginalLanguageClaim(claimText)) {
+      return 'needs_review';
+    }
+
     // Contradiction markers → unsupported
     if (/\b(contradicts|misrepresents|fabricates|invents)\b/i.test(lower)) {
       return 'unsupported';
@@ -133,6 +189,13 @@ export class SermonClaimReviewService {
     }
     // Has verified sources → supported
     if (claim.verified && claim.sourceIds.length > 0) {
+      return 'supported';
+    }
+    if (
+      claim.sourceIds.length > 0
+      && this.classifyClaimTypeByText(claim, claimText) === 'textual_observation'
+      && this.hasDirectTextualSupport(claimText)
+    ) {
       return 'supported';
     }
     // Has source refs but not verified → partial
@@ -153,14 +216,24 @@ export class SermonClaimReviewService {
   // ─── Claim Classification ────────────────────────────────────
 
   classifyClaimType(claim: WorkspaceClaimSummary, claimText: string): WorkspaceClaimSubType {
+    const sourceType = this.normalizeClaimSubType(claim.claimType);
+    const textType = this.classifyClaimTypeByText(claim, claimText);
+    if (this.shouldPreferSourceClaimType(sourceType, textType)) {
+      return sourceType;
+    }
+    return textType;
+  }
+
+  private classifyClaimTypeByText(claim: WorkspaceClaimSummary, claimText: string): WorkspaceClaimSubType {
     const lower = claimText.toLowerCase().trim();
 
+    if (this.looksLikeOriginalLanguageClaim(claimText)) return 'original_language_claim';
     if (claim.sourceType === 'external' || /\b(?:egw|ellen white|spirit of prophecy|commentary|according to (?!the|scripture|luke|matthew|mark|john|acts|romans|psalm|genesis|exodus))\b/i.test(lower)) {
       return 'external_reference';
     }
     if (/^imagine\b|^picture\b|^think of\b|^envision\b/i.test(lower)) return 'illustration';
     if (/\b(should|we must|you need to|you must|let us|go and|do not fail to|we are called to)\b/i.test(lower)) return 'application';
-    if (/\b(represents?|symbolizes?|types?|foreshadows?|prefigures?|typifies?|is a type of|doctrine of|teaches that)\b/i.test(lower)) return 'theological_extension';
+    if (/\b(represents?|symbolizes?|types?|foreshadows?|prefigures?|typifies?|is a type of|doctrine of|teaches that|imputed righteousness|imparted righteousness|sanctuary model|great controversy|state of the dead)\b/i.test(lower)) return 'theological_extension';
     if (/\b(means|indicates|shows that|demonstrates that|reveals that|signifies|implies|suggests that|points to)\b/i.test(lower)) return 'interpretation';
     return 'textual_observation';
   }
@@ -189,6 +262,24 @@ export class SermonClaimReviewService {
           detected: true,
           imaginedDetail: detail,
           suggestedRepair: this.buildHomileticalRepair(claimText, detail, passageText),
+        };
+      }
+    }
+
+    const inferredPatterns = [
+      { regex: /\bwatch(?:ed|ing)?\b/i, label: 'watching' },
+      { regex: /\bwait(?:ed|ing)?\b/i, label: 'waiting' },
+      { regex: /\blook(?:ed|ing)?\b/i, label: 'looking' },
+      { regex: /\bscan(?:ned|ning)?\b/i, label: 'scanning' },
+      { regex: /\bgaz(?:ed|ing)?\b/i, label: 'gazing' },
+      { regex: /\bkeep(?:s|ing|t)?\s+watch\b/i, label: 'keeping watch' },
+    ];
+    for (const pattern of inferredPatterns) {
+      if (pattern.regex.test(claimText) && !passageLower.includes(pattern.label)) {
+        return {
+          detected: true,
+          imaginedDetail: pattern.label,
+          suggestedRepair: 'Is this detail stated in the text or inferred for illustration?',
         };
       }
     }
@@ -238,13 +329,20 @@ export class SermonClaimReviewService {
     claimText: string,
     parsedRange: { book: string; startChapter: number; startVerse: number; endChapter: number; endVerse: number } | null,
   ): OutsideRangeResult {
-    if (!parsedRange) return { isOutsideRange: false, outsideVerses: [], note: '' };
+    if (!parsedRange) {
+      return {
+        isOutsideRange: false,
+        outsideVerses: [],
+        category: 'inside_selected_passage',
+        note: '',
+      };
+    }
 
     const refs = this.extractVerseReferences(claimText);
     const outsideVerses = refs.filter((ref) => {
       const parsed = this.parseSingleRef(ref);
       if (!parsed) return false;
-      if (parsed.book !== parsedRange.book) return false; // different book, not "outside range"
+      if (parsed.book !== parsedRange.book) return true;
       if (parsed.chapter < parsedRange.startChapter) return true;
       if (parsed.chapter > parsedRange.endChapter) return true;
       if (parsed.chapter === parsedRange.startChapter && parsed.verse < parsedRange.startVerse) return true;
@@ -253,14 +351,30 @@ export class SermonClaimReviewService {
     });
 
     if (outsideVerses.length > 0) {
+      const parsedOutsideRefs = outsideVerses
+        .map((ref) => this.parseSingleRef(ref))
+        .filter((ref): ref is NonNullable<typeof ref> => Boolean(ref));
+      const isWiderLiteraryContext = parsedOutsideRefs.every((ref) =>
+        ref.book === parsedRange.book
+        && ref.chapter === parsedRange.startChapter
+        && ref.chapter === parsedRange.endChapter,
+      );
       return {
         isOutsideRange: true,
         outsideVerses,
-        note: 'This support comes from outside the selected passage but belongs to the same literary unit.',
+        category: isWiderLiteraryContext ? 'wider_literary_context' : 'broader_canonical_support',
+        note: isWiderLiteraryContext
+          ? 'This claim draws on wider literary context around the selected passage.'
+          : 'This claim depends on broader canonical support outside the selected passage.',
       };
     }
 
-    return { isOutsideRange: false, outsideVerses: [], note: '' };
+    return {
+      isOutsideRange: false,
+      outsideVerses: [],
+      category: 'inside_selected_passage',
+      note: '',
+    };
   }
 
   // ─── Compound Claim Detection ────────────────────────────────
@@ -270,6 +384,10 @@ export class SermonClaimReviewService {
     subType: WorkspaceClaimSubType,
   ): WorkspaceClaimSplitSuggestion[] {
     const lower = claimText.toLowerCase();
+    if (subType === 'application' && !/\b(represents?|means?|symbolizes?|foreshadows?|therefore|so that|which means|this shows)\b/i.test(lower)) {
+      return [];
+    }
+    const protectedText = this.protectSentenceAbbreviations(claimText);
 
     // Connector patterns that indicate a compound claim
     const connectorPatterns = [
@@ -278,23 +396,31 @@ export class SermonClaimReviewService {
     ];
 
     const hasSplitConnector = connectorPatterns.some((p) => p.test(lower));
-    if (!hasSplitConnector && claimText.length <= 120) return [];
 
     // Split by sentences first
-    const sentences = claimText.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 10);
+    const sentences = this.restoreSentenceAbbreviations(
+      protectedText.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.trim().length > 10),
+    );
     if (sentences.length >= 2) {
-      return sentences.map((sentence, index) => ({
-        claimText: sentence.trim(),
-        claimType: this.classifyClaimType({} as WorkspaceClaimSummary, sentence),
-        supportHint: index === 0
-          ? 'Needs textual verification'
-          : 'Needs theological or study support',
-      }));
+      const sentenceTypes = sentences.map((sentence) => this.classifyClaimType({} as WorkspaceClaimSummary, sentence));
+      const hasMixedTypes = new Set(sentenceTypes).size > 1;
+      const hasTheologicalSplit = sentenceTypes.some((type) => type === 'theological_extension' || type === 'application');
+      if (hasMixedTypes || hasTheologicalSplit) {
+        return sentences.map((sentence, index) => ({
+          claimText: sentence.trim(),
+          claimType: sentenceTypes[index],
+          supportHint: sentenceTypes[index] === 'textual_observation'
+            ? 'Needs textual verification'
+            : 'Needs theological or study support',
+        }));
+      }
     }
 
     // Connector-based split within a single sentence
     if (hasSplitConnector && lower.length > 80) {
-      const parts = claimText.split(/\s+(?:,?\s*and\s+this\s+|,?\s*which\s+)(?:represents?|means?|shows?|symbolizes?|indicates?|points\s+to|illustrates?)\s+/i);
+      const parts = this.restoreSentenceAbbreviations(
+        protectedText.split(/\s+(?:,?\s*and\s+this\s+|,?\s*which\s+)(?:represents?|means?|shows?|symbolizes?|indicates?|points\s+to|illustrates?)\s+/i),
+      );
       if (parts.length >= 2) {
         return [
           {
@@ -310,6 +436,8 @@ export class SermonClaimReviewService {
         ];
       }
     }
+
+    if (claimText.length <= 120) return [];
 
     return [];
   }
@@ -334,6 +462,7 @@ export class SermonClaimReviewService {
     isCompound: boolean,
     overreach?: TheologicalOverreachResult,
   ): WorkspacePastoralRisk {
+    if (subType === 'original_language_claim') return 'high';
     if (overreach?.detected && overreach.riskLevel === 'high') return 'high';
     if (homileticalDetected && supportLevel === 'unsupported') return 'high';
     if (supportLevel === 'unsupported') return 'high';
@@ -358,16 +487,26 @@ export class SermonClaimReviewService {
     overreach: TheologicalOverreachResult,
     _risk: WorkspacePastoralRisk,
   ): string {
-    const reasons: string[] = [];
-    if (homiletical.detected) reasons.push(`"${homiletical.imaginedDetail}" is not mentioned in the passage text.`);
-    if (overreach.detected) reasons.push(overreach.reason);
-    if (outsideRange.isOutsideRange) reasons.push(outsideRange.note);
-    if (subType === 'theological_extension' && supportLevel !== 'supported') {
-      reasons.push('Theological extensions require additional supporting sources.');
+    const reasons = new Set<string>();
+    if (homiletical.detected) reasons.add(`"${homiletical.imaginedDetail}" is not mentioned in the passage text.`);
+    if (overreach.detected) reasons.add(overreach.reason);
+    if (outsideRange.isOutsideRange) reasons.add(outsideRange.note);
+    if (subType === 'original_language_claim') {
+      reasons.add('Original-language claims require verification from a trusted lexicon or morphology source.');
     }
-    if (supportLevel === 'unsupported') reasons.push('No supporting source found for this claim.');
-    if (supportLevel === 'needs_review') reasons.push('Claim should be reviewed for accuracy.');
-    return reasons.join(' ') || 'No issues detected.';
+    if (subType === 'theological_extension' && supportLevel !== 'supported') {
+      reasons.add('Theological extensions require additional supporting sources.');
+    }
+    if (supportLevel === 'unsupported') reasons.add('No supporting source found for this claim.');
+    if (supportLevel === 'needs_review') reasons.add('Claim should be reviewed for accuracy.');
+    if (reasons.size > 0) return Array.from(reasons).join(' ');
+    if (_risk === 'high') {
+      return 'This claim needs close review before preaching because it is not fully grounded in the selected passage.';
+    }
+    if (_risk === 'medium') {
+      return 'This claim needs additional review because its wording moves beyond the strongest textual support.';
+    }
+    return 'No issues detected.';
   }
 
   private parseVerseRange(range: string) {
@@ -409,6 +548,87 @@ export class SermonClaimReviewService {
   private extractVerseReferences(text: string): string[] {
     const refRegex = /\b(?:[1-3]\s*)?[A-Z][a-z]+\s+\d+:\d+(?:[-–]\d+)?\b/g;
     return (text.match(refRegex) || []).map((r) => r.trim());
+  }
+
+  private normalizeClaimSubType(value?: string): WorkspaceClaimSubType | null {
+    const cleaned = String(value || '').trim().toLowerCase();
+    if (!MEANINGFUL_CLAIM_TYPES.has(cleaned as WorkspaceClaimSubType)) return null;
+    return cleaned as WorkspaceClaimSubType;
+  }
+
+  private shouldPreferSourceClaimType(
+    sourceType: WorkspaceClaimSubType | null,
+    derivedType: WorkspaceClaimSubType,
+  ): boolean {
+    if (!sourceType) return false;
+    if (sourceType === derivedType) return true;
+    const strongOverrideTypes: WorkspaceClaimSubType[] = [
+      'theological_extension',
+      'illustration',
+      'external_reference',
+      'wider_context',
+      'original_language_claim',
+    ];
+    return !strongOverrideTypes.includes(derivedType);
+  }
+
+  private looksLikeOriginalLanguageClaim(text: string): boolean {
+    const value = String(text || '');
+    if (!value.trim()) return false;
+    return /[\u0590-\u05FF\u0370-\u03FF]/.test(value)
+      || /\b(?:hebrew|greek|aramaic)\s*:/i.test(value)
+      || /\bstrong'?s?\s*[gh]\d+\b/i.test(value)
+      || /\b(?:word\s+origin|lexicon|root word|root means)\b/i.test(value);
+  }
+
+  private hasDirectTextualSupport(claimText: string): boolean {
+    const lower = String(claimText || '').toLowerCase();
+    const supportGroups = [
+      ['gospel', 'everlasting'],
+      ['gospel', 'eternal'],
+      ['son', 'confess', 'sin'],
+      ['confesses', 'sin'],
+      ['guidance', 'upholding'],
+      ['guidance', 'sustain'],
+      ['steps', 'uphold'],
+      ['ordered', 'upholdeth'],
+      ['creator', 'worship'],
+    ];
+    return supportGroups.some((group) => group.every((term) => lower.includes(term)));
+  }
+
+  private buildContextualOverreachRepair(claimText: string, passageText: string, fallback: string): string {
+    const combined = `${claimText} ${passageText}`.toLowerCase();
+    if (/\brevelation\b|\bangel\b|\bbeast\b|\bbabylon\b|\bfaith of jesus\b|\bcommandments\b/.test(combined)) {
+      return 'Frame this prophetic-theological connection as an Adventist interpretation or application, not as the only direct reading of the verse.';
+    }
+    if (/\bpsalm\b|\bsteps\b|\buphold(?:eth|s)?\b|\bway\b|\bfall\b/.test(combined)) {
+      return 'Frame this as a broader theological application of God\'s sustaining care, not as the direct meaning of the Hebrew poetry.';
+    }
+    if (/\bluke\b|\bfather\b|\bson\b|\bparable\b|\brobe\b|\bring\b/.test(combined)) {
+      return 'Frame this as a theological application rather than the direct meaning of the passage. Add supporting Scripture or Adventist sources if you want to make this doctrinal connection.';
+    }
+    return 'Frame this as a theological application rather than the direct meaning of the passage. Add supporting Scripture or Adventist sources if you want to make this doctrinal connection.';
+  }
+
+  private cleanQuestionText(value: string): string {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  private protectSentenceAbbreviations(text: string): string {
+    return String(text || '')
+      .replace(/\bvv?\./gi, (match) => match.replace('.', '§'))
+      .replace(/\b(e\.g|i\.e|Mr|Dr|Sr|Jr)\./gi, (match) => match.replace('.', '§'))
+      .replace(/(\b[A-Z][a-z]{1,20}\s+\d+:\d+)\./g, '$1§');
+  }
+
+  private restoreSentenceAbbreviations(parts: string[]): string[] {
+    return parts.map((part) =>
+      String(part || '')
+        .replace(/§/g, '.')
+        .replace(/\s{2,}/g, ' ')
+        .trim(),
+    );
   }
 }
 
@@ -491,6 +711,11 @@ const SOCRATIC_TEMPLATES: Record<WorkspaceClaimSubType, string[]> = {
     'Is the quotation accurately sourced?',
     'Does the source directly support the claim or only share a theme?',
     'Should this be quoted, summarized, or removed?',
+  ],
+  original_language_claim: [
+    'Has this Hebrew or Greek claim been verified in a trusted lexicon or morphology source?',
+    'Is the original-language point necessary for the sermon, or can it be removed?',
+    'Would the congregation hear this as verified fact when it still needs lexical support?',
   ],
   wider_context: [
     'Is this outside the selected passage range?',
