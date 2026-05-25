@@ -21,5 +21,9 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #13399 | 12:21 PM | ✅ | Task5 complete, task6 starting: service wiring into WorkspacesService | ~164 |
+| #13398 | 12:20 PM | 🟣 | Created SermonClaimReviewService with all claim review logic | ~527 |
+| #13393 | 12:18 PM | ⚖️ | Three-lane Socratic review architecture approved | ~600 |
+| #13391 | 12:16 PM | 🔵 | Existing claiming and citation architecture surveyed | ~491 |
 | #13253 | 8:13 AM | 🔵 | Workspace service uses passage summary from scripture cache for study reports | ~331 |
 </claude-mem-context>

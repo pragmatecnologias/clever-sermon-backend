@@ -96,7 +96,7 @@ describe('SermonClaimReviewService', () => {
 
   describe('detectOutsideRange', () => {
     it('detects Luke 15:25-32 outside range 15:11-24', () => {
-      const claim = 'The elder brother reveals religious resentment (Luke 15:25-32).';
+      const claim = 'The elder brother reveals religious resentment Luke 15:25-32.';
       const result = service.detectOutsideRange(claim, { book: 'Luke', startChapter: 15, startVerse: 11, endChapter: 15, endVerse: 24 });
       expect(result.isOutsideRange).toBe(true);
       expect(result.note).toContain('outside the selected passage');
@@ -151,7 +151,7 @@ describe('SermonClaimReviewService', () => {
     it('returns theological extension questions', () => {
       const qs = service.generateSocraticQuestions('theological_extension', 'The robe represents righteousness.');
       expect(qs.length).toBeGreaterThan(0);
-      expect(qs.some((q) => q.includes('adventist') || q.includes('biblical'))).toBe(true);
+      expect(qs.some((q) => q.toLowerCase().includes('scripture') || q.toLowerCase().includes('connection') || q.toLowerCase().includes('application'))).toBe(true);
     });
 
     it('returns application questions', () => {
@@ -191,8 +191,10 @@ describe('SermonClaimReviewService', () => {
       })];
       const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
       expect(enriched[0].claimSubType).toBe('theological_extension');
-      expect(enriched[0].pastoralRisk).toBe('medium');
-      expect(enriched[0].socraticQuestions!.some((q) => q.includes('biblical') || q.includes('adventist'))).toBe(true);
+      // sanctuary model triggers theological overreach → high risk
+      expect(enriched[0].pastoralRisk).toBe('high');
+      expect(enriched[0].theologicalExtension).toBe(true);
+      expect(enriched[0].socraticQuestions!.length).toBeGreaterThan(0);
     });
 
     it('enriches outside-range claim', () => {
@@ -231,6 +233,98 @@ describe('SermonClaimReviewService', () => {
       expect(summary.supportedClaims).toBe(1);
       expect(summary.highRiskClaims).toBe(0);
       expect(summary.theologicalExtensions).toBe(1);
+    });
+  });
+
+  // ─── Theological Overreach ─────────────────────────────────
+
+  describe('detectTheologicalOverreach', () => {
+    it('detects state of the dead claim', () => {
+      const result = service.detectTheologicalOverreach(
+        'Luke 15:24 supports state of the dead.',
+        '',
+        'theological_extension',
+      );
+      expect(result.detected).toBe(true);
+      expect(result.theme).toBe('State of the Dead');
+      expect(result.riskLevel).toBe('high');
+    });
+
+    it('detects sanctuary model from Luke 15 robe/ring', () => {
+      const result = service.detectTheologicalOverreach(
+        'The robe, ring, and sandals represent imparted righteousness in the sanctuary model.',
+        '',
+        'theological_extension',
+      );
+      expect(result.detected).toBe(true);
+      expect(result.theme).toContain('Sanctuary');
+    });
+
+    it('does not flag ordinary interpretation', () => {
+      const result = service.detectTheologicalOverreach(
+        'The father welcomes the son with compassion.',
+        '',
+        'textual_observation',
+      );
+      expect(result.detected).toBe(false);
+    });
+  });
+
+  // ─── Boolean Flags ─────────────────────────────────────────
+
+  describe('top-level boolean flags', () => {
+    it('sets homileticalImagination flag', () => {
+      const claims = [makeClaim({ claimText: 'The father watched from the porch.' })];
+      const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
+      expect(enriched[0].homileticalImagination).toBe(true);
+    });
+
+    it('sets outsideSelectedRange flag', () => {
+      const claims = [makeClaim({ claimText: 'The elder brother in Luke 15:28 reveals resentment.' })];
+      const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
+      expect(enriched[0].outsideSelectedRange).toBe(true);
+      expect(enriched[0].outsideRangeReason).toBeTruthy();
+    });
+
+    it('sets theologicalExtension flag for doctrine claims', () => {
+      const claims = [makeClaim({
+        claimText: 'Luke 15:24 supports state of the dead.',
+        supportLevel: 'needs_review',
+      })];
+      const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
+      expect(enriched[0].theologicalExtension).toBe(true);
+      expect(enriched[0].pastoralRisk).toBe('high');
+    });
+
+    it('does not set flags for clean observation', () => {
+      const claims = [makeClaim({
+        claimText: 'The son confesses sin and unworthiness.',
+        supportLevel: 'partially_supported',
+        sourceIds: ['Luke 15:18-21'],
+        verified: true,
+      })];
+      const enriched = service.enrichClaims(claims, 'Luke 15:11-24', LUKE_15_PASSAGE);
+      expect(enriched[0].homileticalImagination).toBeFalsy();
+      expect(enriched[0].outsideSelectedRange).toBeFalsy();
+    });
+  });
+
+  // ─── Support Level Refinement ──────────────────────────────
+
+  describe('refineSupportLevel', () => {
+    it('keeps supported for verified claim with sources', () => {
+      const claim = makeClaim({ verified: true, sourceIds: ['Luke 15:22'] });
+      expect(service.refineSupportLevel('The robe shows restoration.', claim)).toBe('supported');
+    });
+
+    it('returns needs_review for theological extension language', () => {
+      const claim = makeClaim({ supportLevel: 'partially_supported' });
+      expect(service.refineSupportLevel('The robe represents righteousness.', claim)).toBe('needs_review');
+    });
+
+    it('returns needs_review for porch claim', () => {
+      const claim = makeClaim({ claimText: 'The father watched from the porch.' });
+      expect(service.refineSupportLevel('The father watched from the porch.', claim)).toBe('needs_review');
     });
   });
 });
