@@ -18,6 +18,7 @@ import {
   WorkspaceOutlineSummary,
   WorkspacePhase,
   WorkspaceProgress,
+  WorkspaceReviewSummary,
   WorkspaceSection,
   WorkspaceSourceSummary,
   WorkspaceStateResponse,
@@ -45,6 +46,7 @@ export type WorkspaceStateParts = {
   claimLedger: WorkspaceClaimSummary[];
   sourceLedger: WorkspaceSourceSummary[];
   claimReviewDecisions: WorkspaceClaimReview[];
+  reviewSummary: WorkspaceReviewSummary | null;
   nextAction: WorkspaceNextAction;
   uiState: {
     phase: WorkspacePhase;

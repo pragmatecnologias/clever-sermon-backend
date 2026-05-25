@@ -1,4 +1,5 @@
 import { WorkspacesService } from './workspaces.service';
+import { GeneratedStudyOutputValidator } from '../scripture/generated-study-output.validator';
 
 describe('WorkspacesService manuscript parsing', () => {
   const options = {
@@ -11,6 +12,7 @@ describe('WorkspacesService manuscript parsing', () => {
   } as const;
 
   let service: WorkspacesService;
+  let generatedStudyOutputValidator: GeneratedStudyOutputValidator;
   let consoleInfoSpy: jest.SpyInstance;
 
   beforeEach(() => {
@@ -39,7 +41,9 @@ describe('WorkspacesService manuscript parsing', () => {
       null as any,
       null as any,
       null as any,
+      null as any,
     );
+    generatedStudyOutputValidator = new GeneratedStudyOutputValidator();
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
   });
 
@@ -212,6 +216,218 @@ describe('WorkspacesService manuscript parsing', () => {
     expect(plan[0].proposedAction).toBeTruthy();
   });
 
+  it('normalizes paragraph-style study report flow into multiple executable units', () => {
+    const rawStudyReport = {
+      passageOverview: 'Luke 15:11-24 presents the parable of the prodigal son.',
+      literaryContext: 'Parable within Luke 15.',
+      historicalContext: 'Jesus is responding to criticism of his welcome to sinners.',
+      canonicalContext: 'Repentance, restoration, and sonship develop across Scripture.',
+      exegeticalSummary: 'The father receives the returning son with compassion and restores him to sonship.',
+      mainTheologicalClaim: 'God restores repentant sinners as sons and daughters.',
+      preachingFocus: 'Preach grace that restores rather than merely excuses.',
+      exegeticalFlow:
+        'The son leaves home and wastes his inheritance. A famine exposes his ruin. He comes to himself and returns in repentance. The father runs to receive him. The father restores him publicly and the household rejoices.',
+      structureOfPassage: [
+        { movement: 'Departure', verses: 'Luke 15:11-13', summary: 'The son leaves home.' },
+        { movement: 'Ruin', verses: 'Luke 15:14-16', summary: 'The son is brought low.' },
+      ],
+      keyTerms: [
+        { term: 'repent', language: 'Greek', transliteration: 'metanoeō', definition: 'To turn back', nuance: 'Inner change that leads home.' },
+        { term: 'compassion', language: 'Greek', transliteration: 'splagchnizomai', definition: 'Deep mercy', nuance: 'The father’s heart toward the lost.' },
+      ],
+      theologicalThemes: ['Restoring mercy', 'Repentance and return'],
+      interpretiveChallenges: [
+        { question: 'How does repentance work here?', interpretationOptions: ['Confession', 'Return'], preachingGuidance: 'Keep repentance concrete.' },
+      ],
+      pastoralImplications: {
+        personalLife: ['Repent and return to the Father.'],
+        churchLife: ['Receive repentant people with grace.'],
+        mission: ['Run toward the lost with welcome.'],
+      },
+    } as any;
+
+    const normalized = (service as any).normalizeStudyReportSections(rawStudyReport);
+    const completeness = (service as any).assessStudyReportCompleteness(normalized);
+
+    expect(Array.isArray(normalized.exegeticalFlow)).toBe(true);
+    expect(normalized.exegeticalFlow.length).toBeGreaterThanOrEqual(3);
+    expect(normalized.exegeticalFlow[0]).toContain('son leaves home');
+    expect(normalized.mainTheologicalClaim).toContain('God restores repentant sinners');
+    expect(completeness.isSparse).toBe(false);
+  });
+
+  it('preserves base study report sections when parsed fields are blank', () => {
+    const baseSections = {
+      passageOverview: 'Base overview',
+      exegeticalFlow: ['Base flow 1', 'Base flow 2'],
+      mainTheologicalClaim: 'Base claim',
+    } as any;
+    const parsedSections = {
+      passageOverview: '',
+      exegeticalFlow: '',
+      mainTheologicalClaim: '',
+      structureOfPassage: [],
+    } as any;
+
+    const merged = (service as any).mergeStudyReportSections(baseSections, parsedSections);
+
+    expect(merged.passageOverview).toBe('Base overview');
+    expect(merged.exegeticalFlow).toEqual(['Base flow 1', 'Base flow 2']);
+    expect(merged.mainTheologicalClaim).toBe('Base claim');
+  });
+
+  it('fills historical context and key terms from cached study data when word study is absent', () => {
+    const studyInputs = {
+      workspace: {
+        mainPassage: 'Luke 15:11-24',
+        language: 'en',
+      },
+      cachedStudySections: {
+        passageSummary: {
+          summary: 'The parable follows the son through departure, ruin, repentance, and return.',
+          movement: [
+            'The son leaves home and moves toward ruin.',
+            'The turning point comes in repentance and honest return.',
+          ],
+          interpretiveCenter: 'God’s restoring grace receives the repentant.',
+        },
+        structuralAnalysis: {
+          literaryGenre: 'Parable',
+          structure: [
+            { description: 'Departure from the father’s house', verses: '11-12' },
+            { description: 'Restoration through the father’s welcome', verses: '20-24' },
+          ],
+        },
+        interpretiveChallenges: {
+          challenge: 'Does the parable center on the lost son, the welcoming father, or the resentful brother?',
+          views: [
+            { summary: 'The story moves from distance to return.' },
+            { summary: 'Grace confronts both the lost and the proud.' },
+          ],
+          sdaPerspective: { reasoning: 'Christ-centered and Scripture-based' },
+        },
+        canonicalThemes: {
+          themes: [
+            { theme: 'Restoring mercy', summary: 'The father receives the repentant son with restoring compassion.', canonicalMovement: 'Scripture presents God as merciful and restorative.' },
+            { theme: 'Repentance and return', summary: 'The son returns in repentance and humility.', canonicalMovement: 'Scripture repeatedly calls sinners to return to the Lord.' },
+          ],
+        },
+        studySynthesis: {
+          summary: 'The father’s grace receives the repentant and brings him home.',
+          mainClaim: 'God restores repentant sinners as sons and daughters.',
+        },
+        wordStudy: null,
+      },
+      referenceData: {
+        bookMetadata: {
+          literaryType: 'Parable',
+          summary: 'Jesus teaches in Luke 15 to answer criticism of his welcome to sinners.',
+        },
+        historicalContext: {
+          summary: 'Jesus is responding to criticism of his welcome to sinners.',
+        },
+        culturalContext: {
+          summary: 'Honor-shame and family restoration shape the story.',
+        },
+      },
+    } as any;
+
+    const base = (service as any).buildStudyReportBaseSections(studyInputs, 'en');
+
+    expect(base.historicalContext).toContain('Jesus is responding to criticism');
+    expect(base.keyTerms.length).toBeGreaterThanOrEqual(2);
+    expect(base.keyTerms[0].term).toBeTruthy();
+  });
+
+  it('derives study report context from section-based verse context data', () => {
+    const studyInputs = {
+      workspace: {
+        mainPassage: 'Luke 15:11-24',
+        language: 'en',
+      },
+      cachedStudySections: {
+        passageSummary: {
+          summary: 'The parable follows the son through departure, ruin, repentance, and return.',
+          movement: [
+            'The son leaves home and moves toward ruin.',
+            'The turning point comes in repentance and honest return.',
+            'The father runs to receive the lost child.',
+            'Restoration is marked by welcome, joy, and renewed belonging.',
+          ],
+          interpretiveCenter: 'God’s restoring grace receives the repentant.',
+        },
+        verseContext: {
+          status: 'ready',
+          genre: 'Parable',
+          sections: [
+            {
+              title: 'Historical Context',
+              content: 'Jesus is responding to criticism of his welcome to sinners.',
+            },
+            {
+              title: 'Cultural Context',
+              content: 'Honor and shame shaped the son’s return and the father’s public welcome.',
+            },
+            {
+              title: 'Geographical / Literary Setting',
+              content: 'Luke places the parable in a teaching setting after conflict with the Pharisees.',
+            },
+          ],
+        },
+        structuralAnalysis: {
+          literaryGenre: 'Parable',
+          structure: [
+            { description: 'Departure from the father’s house', verses: '11-12' },
+            { description: 'Restoration through the father’s welcome', verses: '20-24' },
+          ],
+        },
+        interpretiveChallenges: {
+          challenge: 'Does the parable center on the lost son, the welcoming father, or the resentful brother?',
+          views: [
+            { summary: 'The story moves from distance to return.' },
+            { summary: 'Grace confronts both the lost and the proud.' },
+          ],
+          sdaPerspective: { reasoning: 'Christ-centered and Scripture-based' },
+        },
+        canonicalThemes: {
+          themes: [
+            { theme: 'Restoring mercy', summary: 'The father receives the repentant son with restoring compassion.', canonicalMovement: 'Scripture presents God as merciful and restorative.' },
+            { theme: 'Repentance and return', summary: 'The son returns in repentance and humility.', canonicalMovement: 'Scripture repeatedly calls sinners to return to the Lord.' },
+            { theme: 'Sonship restored', summary: 'The father restores identity, not merely access.', canonicalMovement: 'Scripture frames restoration as renewed belonging.' },
+          ],
+        },
+        studySynthesis: {
+          summary: 'The father’s grace receives the repentant and brings him home.',
+          mainClaim: 'God restores repentant sinners as sons and daughters.',
+        },
+        wordStudy: null,
+      },
+      referenceData: {
+        bookMetadata: {
+          literaryType: 'Parable',
+          summary: 'Jesus teaches in Luke 15 to answer criticism of his welcome to sinners.',
+        },
+        historicalContext: {
+          summary: 'Jesus is responding to criticism of his welcome to sinners.',
+        },
+        culturalContext: {
+          summary: 'Honor-shame and family restoration shape the story.',
+        },
+      },
+    } as any;
+
+    const base = (service as any).buildStudyReportBaseSections(studyInputs, 'en');
+    const validation = generatedStudyOutputValidator.validate('study-report', base, {
+      reference: 'Luke 15:11-24',
+      language: 'en',
+    });
+
+    expect(base.historicalContext).toContain('Jesus is responding to criticism');
+    expect(base.literaryContext).toBe('Parable');
+    expect(base.keyTerms.length).toBeGreaterThanOrEqual(2);
+    expect(validation.valid).toBe(true);
+  });
+
   it('applies anchored targeted replacements without rewriting full manuscript', () => {
     const html = '<h2>Introducción</h2><p>Texto original de introducción.</p><h2>Punto 1</h2><p>Contenido punto uno.</p>';
     const patched = (service as any).applyFirstSnippetReplacement(
@@ -380,6 +596,7 @@ describe('WorkspacesService scripture cache normalization', () => {
       null as any,
       null as any,
       scriptureService as any,
+      null as any,
       null as any,
       null as any,
       null as any,

@@ -29,6 +29,7 @@ import { EGWService } from '../egw/egw.service';
 import { EGWStudyReportIntegrationService } from '../egw/egw-study-report-integration.service';
 import { EGWSermonBuilderIntegrationService } from '../egw/egw-sermon-builder-integration.service';
 import { SermonIntegrityService } from './sermon-integrity.service';
+import { SermonClaimReviewService } from './sermon-claim-review.service';
 import { WorkspaceHelpers } from './helpers';
 import { WorkspaceStateService } from './workspace-state.service';
 import { WorkspaceGenerationCapability, WorkspaceGenerationRegistry } from './workspace-generation.registry';
@@ -1401,6 +1402,7 @@ Rules:
     private egwStudyReportService: EGWStudyReportIntegrationService,
     private egwSermonBuilderService: EGWSermonBuilderIntegrationService,
     private sermonIntegrityService: SermonIntegrityService,
+    private sermoClaimReviewService: SermonClaimReviewService,
     private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
     @InjectQueue('manuscript-repair')
     private manuscriptRepairQueue: Queue,
@@ -1925,6 +1927,24 @@ Rules:
   }
 
   private getWorkspaceClaimLedger(workspace: SermonWorkspace): WorkspaceClaimSummary[] {
+    const baseLedger = this.buildBaseClaimLedger(workspace);
+    const passageText = this.getPassageTextForReview(workspace);
+    const selectedRange = workspace.mainPassage || '';
+    return this.sermoClaimReviewService.enrichClaims(baseLedger, selectedRange, passageText);
+  }
+
+  private getPassageTextForReview(workspace: SermonWorkspace): string {
+    const cache = workspace.scriptureCache as Record<string, unknown> | null;
+    if (cache?.scriptureResult) {
+      const result = cache.scriptureResult as any;
+      if (result?.verses && Array.isArray(result.verses)) {
+        return result.verses.map((v: any) => v.text || '').join(' ');
+      }
+    }
+    return '';
+  }
+
+  private buildBaseClaimLedger(workspace: SermonWorkspace): WorkspaceClaimSummary[] {
     const claimsFromCitations = (workspace?.citations || []).map((citation: any) => {
       const verified = Boolean(citation?.isVerified);
       const supportLevel: WorkspaceClaimSupportLevel = verified
@@ -2447,6 +2467,7 @@ Rules:
     const claimLedger = this.getWorkspaceClaimLedger(workspace);
     const sourceLedger = this.getWorkspaceSourceLedger(workspace);
     const claimReviewDecisions = this.getWorkspaceClaimReviews(workspace);
+    const reviewSummary = this.sermoClaimReviewService.buildReviewSummary(claimLedger);
     const nextAction = this.getWorkspaceNextAction(workspace);
     const featureReadiness = await this.getWorkspaceFeatureReadiness(workspace);
     const workspaceSnapshot = {
@@ -2479,6 +2500,7 @@ Rules:
       claimLedger,
       sourceLedger,
       claimReviewDecisions,
+      reviewSummary,
       nextAction,
       uiState,
     });
@@ -5355,6 +5377,40 @@ Rules:
     return [];
   }
 
+  private asStudyListArray(value: any, limit = 12): string[] {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.asString(item)).filter(Boolean).slice(0, limit);
+    }
+    const text = this.asString(value);
+    if (!text) return [];
+
+    const lineItems = this.parseListFromResponse(text).map((item) => this.asString(item)).filter(Boolean);
+    if (lineItems.length > 1) {
+      return lineItems.slice(0, limit);
+    }
+
+    const sentenceItems = text
+      .replace(/\s+/g, ' ')
+      .split(/(?<=[.!?])\s+(?=[A-Z0-9“"'\(\[])/)
+      .map((item) => this.asString(item))
+      .filter(Boolean);
+
+    if (sentenceItems.length > 1) {
+      return sentenceItems.slice(0, limit);
+    }
+
+    const clauseItems = text
+      .split(/\s*[;•]\s*|\s+—\s+|\s+\|\s+/)
+      .map((item) => this.asString(item))
+      .filter(Boolean);
+
+    if (clauseItems.length > 1) {
+      return clauseItems.slice(0, limit);
+    }
+
+    return lineItems.length ? lineItems.slice(0, limit) : sentenceItems.slice(0, limit);
+  }
+
   private sanitizeAdventistWorshipLanguage(text: string, language: string): string {
     let transformed = SDAAlignmentService.transformContent(String(text || ''));
     const isSpanish = String(language || '').toLowerCase().startsWith('es');
@@ -5438,6 +5494,16 @@ Rules:
       '',
     );
 
+    const verseContextSections = Array.isArray(verseContext?.sections) ? verseContext.sections : [];
+    const verseContextHistoricalNotes = verseContextSections
+      .filter((item: any) => /historical|cultural|geographical|literary|context/i.test(this.asString(item?.title)))
+      .map((item: any) => this.asString(item?.content || item?.summary || ''))
+      .filter(Boolean);
+    const verseContextLiteraryNotes = verseContextSections
+      .filter((item: any) => /literary|genre|poetic|narrative|prophetic|apocalyptic|wisdom|parable/i.test(this.asString(item?.title)))
+      .map((item: any) => this.asString(item?.content || item?.summary || ''))
+      .filter(Boolean);
+
     const historicalNotes = Array.isArray(verseContext?.historical)
       ? verseContext.historical.map((item: any) => this.asString(item?.note)).filter(Boolean)
       : [];
@@ -5472,6 +5538,19 @@ Rules:
       ? canonical.themes.map((item: any) => this.asString(item?.theme)).filter(Boolean).slice(0, 8)
       : [];
 
+    const fallbackKeyTerms = Array.isArray(canonical?.themes)
+      ? canonical.themes
+          .slice(0, 6)
+          .map((item: any) => ({
+            term: this.asString(item?.name || item?.theme),
+            language: language === 'es' ? 'Spanish' : 'English',
+            transliteration: '',
+            definition: this.asString(item?.summary || item?.description || item?.explanation || ''),
+            nuance: this.asString(item?.preachingUse || item?.canonicalMovement || ''),
+          }))
+          .filter((item: any) => item.term)
+      : [];
+
     const keyTerms = Array.isArray(wordStudy?.insights)
       ? wordStudy.insights.slice(0, 6).map((item: any) => ({
           term: this.asString(item?.term || item?.word),
@@ -5480,7 +5559,7 @@ Rules:
           definition: this.asString(item?.definition || item?.gloss || ''),
           nuance: this.asString(item?.nuance || item?.summary || ''),
         }))
-      : [];
+      : fallbackKeyTerms;
 
     const allImplications = Array.from(
       new Set(
@@ -5506,8 +5585,15 @@ Rules:
 
     return {
       passageOverview: this.asString(summary?.summary || synthesis?.summary || ''),
-      literaryContext: this.asString(referenceData?.bookMetadata?.literaryType || referenceData?.bookMetadata?.genre || ''),
-      exegeticalFlow: this.asStringArray(summary?.movement || synthesis?.movement || [], 8),
+      literaryContext: this.asString(
+        referenceData?.bookMetadata?.literaryType ||
+          referenceData?.bookMetadata?.genre ||
+          verseContext?.genre ||
+          verseContext?.literaryGenre ||
+          verseContextLiteraryNotes[0] ||
+          '',
+      ),
+      exegeticalFlow: this.asStudyListArray(summary?.movement || synthesis?.movement || [], 8),
       exegeticalSummary: this.asString(synthesis?.summary || summary?.interpretiveCenter || ''),
       structureOfPassage: Array.isArray(structural?.structure)
         ? structural.structure.map((item: any) => ({
@@ -5517,7 +5603,14 @@ Rules:
           }))
         : [],
       keyTerms,
-      historicalContext: [this.asString(referenceData?.historicalContext?.summary || ''), ...historicalNotes].filter(Boolean).join(' '),
+      historicalContext: [
+        this.asString(referenceData?.historicalContext?.summary || referenceData?.historicalContext?.description || ''),
+        this.asString(referenceData?.culturalContext?.summary || referenceData?.culturalContext?.description || ''),
+        this.asString(referenceData?.bookMetadata?.summary || referenceData?.bookMetadata?.description || ''),
+        ...verseContextHistoricalNotes,
+        ...historicalNotes,
+        ...culturalNotes,
+      ].filter(Boolean).join(' '),
       canonicalContext: this.asString(
         synthesis?.canonicalContext ||
           (Array.isArray(canonical?.themes)
@@ -5535,6 +5628,36 @@ Rules:
       pastoralImplications: distributedImplications,
       preachingFocus,
     };
+  }
+
+  private mergeStudyReportSections(baseSections: Record<string, any>, parsedSections: Record<string, any> | null | undefined): Record<string, any> {
+    const merged: Record<string, any> = { ...(baseSections || {}) };
+    if (!parsedSections || typeof parsedSections !== 'object') {
+      return merged;
+    }
+
+    for (const [key, value] of Object.entries(parsedSections)) {
+      if (value === null || value === undefined) continue;
+      if (typeof value === 'string') {
+        if (this.asString(value)) {
+          merged[key] = value;
+        }
+        continue;
+      }
+      if (Array.isArray(value)) {
+        if (value.some((item) => this.asString(item))) {
+          merged[key] = value;
+        }
+        continue;
+      }
+      if (typeof value === 'object') {
+        if (Object.keys(value).length > 0) {
+          merged[key] = value;
+        }
+      }
+    }
+
+    return merged;
   }
 
   private assessStudyReportCompleteness(sections: Record<string, any>) {
@@ -6069,7 +6192,7 @@ Rules:
     const fallbackThemes = this.asStringArray(source.theologicalThemes || source.keyThemes || source.themes, 10);
     const fallbackCanonical = this.asString(source.canonicalContext || source.canonicalConnections || source.canonicalThemes || '');
     const fallbackClaim = this.asString(source.mainTheologicalClaim || source.theologicalInsights || source.mainClaim || '');
-    const fallbackFlow = this.asStringArray(source.exegeticalFlow || source.argumentFlow || source.flow || [], 8);
+    const fallbackFlow = this.asStudyListArray(source.exegeticalFlow || source.argumentFlow || source.flow || [], 8);
     const fallbackSummary = this.asString(source.exegeticalSummary || source.summaryStatement || '');
     const fallbackPreachingFocus = this.asString(source.preachingFocus || source.sermonFocus || source.homileticFocus || source.mainTheologicalClaim || source.mainClaim || '');
 
@@ -7048,10 +7171,9 @@ Rules:
       parsed = null;
     }
     const baseSections = this.buildStudyReportBaseSections(studyInputs, workspace.language || 'en');
-    let normalizedSections = this.normalizeStudyReportSections({
-      ...baseSections,
-      ...(parsed && typeof parsed === 'object' ? parsed : {}),
-    });
+    let normalizedSections = this.normalizeStudyReportSections(
+      this.mergeStudyReportSections(baseSections, parsed && typeof parsed === 'object' ? parsed : null),
+    );
     let completeness = this.assessStudyReportCompleteness(normalizedSections);
     const hasRichStudyInputs =
       !!studyInputs?.cachedStudySections?.passageSummary ||
@@ -7071,10 +7193,9 @@ Rules:
         });
         this.logLlmOutput('study-report:repair', repairResponse);
         const repairedParsed = this.parseJsonSafe(repairResponse);
-        normalizedSections = this.normalizeStudyReportSections({
-          ...baseSections,
-          ...(repairedParsed && typeof repairedParsed === 'object' ? repairedParsed : {}),
-        });
+        normalizedSections = this.normalizeStudyReportSections(
+          this.mergeStudyReportSections(baseSections, repairedParsed && typeof repairedParsed === 'object' ? repairedParsed : null),
+        );
         completeness = this.assessStudyReportCompleteness(normalizedSections);
       } catch (error) {
         console.warn(`[study-report:repair] fallback activated: ${(error as Error)?.message || 'unknown error'}`);

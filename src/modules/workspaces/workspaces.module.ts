@@ -5,6 +5,7 @@ import { WorkspacesService } from './workspaces.service';
 import { WorkspacesController } from './workspaces.controller';
 import { ContentValidatorService } from './content-validator.service';
 import { SermonIntegrityService } from './sermon-integrity.service';
+import { SermonClaimReviewService } from './sermon-claim-review.service';
 import { WorkspaceStateService } from './workspace-state.service';
 import { WorkspaceGenerationService } from './workspace-generation.service';
 import { WorkspaceTrustService } from './workspace-trust.service';
@@ -49,7 +50,8 @@ import { EGWModule } from '../egw/egw.module';
   providers: [
     WorkspacesService,
     WorkspaceStateService,
-    WorkspaceGenerationService,
+    SermonClaimReviewService,
+  WorkspaceGenerationService,
     WorkspaceTrustService,
     WorkspaceMediaPackService,
     ContentValidatorService,
