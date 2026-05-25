@@ -106,78 +106,104 @@ Return JSON:
 This is not about being theologically correct in general - it's about consistency with SDA doctrinal system.`;
   },
 
-  historicalContextEnhancer(mainPassage: string): string {
-    return `You are a biblical historian providing SPECIFIC, DEEP historical context - not generic summaries.
+  historicalContextEnhancer(input: {
+    mainPassage: string;
+    genre: string;
+    passageText: string;
+    expandedPassageText: string;
+    bookMetadataJson: string;
+    historicalContextJson: string;
+    culturalContextJson: string;
+    geographyContextJson: string;
+    genreFocus: string;
+    geographyNote: string;
+    literaryGuardrails: string[];
+  }): string {
+    return `You are a biblical historian writing pastor-ready historical context.
 
-PASSAGE: ${mainPassage}
+PASSAGE: ${input.mainPassage}
+GENRE: ${input.genre}
+GENRE FOCUS: ${input.genreFocus}
 
-TASK: Provide historical anchoring with specificity and depth.
+PASSAGE TEXT:
+${input.passageText}
 
-1. SOCIAL REALITIES - First-century social structures
-   - Not generic: "Christians in Ephesus..."
-   - Specific: Artemis worship dominance, imperial cult pressure, patronage system, household codes
+SURROUNDING CONTEXT:
+${input.expandedPassageText}
 
-2. POWER STRUCTURES - Who held power and how
-   - Political dynamics
-   - Religious authority
-   - Economic control
+BOOK METADATA JSON:
+${input.bookMetadataJson || '{}'}
 
-3. ECONOMIC CONTEXT - Money, trade, class
-   - Economic pressures on the audience
-   - Financial realities
-   - Class tensions
+HISTORICAL CONTEXT JSON:
+${input.historicalContextJson || '{}'}
 
-4. RELIGIOUS CLIMATE - Spiritual landscape
-   - Competing religious movements
-   - Synagogue dynamics
-   - Pagan influences
-   - Theological debates
+CULTURAL CONTEXT JSON:
+${input.culturalContextJson || '{}'}
 
-5. AUDIENCE PRESSURES - What the original audience faced
-   - External pressures (persecution, social ostracism)
-   - Internal pressures (false teaching, division)
-   - Pastoral response needed
+GEOGRAPHY CONTEXT JSON:
+${input.geographyContextJson || '{}'}
+
+GEOGRAPHY NOTE:
+${input.geographyNote}
+
+LITERARY GUARDRAILS:
+${input.literaryGuardrails.map((item) => `- ${item}`).join('\n')}
+
+WRITE FOR THE PASTOR, NOT THE ENGINEER.
+
+Rules:
+- Never use visible labels like fallback, template, custom, social, or placeholder.
+- Never say "literary setting of Psalm" or "narrative or doctrinal flow".
+- If the passage is a psalm, use poetic / wisdom / worship language.
+- If the passage is geography-light, say so naturally and lean on canonical and cultural context.
+- Keep the preacher inside the chapter and passage context; do not isolate the verse.
+- Explain how the context helps preaching.
+- If the passage is Psalm 37, note envy of the wicked, steps/path language, the reality of stumbling, and God's sustaining faithfulness.
+- If the passage is John 3:16, emphasize Nicodemus, new birth, belief, and eternal life.
+- If the passage is Luke 15:11-24, emphasize grumbling, honor-shame, inheritance, and homecoming.
+- If the passage is Revelation 14:6-12, keep it hopeful, worship-centered, and non-sensational.
+- If the passage is Exodus 20:8-11, emphasize covenant, liberation, creation, and Sabbath rest.
 
 Return JSON:
 {
   "socialRealities": [
     {
-      "aspect": "Specific social structure",
-      "description": "Detailed description",
-      "impact": "How this affected the audience"
+      "aspect": "Specific community setting",
+      "description": "Concrete, passage-aware description",
+      "impact": "How this shapes preaching"
     }
   ],
   "powerStructures": [
     {
-      "structure": "Type of power",
-      "dynamics": "How it operated",
-      "relevance": "Why it matters for this passage"
+      "structure": "Type of authority or influence",
+      "dynamics": "How it operates in the passage world",
+      "relevance": "Why it matters for the sermon"
     }
   ],
   "economicContext": [
     {
-      "factor": "Economic element",
-      "description": "Specific details"
+      "factor": "Economic reality",
+      "description": "Concrete detail"
     }
   ],
   "religiousClimate": [
     {
       "element": "Religious factor",
-      "description": "Details",
-      "tension": "Conflict or pressure created"
+      "description": "Concrete detail",
+      "tension": "The tension it creates"
     }
   ],
   "audiencePressures": [
     {
       "pressure": "Specific pressure",
-      "source": "Where it came from",
-      "pastoralResponse": "How the text addresses it"
+      "source": "Where it comes from",
+      "pastoralResponse": "How the passage addresses it"
     }
   ],
-  "synthesisStatement": "2-3 sentence summary tying it all together"
+  "synthesisStatement": "2-3 sentence summary tying the context to preaching"
 }
 
-Be SPECIFIC. Avoid generic historical context. Add gravitas through detail.`;
+Return only JSON.`;
   },
 
   sermonPatternGrowth(input: {

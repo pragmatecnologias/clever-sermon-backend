@@ -32,6 +32,7 @@ import { SermonIntegrityService } from './sermon-integrity.service';
 import { WorkspaceHelpers } from './helpers';
 import { WorkspaceStateService } from './workspace-state.service';
 import { WorkspaceGenerationCapability, WorkspaceGenerationRegistry } from './workspace-generation.registry';
+import { GeneratedStudyOutputValidator } from '../scripture/generated-study-output.validator';
 import {
   WorkspaceArtifactCounts,
   WorkspaceFeatureReadiness,
@@ -62,6 +63,7 @@ import {
 } from './workspace-state.types';
 import { WorkspacesPrompts } from './workspaces-prompts';
 import { normalizeTheologicalLens } from './theological-lens.util';
+import { cleanVerseText, extractVerseNumber, parseScriptureReference, validateVerseIntegrity } from '../scripture/scripture-helpers';
 
 type ManuscriptGenerationOptions = {
   tone?: 'teaching' | 'pastoral' | 'evangelistic' | 'storytelling' | 'motivational' | string;
@@ -173,6 +175,13 @@ export class WorkspacesService {
     };
     const matchingPassage = reports.filter((report: any) => {
       const sections = report?.sections || {};
+      const validation = this.generatedStudyOutputValidator.validate('study-report', sections, {
+        reference: workspace?.mainPassage || '',
+        language: workspace?.language || 'en',
+      });
+      if (!validation.valid || sections?.status === 'unavailable') {
+        return false;
+      }
       const haystack = [
         sections?.passageOverview,
         sections?.exegeticalSummary,
@@ -1392,6 +1401,7 @@ Rules:
     private egwStudyReportService: EGWStudyReportIntegrationService,
     private egwSermonBuilderService: EGWSermonBuilderIntegrationService,
     private sermonIntegrityService: SermonIntegrityService,
+    private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
     @InjectQueue('manuscript-repair')
     private manuscriptRepairQueue: Queue,
     @InjectQueue('workspace-generation')
@@ -1648,8 +1658,8 @@ Rules:
             ['mainPassage'],
             ['scripture lookup'],
             scriptureCache.passageSummary
-              ? 'Passage summary is generated and stored in the workspace.'
-              : 'Generate a passage summary from the current passage.',
+              ? 'Passage summary saved.'
+              : 'Generate a passage summary.',
             {
               lastGeneratedAt: this.asString(scriptureCache.cachedAt || ''),
               artifactId: scriptureCache.passageSummary ? mainPassage : undefined,
@@ -1663,7 +1673,7 @@ Rules:
             ['mainPassage'],
             ['scripture lookup', 'multiple translations'],
             scriptureCache.translationComparison
-              ? 'Translation comparison is saved for this workspace.'
+              ? 'Translation comparison saved.'
               : 'Compare translations from the current passage.',
             {
               lastGeneratedAt: this.asString(scriptureCache.cachedAt || ''),
@@ -1678,8 +1688,8 @@ Rules:
             ['word', 'language'],
             ['current passage'],
             scriptureCache.wordStudy
-              ? 'Word study is saved for the current workspace.'
-              : 'Pick a key term to study in the current passage.',
+              ? 'Word study saved.'
+              : 'Pick a key term to study.',
             {
               lastGeneratedAt: this.asString(scriptureCache.wordStudy?.cachedAt || ''),
               artifactId: scriptureCache.wordStudy?.word ? String(scriptureCache.wordStudy.word) : undefined,
@@ -1698,8 +1708,8 @@ Rules:
               ['mainPassage'],
               ['cross-reference seed data'],
               scriptureCache.crossReferences?.ranked?.length
-                ? 'Cross references are saved for this workspace.'
-                : 'Run cross-reference lookup for the selected passage.',
+                ? 'Cross references saved.'
+                : 'Run cross-reference lookup.',
               {
                 lastGeneratedAt: this.asString(scriptureCache.crossReferences?.cachedAt || ''),
                 artifactId: scriptureCache.crossReferences?.verse || mainPassage,
@@ -1717,8 +1727,8 @@ Rules:
               ['EGW enabled', 'main passage'],
               ['EGW seed data'],
               scriptureCache.verseCommentary?.notes?.length
-                ? 'Spirit of Prophecy commentary exists for this workspace.'
-                : 'Use EGW tools on the current passage to generate insights.',
+                ? 'Spirit of Prophecy commentary saved.'
+                : 'Generate EGW insights from the current passage.',
               {
                 count: egwLibrary.books,
               },
@@ -1734,7 +1744,7 @@ Rules:
               ['mainPassage'],
               ['LLM provider', 'scripture lookup'],
               studyReportExists
-                ? 'Study report is stored in the workspace.'
+                ? 'Study report saved.'
                 : 'Generate a study report from the current passage.',
               {
                 lastGeneratedAt: studyReport?.createdAt ? this.asString(studyReport.createdAt) : undefined,
@@ -1753,7 +1763,7 @@ Rules:
               ['mainPassage'],
               ['study report'],
               workspace?.sermonCore
-                ? 'Sermon core is saved on the workspace.'
+                ? 'Sermon core saved.'
                 : 'Generate a sermon core before outlining.',
               {
                 artifactId: workspace?.sermonCore ? `${workspace.id}:sermon-core` : undefined,
@@ -5301,147 +5311,38 @@ Rules:
   }
 
   private buildStudyReportFallbackSections(workspace: SermonWorkspace): Record<string, any> {
-    const isSpanish = workspace.language === 'es';
-    const guardrail = this.buildGuardrailProfile(workspace);
-    const mainPassage = this.asString(workspace.mainPassage || '');
-    const theme = this.asString(workspace.theme || '');
-    const claimFallback = guardrail.active
-      ? (isSpanish
-        ? 'El evangelio eterno llama a adorar al Creador, confiar en Cristo y permanecer fieles en el conflicto final.'
-        : 'The everlasting gospel calls people to worship the Creator, trust Christ, and remain faithful in the final conflict.')
-      : (theme || (isSpanish
-        ? 'Dios nos salva por gracia y nos llama a vivir en obediencia.'
-        : 'God saves us by grace and calls us to live in obedience.'));
-
-    if (guardrail.active) {
-      return {
-        passageOverview: isSpanish
-          ? `Apocalipsis 14:6-12 presenta el evangelio eterno, el llamado a adorar al Creador y el contraste entre la lealtad a Cristo y la adoración falsa.`
-          : `Revelation 14:6-12 presents the everlasting gospel, the call to worship the Creator, and the contrast between loyalty to Christ and false worship.`,
-        literaryContext: isSpanish
-          ? 'Visión apocalíptica con lenguaje simbólico, llamada profética y énfasis pastoral para un pueblo que necesita perseverar.'
-          : 'An apocalyptic vision with symbolic language, prophetic summons, and pastoral urgency for a people who must persevere.',
-        historicalContext: isSpanish
-          ? 'El mensaje surge en un contexto de conflicto de lealtad, presión religiosa y necesidad de testimonio fiel.'
-          : 'The message arises in a context of loyalty conflict, religious pressure, and the need for faithful witness.',
-        canonicalContext: isSpanish
-          ? 'El pasaje conecta con la adoración del Creador, el sello de obediencia, el juicio de Dios y la victoria final de Cristo.'
-          : 'The passage connects with Creator worship, the seal of obedience, divine judgment, and Christ’s final victory.',
-        exegeticalSummary: isSpanish
-          ? 'Juan presenta un triple llamado que exalta el evangelio, advierte contra Babilonia y llama a la perseverancia de los santos.'
-          : 'John presents a threefold call that exalts the gospel, warns against Babylon, and calls the saints to persevering faithfulness.',
-        mainTheologicalClaim: claimFallback,
-        preachingFocus: claimFallback,
-        exegeticalFlow: isSpanish
-          ? ['El evangelio eterno se proclama a toda nación.', 'La adoración al Creador se contrasta con la adoración falsa.', 'Los santos perseveran guardando los mandamientos de Dios y la fe de Jesús.']
-          : ['The everlasting gospel is proclaimed to every nation.', 'Worship of the Creator is contrasted with false worship.', 'The saints persevere by keeping the commandments of God and the faith of Jesus.'],
-        structureOfPassage: isSpanish
-          ? [
-              { movement: 'Proclamación del evangelio eterno', verses: `${mainPassage}`, summary: 'El mensaje comienza con buenas noticias para toda la humanidad.' },
-              { movement: 'Llamado a adorar al Creador', verses: `${mainPassage}`, summary: 'La adoración verdadera se centra en Dios, no en el poder humano.' },
-              { movement: 'Advertencia y perseverancia', verses: `${mainPassage}`, summary: 'La fidelidad se mantiene en medio de la presión y el engaño.' },
-            ]
-          : [
-              { movement: 'Proclamation of the everlasting gospel', verses: `${mainPassage}`, summary: 'The message begins with good news for all humanity.' },
-              { movement: 'Call to worship the Creator', verses: `${mainPassage}`, summary: 'True worship centers on God, not human power.' },
-              { movement: 'Warning and perseverance', verses: `${mainPassage}`, summary: 'Faithfulness remains under pressure and deception.' },
-            ],
-        keyTerms: isSpanish
-          ? [
-              { term: 'evangelio eterno', language: 'griego', transliteration: 'euangelion aiōnion', definition: 'buenas noticias permanentes de Dios', nuance: 'centro del mensaje' },
-              { term: 'adorar', language: 'griego', transliteration: 'proskuneō', definition: 'rendir honra y lealtad', nuance: 'tema de conflicto' },
-              { term: 'fe de Jesús', language: 'griego', transliteration: 'pistis Iēsou', definition: 'confianza y fidelidad a Cristo', nuance: 'perseverancia de los santos' },
-            ]
-          : [
-              { term: 'everlasting gospel', language: 'greek', transliteration: 'euangelion aiōnion', definition: 'God’s enduring good news', nuance: 'center of the message' },
-              { term: 'worship', language: 'greek', transliteration: 'proskuneō', definition: 'to render honor and allegiance', nuance: 'conflict theme' },
-              { term: 'faith of Jesus', language: 'greek', transliteration: 'pistis Iēsou', definition: 'trust and fidelity to Christ', nuance: 'saints’ perseverance' },
-            ],
-        theologicalThemes: isSpanish
-          ? ['Evangelio eterno', 'Adoración al Creador', 'Juicio y gracia', 'Fidelidad y perseverancia', 'Cristo en el centro']
-          : ['Everlasting gospel', 'Creator worship', 'Judgment and grace', 'Faithful perseverance', 'Christ at the center'],
-        interpretiveChallenges: isSpanish
-          ? [
-              {
-                question: '¿Cómo predicar el juicio sin caer en miedo o sensacionalismo?',
-                interpretationOptions: ['Presentarlo como una obra justa y esperanzadora de Dios.', 'Conectarlo con la victoria de Cristo y la adoración verdadera.'],
-                preachingGuidance: 'Mantener el tono pastoral, mostrar a Cristo como el centro y evitar especulación cronológica.',
-              },
-            ]
-          : [
-              {
-                question: 'How should judgment be preached without fear or sensationalism?',
-                interpretationOptions: ['Present it as God’s just and hopeful work.', 'Connect it to Christ’s victory and true worship.'],
-                preachingGuidance: 'Keep the tone pastoral, show Christ at the center, and avoid speculative timelines.',
-              },
-            ],
-      };
-    }
-
-    const genericFallback = {
-      passageOverview: isSpanish
-        ? `El pasaje ${mainPassage} muestra el paso de muerte espiritual a vida en Cristo por la gracia de Dios.`
-        : `The passage ${mainPassage} shows the transition from spiritual death to life in Christ by God’s grace.`,
-      literaryContext: isSpanish
-        ? 'Unidad epistolar de Pablo: argumento doctrinal seguido de exhortación práctica para la iglesia.'
-        : 'Pauline epistolary unit: doctrinal argument followed by practical exhortation for the church.',
-      historicalContext: isSpanish
-        ? 'La audiencia original vivía en un contexto urbano plural, con tensiones religiosas y morales que hacen urgente el llamado a una nueva vida.'
-        : 'The original audience lived in a plural urban context with religious and moral tensions that made the call to new life urgent.',
-      canonicalContext: isSpanish
-        ? 'El tema se conecta con la narrativa bíblica de caída, redención en Cristo y restauración del pueblo de Dios.'
-        : 'This theme connects to the biblical storyline of fall, redemption in Christ, and restoration of God’s people.',
-      exegeticalSummary: isSpanish
-        ? 'Pablo contrasta la antigua condición de pecado con la nueva identidad en Cristo, enfatizando que la salvación es por gracia y produce buenas obras.'
-        : 'Paul contrasts the former condition of sin with the new identity in Christ, emphasizing salvation by grace that produces good works.',
-      mainTheologicalClaim: claimFallback,
-      exegeticalFlow: isSpanish
-        ? ['Condición previa: muerte espiritual.', 'Intervención divina: gracia y vida en Cristo.', 'Respuesta visible: obediencia y buenas obras.']
-        : ['Former condition: spiritual death.', 'Divine intervention: grace and life in Christ.', 'Visible response: obedience and good works.'],
-      structureOfPassage: isSpanish
-        ? [
-            { movement: 'Condición humana sin Cristo', verses: `${mainPassage} (sección inicial)`, summary: 'Diagnóstico de muerte espiritual y esclavitud al pecado.' },
-            { movement: 'Intervención de la gracia', verses: `${mainPassage} (sección central)`, summary: 'Dios da vida con Cristo por pura gracia.' },
-            { movement: 'Nueva vida y misión', verses: `${mainPassage} (sección final)`, summary: 'El creyente vive para obras preparadas por Dios.' },
-          ]
-        : [
-            { movement: 'Human condition apart from Christ', verses: `${mainPassage} (opening section)`, summary: 'Diagnosis of spiritual death and bondage to sin.' },
-            { movement: 'Intervention of grace', verses: `${mainPassage} (middle section)`, summary: 'God gives life with Christ by pure grace.' },
-            { movement: 'New life and mission', verses: `${mainPassage} (final section)`, summary: 'Believers live for works prepared by God.' },
-          ],
-      keyTerms: isSpanish
-        ? [
-            { term: 'gracia', language: 'griego', transliteration: 'charis', definition: 'favor inmerecido de Dios', nuance: 'base de la salvación' },
-            { term: 'fe', language: 'griego', transliteration: 'pistis', definition: 'confianza en Dios', nuance: 'respuesta del creyente' },
-            { term: 'obras', language: 'griego', transliteration: 'erga', definition: 'acciones concretas', nuance: 'fruto de la nueva vida' },
-          ]
-        : [
-            { term: 'grace', language: 'greek', transliteration: 'charis', definition: 'undeserved favor of God', nuance: 'basis of salvation' },
-            { term: 'faith', language: 'greek', transliteration: 'pistis', definition: 'trust in God', nuance: 'believer response' },
-            { term: 'works', language: 'greek', transliteration: 'erga', definition: 'concrete actions', nuance: 'fruit of new life' },
-          ],
-      theologicalThemes: isSpanish
-        ? ['Gracia salvadora', 'Nueva creación en Cristo', 'Obediencia como fruto', 'Unidad del pueblo de Dios']
-        : ['Saving grace', 'New creation in Christ', 'Obedience as fruit', 'Unity of God’s people'],
-      preachingFocus: claimFallback,
-      interpretiveChallenges: isSpanish
-        ? [
-            {
-              question: '¿Cómo se relacionan gracia y buenas obras sin contradicción?',
-              interpretationOptions: ['Las obras no causan la salvación.', 'Las obras confirman una fe viva.'],
-              preachingGuidance: 'Presentar la obediencia como fruto del nuevo nacimiento, no como mérito.',
-            },
-          ]
-        : [
-            {
-              question: 'How do grace and good works relate without contradiction?',
-              interpretationOptions: ['Works do not cause salvation.', 'Works confirm living faith.'],
-              preachingGuidance: 'Present obedience as fruit of new birth, not human merit.',
-            },
-          ],
+    return {
+      status: 'unavailable',
+      message: 'Study report could not be generated. Please retry.',
+      passageOverview: '',
+      literaryContext: '',
+      historicalContext: '',
+      canonicalContext: '',
+      exegeticalSummary: '',
+      mainTheologicalClaim: '',
+      preachingFocus: '',
+      exegeticalFlow: [],
+      structureOfPassage: [],
+      keyTerms: [],
+      theologicalThemes: [],
+      interpretiveChallenges: [],
+      pastoralImplications: {
+        personalLife: [],
+        churchLife: [],
+        mission: [],
+      },
+      studyAssets: {
+        movementAssets: [],
+        categoryAssets: {
+          applications: [],
+          discussionQuestions: [],
+          illustrationIdeas: [],
+          mediaSuggestions: [],
+          egwSupport: [],
+          references: [],
+        },
+      },
     };
-
-    return genericFallback;
   }
 
   private asStringArray(value: any, limit = 12): string[] {
@@ -5669,31 +5570,22 @@ Rules:
     sections: Record<string, any>,
   ): Record<string, any> {
     const source = sections || {};
-    const fallback = this.buildStudyReportFallbackSections(workspace);
-
     return {
       ...source,
-      passageOverview: this.asString(source.passageOverview || fallback.passageOverview),
-      literaryContext: this.asString(source.literaryContext || fallback.literaryContext),
-      historicalContext: this.asString(source.historicalContext || fallback.historicalContext),
-      canonicalContext: this.asString(source.canonicalContext || fallback.canonicalContext),
-      exegeticalSummary: this.asString(source.exegeticalSummary || fallback.exegeticalSummary),
-      mainTheologicalClaim: this.asString(source.mainTheologicalClaim || fallback.mainTheologicalClaim),
-      preachingFocus: this.asString(source.preachingFocus || fallback.preachingFocus || fallback.mainTheologicalClaim),
-      exegeticalFlow: Array.isArray(source.exegeticalFlow) && source.exegeticalFlow.length ? source.exegeticalFlow : fallback.exegeticalFlow,
-      structureOfPassage:
-        Array.isArray(source.structureOfPassage) && source.structureOfPassage.length
-          ? source.structureOfPassage
-          : fallback.structureOfPassage,
-      keyTerms: Array.isArray(source.keyTerms) && source.keyTerms.length ? source.keyTerms : fallback.keyTerms,
-      theologicalThemes:
-        Array.isArray(source.theologicalThemes) && source.theologicalThemes.length
-          ? source.theologicalThemes
-          : fallback.theologicalThemes,
-      interpretiveChallenges:
-        Array.isArray(source.interpretiveChallenges) && source.interpretiveChallenges.length
-          ? source.interpretiveChallenges
-          : fallback.interpretiveChallenges,
+      status: 'unavailable',
+      message: 'Study report could not be generated. Please retry.',
+      passageOverview: this.asString(source.passageOverview || ''),
+      literaryContext: this.asString(source.literaryContext || ''),
+      historicalContext: this.asString(source.historicalContext || ''),
+      canonicalContext: this.asString(source.canonicalContext || ''),
+      exegeticalSummary: this.asString(source.exegeticalSummary || ''),
+      mainTheologicalClaim: this.asString(source.mainTheologicalClaim || ''),
+      preachingFocus: this.asString(source.preachingFocus || ''),
+      exegeticalFlow: Array.isArray(source.exegeticalFlow) ? source.exegeticalFlow : [],
+      structureOfPassage: Array.isArray(source.structureOfPassage) ? source.structureOfPassage : [],
+      keyTerms: Array.isArray(source.keyTerms) ? source.keyTerms : [],
+      theologicalThemes: Array.isArray(source.theologicalThemes) ? source.theologicalThemes : [],
+      interpretiveChallenges: Array.isArray(source.interpretiveChallenges) ? source.interpretiveChallenges : [],
     };
   }
 
@@ -7090,8 +6982,13 @@ Rules:
     const workspace = await this.findOne(workspaceId, userId);
     await this.citationRepository.delete({ workspaceId });
     const prompt = promptOverride || this.buildCitationsPrompt(workspace);
-    const response = await this.llmService.generateCompletion(prompt, userId);
-    this.logLlmOutput('citations', response);
+    let response = '';
+    try {
+      response = await this.llmService.generateCompletion(prompt, userId);
+      this.logLlmOutput('citations', response);
+    } catch (error) {
+      console.warn('Citations generation failed, using fallback citations.', error);
+    }
 
     const parsed = this.parseJsonSafe(response) || this.parseCitationsFromResponse(response);
     const items = Array.isArray(parsed) && parsed.length ? parsed : this.buildCitationFallbackItems(workspace);
@@ -7185,7 +7082,14 @@ Rules:
     }
 
     if (completeness.isSparse) {
-      normalizedSections = this.hydrateSparseStudyReportSections(workspace, normalizedSections);
+      normalizedSections = this.buildStudyReportFallbackSections(workspace);
+    }
+    const studyReportValidation = this.generatedStudyOutputValidator.validate('study-report', normalizedSections, {
+      reference: workspace.mainPassage,
+      language: workspace.language,
+    });
+    if (!studyReportValidation.valid) {
+      normalizedSections = this.buildStudyReportFallbackSections(workspace);
     }
     this.validateGenerationResult('study-report', normalizedSections);
 
@@ -7618,6 +7522,192 @@ Rules:
     return workspaces;
   }
 
+  private isRecord(value: unknown): value is Record<string, any> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  private stripScriptureTranslationSuffix(reference: string): string {
+    const cleaned = this.asString(reference || '').trim().replace(/\u2013|\u2014/g, '-');
+    if (!cleaned) return cleaned;
+    const colonMatch = cleaned.match(/^(.*):([A-Z][A-Z0-9]{1,7})$/);
+    if (colonMatch) {
+      const possibleTranslation = colonMatch[2].toUpperCase();
+      const knownTranslations = new Set([
+        'KJV', 'WEB', 'ESV', 'NIV', 'NASB', 'NKJV', 'ASV', 'NRSV', 'CSB', 'NLT', 'RVR1960', 'RVR', 'LBLA', 'DHH', 'TLA', 'NTV',
+      ]);
+      if (knownTranslations.has(possibleTranslation)) {
+        return colonMatch[1].trim();
+      }
+    }
+    const match = cleaned.match(/^(.*)\s+([A-Z][A-Z0-9]{1,7})$/);
+    if (!match) return cleaned;
+    const possibleTranslation = match[2].toUpperCase();
+    const knownTranslations = new Set([
+      'KJV', 'WEB', 'ESV', 'NIV', 'NASB', 'NKJV', 'ASV', 'NRSV', 'CSB', 'NLT', 'RVR1960', 'RVR', 'LBLA', 'DHH', 'TLA', 'NTV',
+    ]);
+    return knownTranslations.has(possibleTranslation) ? match[1].trim() : cleaned;
+  }
+
+  private extractScriptureVerses(result: unknown): Array<{ reference?: string; text?: string }> {
+    if (!this.isRecord(result)) return [];
+    const dataResult = this.isRecord(result.data) ? result.data : null;
+    const passageResult = this.isRecord(result.passage) ? result.passage : null;
+    const payloadResult = this.isRecord(result.payload) ? result.payload : null;
+
+    const candidates = [result.verses, dataResult?.verses, passageResult?.verses, payloadResult?.verses];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        return candidate as Array<{ reference?: string; text?: string }>;
+      }
+      if (candidate && typeof candidate === 'object') {
+        const values = Object.values(candidate as Record<string, unknown>);
+        if (values.length && values.every((item) => this.isRecord(item))) {
+          return values as Array<{ reference?: string; text?: string }>;
+        }
+      }
+    }
+
+    const textCandidate =
+      this.asString(result.text || '') ||
+      this.asString(result.content || '') ||
+      this.asString(dataResult?.text || '') ||
+      this.asString(dataResult?.content || '') ||
+      this.asString(passageResult?.text || '') ||
+      '';
+
+    if (textCandidate.trim()) {
+      return [
+        {
+          reference: this.asString(result.reference || dataResult?.reference || passageResult?.reference || ''),
+          text: textCandidate.trim(),
+        },
+      ];
+    }
+
+    return [];
+  }
+
+  private normalizeScriptureVerseReference(reference: string, requestedReference: string, verseIndex: number): string {
+    const cleanedReference = this.stripScriptureTranslationSuffix(reference);
+    const parsed = parseScriptureReference(this.stripScriptureTranslationSuffix(requestedReference));
+    const verseNumber = extractVerseNumber(cleanedReference) ?? (parsed?.verseStart !== undefined ? parsed.verseStart + verseIndex : null);
+    if (parsed && Number.isFinite(verseNumber as number)) {
+      return `${parsed.book} ${parsed.chapter}:${verseNumber}`;
+    }
+    return cleanedReference || this.stripScriptureTranslationSuffix(requestedReference);
+  }
+
+  private async normalizeScriptureCachePayload(
+    cacheData: Record<string, any> | null | undefined,
+    context: { mainPassage?: string; language?: string } = {},
+  ): Promise<Record<string, any> | null> {
+    if (!this.isRecord(cacheData)) {
+      return null;
+    }
+
+    const normalizedCache: Record<string, any> = { ...cacheData };
+    const defaultTranslation = String(normalizedCache.scriptureTranslation || '').trim().toUpperCase()
+      || (String(context.language || '').toLowerCase().startsWith('es') ? 'RVR1960' : 'KJV');
+    const requestedReference = this.stripScriptureTranslationSuffix(
+      this.asString(
+        normalizedCache.scriptureLastLookup ||
+        normalizedCache.scriptureQuery ||
+        normalizedCache.reference ||
+        context.mainPassage ||
+        '',
+      ),
+    );
+    const scriptureReference = requestedReference || this.stripScriptureTranslationSuffix(this.asString(normalizedCache.scriptureQuery || context.mainPassage || ''));
+    const normalizeResult = async (candidate: unknown, reference: string, translation: string) => {
+      const verses = this.extractScriptureVerses(candidate)
+        .map((verse, index) => ({
+          reference: this.normalizeScriptureVerseReference(this.asString(verse.reference || ''), reference, index),
+          text: cleanVerseText(this.asString(verse.text || '')),
+        }))
+        .filter((verse) => verse.reference && verse.text);
+
+      if (reference && verses.length > 0) {
+        const integrity = validateVerseIntegrity(reference, verses);
+        if (integrity.valid) {
+          return {
+            ...(this.isRecord(candidate) ? candidate : {}),
+            reference,
+            translation,
+            verses,
+          };
+        }
+      }
+
+      if (reference) {
+        try {
+          const refreshed = await this.scriptureService.getPassage(reference, translation);
+          if (refreshed && Array.isArray(refreshed.verses) && refreshed.verses.length > 0) {
+            const refreshedIntegrity = validateVerseIntegrity(reference, refreshed.verses);
+            if (refreshedIntegrity.valid) {
+              return refreshed;
+            }
+          }
+        } catch {
+          // Fall through to unavailable result.
+        }
+      }
+
+      return null;
+    };
+
+    normalizedCache.scriptureLastLookup = scriptureReference || this.asString(normalizedCache.scriptureLastLookup || '');
+    normalizedCache.scriptureQuery = this.stripScriptureTranslationSuffix(
+      this.asString(normalizedCache.scriptureQuery || normalizedCache.scriptureLastLookup || scriptureReference || ''),
+    ) || normalizedCache.scriptureLastLookup;
+    normalizedCache.scriptureTranslation = defaultTranslation;
+    normalizedCache.parallelTranslations = String(normalizedCache.parallelTranslations || defaultTranslation).trim().toUpperCase() || defaultTranslation;
+    normalizedCache.scriptureResult = await normalizeResult(
+      normalizedCache.scriptureResult,
+      normalizedCache.scriptureLastLookup || scriptureReference,
+      normalizedCache.scriptureTranslation,
+    );
+
+    const normalizeStudyCacheEntry = (moduleKey: string, value: any) => {
+      if (!value) return null;
+      const validation = this.generatedStudyOutputValidator.validate(moduleKey as any, value, {
+        reference: scriptureReference || this.asString(context.mainPassage || ''),
+        language: context.language || 'en',
+      });
+      return validation.valid ? value : null;
+    };
+
+    normalizedCache.passageSummary = normalizeStudyCacheEntry('passage-summary', normalizedCache.passageSummary);
+    normalizedCache.studySynthesis = normalizeStudyCacheEntry('study-synthesis', normalizedCache.studySynthesis);
+    normalizedCache.structuralAnalysis = normalizeStudyCacheEntry('structural-analysis', normalizedCache.structuralAnalysis);
+    normalizedCache.interpretiveChallenges = normalizeStudyCacheEntry('interpretive-challenges', normalizedCache.interpretiveChallenges);
+    normalizedCache.translationComparison = normalizeStudyCacheEntry('translation-comparison', normalizedCache.translationComparison);
+    normalizedCache.perVerseContext = normalizeStudyCacheEntry('verse-context', normalizedCache.perVerseContext);
+    normalizedCache.verseCommentary = normalizeStudyCacheEntry('verse-commentary', normalizedCache.verseCommentary);
+    normalizedCache.canonicalThemes = normalizeStudyCacheEntry('canonical-themes', normalizedCache.canonicalThemes);
+
+    if (Array.isArray(normalizedCache.lookupHistory)) {
+      const normalizedHistory: Record<string, any>[] = [];
+      for (const entry of normalizedCache.lookupHistory.slice(0, 12)) {
+        if (!this.isRecord(entry)) continue;
+        const entryTranslation = String(entry.scriptureTranslation || normalizedCache.scriptureTranslation || defaultTranslation).trim().toUpperCase() || defaultTranslation;
+        const entryReference = this.stripScriptureTranslationSuffix(
+          this.asString(entry.scriptureLastLookup || entry.scriptureQuery || entry.reference || scriptureReference || ''),
+        );
+        const entryResult = await normalizeResult(entry.scriptureResult, entryReference, entryTranslation);
+        normalizedHistory.push({
+          ...entry,
+          scriptureLastLookup: entryReference || this.asString(entry.scriptureLastLookup || ''),
+          scriptureQuery: this.stripScriptureTranslationSuffix(this.asString(entry.scriptureQuery || entryReference || '')),
+          scriptureTranslation: entryTranslation,
+          scriptureResult: entryResult,
+        });
+      }
+      normalizedCache.lookupHistory = normalizedHistory.filter((entry) => entry.scriptureLastLookup && entry.scriptureResult);
+    }
+
+    return normalizedCache;
+  }
+
   async updateScriptureCache(id: string, userId: string, cacheData: any): Promise<SermonWorkspace> {
     const workspace = await this.workspaceRepository.findOne({
       where: { id, userId },
@@ -7627,11 +7717,11 @@ Rules:
       throw new Error('Workspace not found');
     }
 
-    workspace.scriptureCache = {
+    workspace.scriptureCache = await this.normalizeScriptureCachePayload({
       ...(workspace.scriptureCache || {}),
       ...(cacheData || {}),
       cachedAt: new Date(),
-    };
+    }, { mainPassage: workspace.mainPassage, language: workspace.language });
 
     return this.workspaceRepository.save(workspace);
   }
@@ -7639,14 +7729,22 @@ Rules:
   async getScriptureCache(id: string, userId: string): Promise<any> {
     const workspace = await this.workspaceRepository.findOne({
       where: { id, userId },
-      select: ['id', 'scriptureCache'],
+      select: ['id', 'mainPassage', 'language', 'scriptureCache'],
     });
 
     if (!workspace) {
       throw new Error('Workspace not found');
     }
 
-    return workspace.scriptureCache || null;
+    const normalized = await this.normalizeScriptureCachePayload(workspace.scriptureCache as Record<string, any> | null, {
+      mainPassage: workspace.mainPassage,
+      language: workspace.language,
+    });
+    if (normalized && JSON.stringify(normalized) !== JSON.stringify(workspace.scriptureCache || null)) {
+      workspace.scriptureCache = normalized;
+      await this.workspaceRepository.save(workspace);
+    }
+    return normalized || workspace.scriptureCache || null;
   }
 
   async findOne(id: string, userId: string): Promise<SermonWorkspace> {
@@ -7708,7 +7806,23 @@ Rules:
     workspace.discussionQuestions = discussionQuestions || [];
     workspace.citations = citations || [];
     workspace.dnaAnalyses = dnaAnalyses as SermonDnaAnalysis[] || [];
-    workspace.studyReports = studyReports || [];
+    workspace.studyReports = (studyReports || []).map((report: SermonStudyReport) => {
+      const validation = this.generatedStudyOutputValidator.validate('study-report', report?.sections || {}, {
+        reference: workspace.mainPassage,
+        language: workspace.language,
+      });
+      if (validation.valid) {
+        return report;
+      }
+      return {
+        ...report,
+        sections: this.buildStudyReportFallbackSections(workspace),
+      };
+    });
+    workspace.scriptureCache = await this.normalizeScriptureCachePayload(workspace.scriptureCache as Record<string, any> | null, {
+      mainPassage: workspace.mainPassage,
+      language: workspace.language,
+    });
 
     return this.upgradeWorkspaceContracts(workspace);
   }

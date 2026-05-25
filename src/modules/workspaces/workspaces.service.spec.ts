@@ -38,6 +38,7 @@ describe('WorkspacesService manuscript parsing', () => {
       null as any,
       null as any,
       null as any,
+      null as any,
     );
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined);
   });
@@ -351,5 +352,132 @@ describe('WorkspacesService manuscript parsing', () => {
     expect(state.featureReadiness?.outline.status).toBe('generated');
     expect(state.featureReadiness?.scripture.status).toBe('generated');
     expect(state.nextAction.label).toBeTruthy();
+  });
+});
+
+describe('WorkspacesService scripture cache normalization', () => {
+  let service: WorkspacesService;
+  let workspaceRepository: { findOne: jest.Mock; save: jest.Mock };
+  let scriptureService: { getPassage: jest.Mock };
+
+  beforeEach(() => {
+    workspaceRepository = {
+      findOne: jest.fn(),
+      save: jest.fn(async (workspace) => workspace),
+    };
+    scriptureService = {
+      getPassage: jest.fn(),
+    };
+
+    service = new WorkspacesService(
+      workspaceRepository as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      scriptureService as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+    );
+  });
+
+  it('refreshes truncated scripture cache before saving', async () => {
+    workspaceRepository.findOne.mockResolvedValue({
+      id: 'workspace-1',
+      userId: 'user-1',
+      mainPassage: 'Psalm 37:23-24',
+      language: 'en',
+      scriptureCache: {
+        scriptureLastLookup: 'Psalm 37:23-24:KJV',
+        scriptureQuery: 'Psalm 37:23-24',
+        scriptureTranslation: 'KJV',
+        scriptureResult: {
+          reference: 'Psalm 37:23-24',
+          translation: 'KJV',
+          verses: [
+            { reference: 'Psalm 37:23', text: 'The steps of a good man are ordered by the Lord' },
+            { reference: 'Psalm 37:24', text: 'Though he fall, he shall not be utterly cast down: for the Lord' },
+          ],
+        },
+        lookupHistory: [
+          {
+            scriptureLastLookup: 'Psalm 37:23-24:KJV',
+            scriptureTranslation: 'KJV',
+            scriptureResult: {
+              reference: 'Psalm 37:23-24',
+              translation: 'KJV',
+              verses: [
+                { reference: 'Psalm 37:23', text: 'The steps of a good man are ordered by the Lord' },
+                { reference: 'Psalm 37:24', text: 'Though he fall, he shall not be utterly cast down: for the Lord' },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    scriptureService.getPassage.mockResolvedValue({
+      reference: 'Psalm 37:23-24',
+      translation: 'KJV',
+      verses: [
+        { reference: 'Psalm 37:23', text: 'The steps of a good man are ordered by the LORD: and he delighteth in his way.' },
+        { reference: 'Psalm 37:24', text: 'Though he fall, he shall not be utterly cast down: for the LORD upholdeth him with his hand.' },
+      ],
+    });
+
+    await service.updateScriptureCache('workspace-1', 'user-1', {});
+
+    expect(scriptureService.getPassage).toHaveBeenCalledWith('Psalm 37:23-24', 'KJV');
+    const saved = workspaceRepository.save.mock.calls[0][0];
+    expect(saved.scriptureCache.scriptureResult.verses[0].text).toContain('and he delighteth in his way');
+    expect(saved.scriptureCache.scriptureResult.verses[1].text).toContain('upholdeth him with his hand');
+    expect(saved.scriptureCache.lookupHistory[0].scriptureResult.verses[1].text).toContain('upholdeth him with his hand');
+  });
+
+  it('normalizes cached scripture on read and persists refreshed text', async () => {
+    workspaceRepository.findOne.mockResolvedValueOnce({
+      id: 'workspace-2',
+      userId: 'user-1',
+      mainPassage: 'Psalm 37:23-24',
+      language: 'en',
+      scriptureCache: {
+        scriptureLastLookup: 'Psalm 37:23-24:KJV',
+        scriptureQuery: 'Psalm 37:23-24',
+        scriptureTranslation: 'KJV',
+        scriptureResult: {
+          reference: 'Psalm 37:23-24',
+          translation: 'KJV',
+          verses: [
+            { reference: 'Psalm 37:23', text: 'The steps of a good man are ordered by the Lord' },
+            { reference: 'Psalm 37:24', text: 'Though he fall, he shall not be utterly cast down: for the Lord' },
+          ],
+        },
+      },
+    });
+
+    scriptureService.getPassage.mockResolvedValue({
+      reference: 'Psalm 37:23-24',
+      translation: 'KJV',
+      verses: [
+        { reference: 'Psalm 37:23', text: 'The steps of a good man are ordered by the LORD: and he delighteth in his way.' },
+        { reference: 'Psalm 37:24', text: 'Though he fall, he shall not be utterly cast down: for the LORD upholdeth him with his hand.' },
+      ],
+    });
+
+    const cache = await service.getScriptureCache('workspace-2', 'user-1');
+
+    expect(cache.scriptureResult.verses[0].text).toContain('and he delighteth in his way');
+    expect(cache.scriptureResult.verses[1].text).toContain('upholdeth him with his hand');
+    expect(workspaceRepository.save).toHaveBeenCalled();
   });
 });

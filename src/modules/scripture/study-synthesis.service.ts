@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { ScripturePrompts } from './scripture-prompts';
+import { GeneratedStudyOutputValidator } from './generated-study-output.validator';
 import { buildFallbackStudySynthesis } from './scripture-fallbacks';
 
 export interface StudySynthesisData {
@@ -10,14 +11,18 @@ export interface StudySynthesisData {
   canonicalSignificance: string;
   pastoralTakeaway: string;
   preachingFocus: string;
-  dataSource: 'llm-generated' | 'curated' | 'unavailable';
+  dataSource: 'llm-generated' | 'computed' | 'curated' | 'unavailable';
+  status?: 'ready' | 'not_generated' | 'unavailable';
+  message?: string;
+  warnings?: string[];
 }
 
 @Injectable()
 export class StudySynthesisService {
   constructor(
     private llmService: LlmService,
-    private scriptureService: ScriptureService
+    private scriptureService: ScriptureService,
+    private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
   ) {}
 
   async getStudySynthesis(reference: string, userId?: string, language?: string): Promise<StudySynthesisData> {
@@ -46,22 +51,34 @@ export class StudySynthesisService {
       );
 
       const parsed = this.parseResponse(response, reference);
-      if (
-        !String(parsed.centralClaim || '').trim() ||
-        !String(parsed.canonicalSignificance || '').trim() ||
-        !String(parsed.pastoralTakeaway || '').trim() ||
-        !String(parsed.preachingFocus || '').trim() ||
-        String(parsed.centralClaim || '').trim().length < 90 ||
-        String(parsed.canonicalSignificance || '').trim().length < 70 ||
-        String(parsed.pastoralTakeaway || '').trim().length < 70 ||
-        String(parsed.preachingFocus || '').trim().length < 70
-      ) {
-        return buildFallbackStudySynthesis(reference, passageText, language);
+      const validation = this.generatedStudyOutputValidator.validate('study-synthesis', parsed, { reference, language });
+      if (validation.valid) {
+        return {
+          ...parsed,
+          status: 'ready',
+          message: undefined,
+          warnings: [],
+        };
       }
-      return parsed;
+
+      const computed = buildFallbackStudySynthesis(reference, passageText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'computed',
+        status: 'ready',
+        message: undefined,
+        warnings: [],
+      };
     } catch (error) {
       console.error('Error generating study synthesis:', error);
-      return buildFallbackStudySynthesis(reference, passageText, language);
+      const computed = buildFallbackStudySynthesis(reference, passageText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'computed',
+        status: 'ready',
+        message: undefined,
+        warnings: [],
+      };
     }
   }
 
@@ -107,5 +124,18 @@ export class StudySynthesisService {
         dataSource: 'unavailable',
       };
     }
+  }
+
+  private isWeakSynthesis(parsed: StudySynthesisData): boolean {
+    const serialized = JSON.stringify(parsed || {}).toLowerCase();
+    const startsWithReference = /^\s*[a-z0-9]+\s+\d+:\d+/.test(String(parsed.centralClaim || '').trim().toLowerCase());
+    return startsWithReference || [
+      'gospel summary',
+      'response of faith',
+      'central truth',
+      'appeal',
+      'decision',
+      'call to response',
+    ].some((phrase) => serialized.includes(phrase));
   }
 }

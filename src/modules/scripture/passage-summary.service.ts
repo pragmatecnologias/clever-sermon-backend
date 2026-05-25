@@ -3,6 +3,7 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
 import { ScripturePrompts } from './scripture-prompts';
+import { GeneratedStudyOutputValidator } from './generated-study-output.validator';
 import { buildFallbackPassageSummary } from './scripture-fallbacks';
 
 export interface PassageSummaryData {
@@ -11,14 +12,18 @@ export interface PassageSummaryData {
   interpretiveCenter: string;
   mainTension: string;
   movement: string[];
-  dataSource: 'llm-generated' | 'curated' | 'unavailable';
+  dataSource: 'llm-generated' | 'computed' | 'curated' | 'unavailable';
+  status?: 'ready' | 'not_generated' | 'unavailable';
+  message?: string;
+  warnings?: string[];
 }
 
 @Injectable()
 export class PassageSummaryService {
   constructor(
     private llmService: LlmService,
-    private scriptureService: ScriptureService
+    private scriptureService: ScriptureService,
+    private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
   ) {}
 
   async getPassageSummary(reference: string, userId?: string, language?: string): Promise<PassageSummaryData> {
@@ -47,25 +52,38 @@ export class PassageSummaryService {
       );
 
       const parsed = this.parseResponse(response, reference);
-      if (
-        !String(parsed.summary || '').trim() ||
-        !String(parsed.interpretiveCenter || '').trim() ||
-        String(parsed.summary || '').trim().length < 90 ||
-        String(parsed.interpretiveCenter || '').trim().length < 60 ||
-        !Array.isArray(parsed.movement) ||
-        parsed.movement.length < 2
-      ) {
-        return buildFallbackPassageSummary(reference, passageText, language);
+      const validation = this.generatedStudyOutputValidator.validate('passage-summary', parsed, { reference, language });
+      if (validation.valid) {
+        return {
+          ...parsed,
+          status: 'ready',
+          message: undefined,
+          warnings: [],
+        };
       }
-      return parsed;
+
+      const computed = buildFallbackPassageSummary(reference, passageText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'computed',
+        status: 'ready',
+        message: undefined,
+        warnings: [],
+      };
     } catch (error) {
       console.error('Error generating passage summary:', error);
-      return buildFallbackPassageSummary(reference, passageText, language);
+      const computed = buildFallbackPassageSummary(reference, passageText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'computed',
+        status: 'ready',
+        message: undefined,
+        warnings: [],
+      };
     }
   }
 
   private buildPrompt(reference: string, passageText: string, language?: string): string {
-    const languageLabel = language === 'es' ? 'Spanish' : 'English';
     const languageInstruction = language === 'es'
       ? 'Responde únicamente en español. No uses inglés en ningún campo de texto de la respuesta.'
       : 'Respond in English.';
@@ -104,5 +122,43 @@ export class PassageSummaryService {
         dataSource: 'unavailable',
       };
     }
+  }
+
+  private isWeakSummary(parsed: PassageSummaryData): boolean {
+    const serialized = JSON.stringify(parsed || {}).toLowerCase();
+    const startsWithReference = /^\s*[a-z0-9]+\s+\d+:\d+/.test(String(parsed.summary || '').trim().toLowerCase()) ||
+      /^\s*[a-z0-9]+\s+\d+:\d+/.test(String(parsed.interpretiveCenter || '').trim().toLowerCase()) ||
+      /^\s*[a-z0-9]+\s+\d+:\d+/.test(String(parsed.mainTension || '').trim().toLowerCase());
+    return startsWithReference || [
+      'not just a statement of truth',
+      'gospel invitation',
+      'central claim and the response',
+      'state the passage',
+      'show how the promise leads',
+      'call to response',
+      'text’s main truth',
+      'text\'s main truth',
+      'verse text',
+    ].some((phrase) => serialized.includes(phrase));
+  }
+
+  private isRawVerseMovement(movement: string[]): boolean {
+    const serialized = JSON.stringify(movement || []).toLowerCase();
+    if (!Array.isArray(movement) || movement.length === 0) return true;
+    const looksLikeRawVerse = movement.some((item) => {
+      const text = String(item || '').trim().toLowerCase();
+      return (
+        !text ||
+        /^\s*\d+:\d+/.test(text) ||
+        /^(state|show|explain|preach|apply)\b/.test(text) ||
+        text.includes('ordered by the lord') ||
+        text.includes('for the lord upholdeth') ||
+        text.includes('for yahweh holds him up') ||
+        text.includes('verse 23') ||
+        text.includes('verse 24')
+      );
+    });
+
+    return looksLikeRawVerse || serialized.includes('verse text');
   }
 }

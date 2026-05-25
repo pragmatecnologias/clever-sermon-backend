@@ -3,13 +3,25 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
 import { ScripturePrompts } from './scripture-prompts';
-import { buildFallbackCanonicalThemes } from './scripture-fallbacks';
+import { buildFallbackCanonicalThemes, detectStudyGenre } from './scripture-fallbacks';
+import { GeneratedStudyOutputValidator } from './generated-study-output.validator';
 
 export interface ThemeThread {
+  id?: string;
   theme: string;
+  name?: string;
+  priority?: 'primary' | 'secondary' | 'supporting';
+  summary?: string;
   description: string;
   explanation: string;
   canonicalMovement: string;
+  passageAnchor?: string;
+  canonicalCategory?: string;
+  tags?: string[];
+  preachingUse?: string;
+  cautions?: string[];
+  confidence?: number;
+  development?: ThemeVerse[];
   verses: ThemeVerse[];
   category: string;
   isPrimary?: boolean;
@@ -19,6 +31,9 @@ export interface ThemeVerse {
   reference: string;
   snippet: string;
   explanation: string;
+  contribution?: string;
+  relation?: 'foundation' | 'echo' | 'development' | 'contrast' | 'fulfillment' | 'application' | 'parallel';
+  canonicalStage?: string;
   stage: 'foundation' | 'expansion' | 'echo' | 'fulfillment';
   testament: 'OT' | 'NT';
   era: 'Torah' | 'History' | 'Wisdom' | 'Prophets' | 'Gospels' | 'Acts' | 'Epistles' | 'Revelation';
@@ -27,14 +42,18 @@ export interface ThemeVerse {
 export interface CanonicalThemesResponse {
   passage: string;
   themes: ThemeThread[];
-  dataSource: 'llm-generated' | 'unavailable';
+  dataSource: 'llm-generated' | 'curated' | 'unavailable';
+  status?: 'ready' | 'not_generated' | 'unavailable';
+  message?: string;
+  warnings?: string[];
 }
 
 @Injectable()
 export class CanonicalThemeTracerService {
   constructor(
     private llmService: LlmService,
-    private scriptureService: ScriptureService
+    private scriptureService: ScriptureService,
+    private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
   ) {}
 
   async getThemesForPassage(reference: string, language?: string, userId?: string): Promise<CanonicalThemesResponse> {
@@ -70,9 +89,14 @@ export class CanonicalThemeTracerService {
         );
 
         try {
-          const parsed = this.parseResponse(response, reference);
-          if (parsed.dataSource === 'llm-generated' && parsed.themes.length > 0) {
-            return parsed;
+            const parsed = this.parseResponse(response, reference);
+          const validation = this.generatedStudyOutputValidator.validate('canonical-themes', parsed, { reference, language });
+          if (validation.valid && parsed.dataSource === 'llm-generated' && parsed.themes.length > 0 && !this.isWeakThemes(parsed, reference)) {
+            return {
+              ...parsed,
+              status: 'ready',
+              warnings: [],
+            };
           }
         } catch (error: any) {
           lastParseError = error;
@@ -82,10 +106,30 @@ export class CanonicalThemeTracerService {
       if (lastParseError) {
         console.error('Canonical themes parse failed after retries:', lastParseError.message);
       }
-      return buildFallbackCanonicalThemes(reference, passageText, language);
+      const computed = buildFallbackCanonicalThemes(reference, passageText, language || 'en');
+      const computedValidation = this.generatedStudyOutputValidator.validate('canonical-themes', computed, { reference, language });
+      if (!computedValidation.valid) {
+        return this.buildUnavailableThemes(reference, language, computedValidation.errors);
+      }
+      return {
+        ...computed,
+        dataSource: 'curated',
+        status: 'ready',
+        warnings: computed.warnings || [],
+      };
     } catch (error) {
       console.error('Error generating canonical themes:', error);
-      return buildFallbackCanonicalThemes(reference, passageText, language);
+      const computed = buildFallbackCanonicalThemes(reference, passageText, language || 'en');
+      const computedValidation = this.generatedStudyOutputValidator.validate('canonical-themes', computed, { reference, language });
+      if (!computedValidation.valid) {
+        return this.buildUnavailableThemes(reference, language, computedValidation.errors);
+      }
+      return {
+        ...computed,
+        dataSource: 'curated',
+        status: 'ready',
+        warnings: computed.warnings || [],
+      };
     }
   }
 
@@ -118,25 +162,57 @@ export class CanonicalThemeTracerService {
       }
 
       // Mark first theme as primary and validate structure
-      const themes: ThemeThread[] = themesArray
-        .filter((theme: any) => theme && typeof theme === 'object')
-        .map((theme: any, index: number) => ({
-          theme: String(theme.theme || theme.tema || '').substring(0, 200),
-          description: String(theme.description || theme.descripción || theme.descripcion || '').substring(0, 500),
+      const normalizedTheme = (theme: any, index: number): ThemeThread => {
+        const rawDevelopment = theme.development || theme.desarrollo || theme.verses || theme.versículos || theme.versiculos;
+        const normalizedVerses: ThemeVerse[] = Array.isArray(rawDevelopment)
+          ? rawDevelopment.slice(0, 10).map((v: any) => ({
+              reference: String(v.reference || v.referencia || '').substring(0, 100),
+              snippet: String(v.snippet || v.fragmento || '').substring(0, 200),
+              explanation: String(v.explanation || v.explicacion || v.contribution || v.contribucion || '').substring(0, 300),
+              contribution: String(v.contribution || v.contribucion || v.explanation || v.explicacion || '').substring(0, 300),
+              relation: ['foundation', 'echo', 'development', 'contrast', 'fulfillment', 'application', 'parallel'].includes(String(v.relation || '').toLowerCase())
+                ? String(v.relation).toLowerCase() as ThemeVerse['relation']
+                : undefined,
+              canonicalStage: String(v.canonicalStage || v.etapaCanonica || '').substring(0, 120),
+              stage: ['foundation', 'expansion', 'echo', 'fulfillment'].includes(String(v.stage || '').toLowerCase())
+                ? String(v.stage).toLowerCase() as ThemeVerse['stage']
+                : 'echo',
+              testament: ['OT', 'NT'].includes(String(v.testament || '').toUpperCase())
+                ? String(v.testament).toUpperCase() as ThemeVerse['testament']
+                : 'NT',
+              era: String(v.era || '').substring(0, 100) as ThemeVerse['era'],
+            }))
+          : [];
+
+        return {
+          id: String(theme.id || theme.themeId || theme.temaId || '').substring(0, 120) || `theme-${index + 1}`,
+          theme: String(theme.theme || theme.tema || theme.name || theme.nombre || '').substring(0, 200),
+          name: String(theme.name || theme.nombre || theme.theme || theme.tema || '').substring(0, 200),
+          priority: ['primary', 'secondary', 'supporting'].includes(String(theme.priority || '').toLowerCase())
+            ? String(theme.priority).toLowerCase() as ThemeThread['priority']
+            : index === 0 ? 'primary' : 'secondary',
+          summary: String(theme.summary || theme.resumen || theme.description || theme.descripcion || '').substring(0, 500),
+          description: String(theme.description || theme.descripción || theme.descripcion || theme.summary || theme.resumen || '').substring(0, 500),
           explanation: String(theme.explanation || theme.explicación || theme.explicacion || '').substring(0, 1000),
           canonicalMovement: String(theme.canonicalMovement || theme.movimientoCanónico || theme.movimientoCanonico || '').substring(0, 1000),
-          verses: Array.isArray(theme.verses || theme.versículos || theme.versiculos) 
-            ? (theme.verses || theme.versículos || theme.versiculos).slice(0, 10).map((v: any) => ({
-                reference: String(v.reference || v.referencia || '').substring(0, 100),
-                snippet: String(v.snippet || v.fragmento || '').substring(0, 200),
-                era: String(v.era || '').substring(0, 100),
-              }))
-            : [],
-          category: ['gospel', 'sanctuary', 'prophecy', 'covenant', 'law', 'salvation', 'gracia', 'grace'].includes(theme.category || theme.categoría || theme.categoria)
-            ? (theme.category || theme.categoría || theme.categoria)
+          passageAnchor: String(theme.passageAnchor || theme.anclaDelPasaje || theme.anchor || '').substring(0, 200),
+          canonicalCategory: String(theme.canonicalCategory || theme.categoriaCanonica || theme.category || '').substring(0, 80),
+          tags: Array.isArray(theme.tags || theme.etiquetas) ? (theme.tags || theme.etiquetas).slice(0, 8).map((item: any) => String(item).substring(0, 60)) : [],
+          preachingUse: String(theme.preachingUse || theme.usoParaPredicar || '').substring(0, 400),
+          cautions: Array.isArray(theme.cautions || theme.advertencias) ? (theme.cautions || theme.advertencias).slice(0, 4).map((item: any) => String(item).substring(0, 240)) : [],
+          confidence: Number.isFinite(Number(theme.confidence)) ? Number(theme.confidence) : 0.7,
+          development: normalizedVerses,
+          verses: normalizedVerses,
+          category: ['gospel', 'sanctuary', 'prophecy', 'covenant', 'law', 'salvation', 'gracia', 'grace', 'judgment', 'worship', 'wisdom'].includes(String(theme.category || theme.categoría || theme.categoria || '').toLowerCase())
+            ? String(theme.category || theme.categoría || theme.categoria)
             : 'gospel',
           isPrimary: index === 0,
-        }))
+        };
+      };
+
+      const themes: ThemeThread[] = themesArray
+        .filter((theme: any) => theme && typeof theme === 'object')
+        .map((theme: any, index: number) => normalizedTheme(theme, index))
         .filter(theme => theme.theme && theme.description); // Only keep themes with required fields
 
       if (themes.length === 0) {
@@ -159,6 +235,17 @@ export class CanonicalThemeTracerService {
     }
   }
 
+  private buildUnavailableThemes(reference: string, language: string | undefined, warnings: string[]): CanonicalThemesResponse {
+    return {
+      passage: reference,
+      themes: [],
+      dataSource: 'unavailable',
+      status: 'unavailable',
+      message: 'Canonical themes could not be generated. Please retry.',
+      warnings,
+    };
+  }
+
   async getThemeByName(themeName: string): Promise<ThemeThread | null> {
     // This method is no longer supported with LLM approach
     return null;
@@ -167,5 +254,15 @@ export class CanonicalThemeTracerService {
   async getAllThemes(): Promise<ThemeThread[]> {
     // This method is no longer supported with LLM approach
     return [];
+  }
+
+  private isWeakThemes(parsed: CanonicalThemesResponse, reference: string): boolean {
+    const serialized = JSON.stringify(parsed || {}).toLowerCase();
+    const expected = detectStudyGenre(reference);
+    if (serialized.includes('gospel summary')) return true;
+    if (serialized.includes('grace and salvation') && expected === 'wisdom_poetry') return true;
+    if (expected === 'wisdom_poetry' && !serialized.includes('steps') && !serialized.includes('righteous')) return true;
+    if (expected === 'prophetic_apocalyptic' && !serialized.includes('worship') && !serialized.includes('everlasting gospel')) return true;
+    return false;
   }
 }

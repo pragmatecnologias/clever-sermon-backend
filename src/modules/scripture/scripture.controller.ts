@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Param, Body, UseGuards, Req, Res, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Controller, Get, Post, Query, Param, Body, UseGuards, Req, Res, Header, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { ScriptureService } from './scripture.service';
 import { SDACrossReferencesService } from './sda-cross-references.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -51,6 +51,14 @@ export class ScriptureController {
 
   @Get('passage')
   async getPassage(
+    @Query('reference') reference: string,
+    @Query('translation') translation?: string,
+  ) {
+    return this.scriptureService.getPassage(reference, translation);
+  }
+
+  @Get('lookup')
+  async lookupPassage(
     @Query('reference') reference: string,
     @Query('translation') translation?: string,
   ) {
@@ -335,6 +343,8 @@ export class ScriptureController {
   }
 
   @Get('verse-commentary')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
   async getVerseCommentary(
     @Query('reference') reference: string,
     @Query('force') force: string,
@@ -449,6 +459,8 @@ export class ScriptureController {
   }
 
   @Get('verse-context')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
   async getVerseContext(
     @Query('reference') reference: string,
     @Query('language') language?: string
@@ -457,6 +469,8 @@ export class ScriptureController {
   }
 
   @Get('passage-summary')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
   async getPassageSummary(
     @Query('reference') reference: string,
     @Query('language') language?: string
@@ -465,6 +479,8 @@ export class ScriptureController {
   }
 
   @Get('study-synthesis')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
   async getStudySynthesis(
     @Query('reference') reference: string,
     @Query('language') language?: string
@@ -473,6 +489,8 @@ export class ScriptureController {
   }
 
   @Get('translation-comparison-enhanced')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
   async getEnhancedTranslationComparison(
     @Query('reference') reference: string,
     @Req() req: any,

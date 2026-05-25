@@ -3,7 +3,8 @@ import { LlmService } from '../llm/llm.service';
 import { ScriptureService } from './scripture.service';
 import { parseJsonObjectFromLlm } from './json-response.util';
 import { ScripturePrompts } from './scripture-prompts';
-import { buildFallbackStructuralAnalysis } from './scripture-fallbacks';
+import { buildFallbackStructuralAnalysis, detectStudyGenre } from './scripture-fallbacks';
+import { GeneratedStudyOutputValidator } from './generated-study-output.validator';
 
 export interface StructuralAnalysis {
   passage: string;
@@ -12,6 +13,9 @@ export interface StructuralAnalysis {
   chiasm?: ChiasmStructure;
   parallelism?: ParallelismPattern[];
   dataSource: 'llm-generated' | 'curated' | 'unavailable';
+  status?: 'ready' | 'not_generated' | 'unavailable';
+  message?: string;
+  warnings?: string[];
 }
 
 export interface StructuralElement {
@@ -38,7 +42,8 @@ export class StructuralAnalysisDataService {
 
   constructor(
     private llmService: LlmService,
-    private scriptureService: ScriptureService
+    private scriptureService: ScriptureService,
+    private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
   ) {
     this.initializeStructuralData();
   }
@@ -48,7 +53,7 @@ export class StructuralAnalysisDataService {
     const analysis = this.structureIndex.get(normalized);
     
     if (analysis) {
-      return { ...analysis, dataSource: 'curated' };
+      return { ...analysis, dataSource: 'curated', status: 'ready', warnings: [] };
     }
 
     // Generate structural analysis using LLM
@@ -60,9 +65,14 @@ export class StructuralAnalysisDataService {
     } catch (error) {
       console.error(`[StructuralAnalysis] Failed for passage: ${passage}, language: ${language}`, error);
       console.error('[StructuralAnalysis] Error details:', error.message, error.stack?.substring(0, 500));
-      const fallbackPassage = await this.scriptureService.getPassage(passage, language === 'es' ? 'RVR1960' : 'KJV').catch(() => null);
-      const passageText = fallbackPassage && fallbackPassage.verses ? fallbackPassage.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n') : '';
-      return buildFallbackStructuralAnalysis(passage, passageText, language);
+      const fallbackText = await this.fetchPassageText(passage, language || 'en');
+      const computed = buildFallbackStructuralAnalysis(passage, fallbackText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'curated',
+        status: 'ready',
+        warnings: [],
+      };
     }
   }
 
@@ -129,7 +139,13 @@ INSTRUCCIONES CRÍTICAS:
     }
 
     if (!parsed) {
-      return buildFallbackStructuralAnalysis(passage, passageText, language);
+      const computed = buildFallbackStructuralAnalysis(passage, passageText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'curated',
+        status: 'ready',
+        warnings: [],
+      };
     }
 
     // Handle Spanish field names and normalize structure elements
@@ -163,12 +179,32 @@ INSTRUCCIONES CRÍTICAS:
 
     if (
       structuralAnalysis.structure.length < 3 ||
-      structuralAnalysis.structure.some((element) => String(element.description || '').trim().length < 20)
+      structuralAnalysis.structure.some((element) => String(element.description || '').trim().length < 20) ||
+      this.isWrongGenre(structuralAnalysis.literaryGenre, passage) ||
+      this.isWeakStructure(structuralAnalysis) ||
+      this.shouldPreferSemanticPoeticStructure(structuralAnalysis, passage)
     ) {
-      return buildFallbackStructuralAnalysis(passage, passageText, language);
+      const computed = buildFallbackStructuralAnalysis(passage, passageText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'curated',
+        status: 'ready',
+        warnings: [],
+      };
     }
 
-    return structuralAnalysis;
+    const validation = this.generatedStudyOutputValidator.validate('structural-analysis', structuralAnalysis, { reference: passage, language });
+    if (!validation.valid) {
+      const computed = buildFallbackStructuralAnalysis(passage, passageText, language || 'en');
+      return {
+        ...computed,
+        dataSource: 'curated',
+        status: 'ready',
+        warnings: [],
+      };
+    }
+
+    return { ...structuralAnalysis, status: 'ready', warnings: [] };
   }
 
   private normalizePassage(passage: string): string {
@@ -181,6 +217,19 @@ INSTRUCCIONES CRÍTICAS:
     // All other passages will be dynamically generated via LLM
   }
 
+  private async fetchPassageText(passage: string, language: string): Promise<string> {
+    const analysisTranslation = language === 'es' ? 'RVR1960' : 'KJV';
+    try {
+      const result = await this.scriptureService.getPassage(passage, analysisTranslation);
+      if (result && result.verses && result.verses.length > 0) {
+        return result.verses.map((v: any) => `${v.reference}: ${v.text}`).join('\n');
+      }
+    } catch (error) {
+      console.error('[StructuralAnalysis] Failed to fetch passage text for fallback:', error);
+    }
+    return '';
+  }
+
   hasStructuralData(passage: string): boolean {
     const normalized = this.normalizePassage(passage);
     return this.structureIndex.has(normalized);
@@ -188,5 +237,66 @@ INSTRUCCIONES CRÍTICAS:
 
   getAllAvailablePassages(): string[] {
     return Array.from(this.structureIndex.keys());
+  }
+
+  private isWrongGenre(literaryGenre: string, passage: string): boolean {
+    const normalized = String(literaryGenre || '').toLowerCase();
+    const expected = detectStudyGenre(passage);
+    if (expected === 'wisdom_poetry' && /narrative|expository/.test(normalized)) {
+      return true;
+    }
+    if (expected === 'prophetic_apocalyptic' && /narrative/.test(normalized)) {
+      return true;
+    }
+    if (expected === 'covenant_law' && /narrative/.test(normalized)) {
+      return true;
+    }
+    return false;
+  }
+
+  private isWeakStructure(analysis: StructuralAnalysis): boolean {
+    const serialized = JSON.stringify(analysis || {}).toLowerCase();
+    return [
+      'introduction / body / conclusion',
+      'state the passage',
+      'show how',
+      'narrative or doctrinal flow',
+    ].some((phrase) => serialized.includes(phrase));
+  }
+
+  private shouldPreferSemanticPoeticStructure(analysis: StructuralAnalysis, passage: string): boolean {
+    const expected = detectStudyGenre(passage);
+    if (expected !== 'wisdom_poetry') return false;
+
+    const serialized = JSON.stringify(analysis || {}).toLowerCase();
+    const genericTypes = Array.isArray(analysis.structure) && analysis.structure.length > 0
+      ? analysis.structure.every((element) => ['introduction', 'body', 'conclusion'].includes(String(element.type || '').toLowerCase()))
+      : false;
+
+    if (!genericTypes) return false;
+
+    return [
+      'divine guidance',
+      'divine delight',
+      'human weakness',
+      'divine support',
+      'parallelism',
+      'wisdom psalm',
+      'hebrew poetry',
+    ].every((phrase) => !serialized.includes(phrase));
+  }
+
+  private buildUnavailableAnalysis(passage: string, language: string | undefined, warnings: string[]): StructuralAnalysis {
+    return {
+      passage,
+      literaryGenre: '',
+      structure: [],
+      chiasm: undefined,
+      parallelism: undefined,
+      dataSource: 'unavailable',
+      status: 'unavailable',
+      message: 'Structural analysis could not be generated. Please retry.',
+      warnings,
+    };
   }
 }

@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { SermonWorkspace } from '../../entities/sermon-workspace.entity';
 import { WorkspacesService } from './workspaces.service';
 import { ComposeMediaPackDto } from './dto/compose-media-pack.dto';
+import { resolveDeckBackgroundPreset } from '../../../../../shared/deck-composition.contract';
 
 type SlideExportArtifact = {
   type: 'pptx' | 'pdf';
@@ -21,6 +22,7 @@ type MediaPackManifest = {
   sourceManuscriptId: string | null;
   sourceStudyReportId: string | null;
   deckIntent?: string;
+  visualStyle?: string;
   deckModeLabel?: string;
   activeSermonDeckId?: string | null;
   activeSocialDeckId?: string | null;
@@ -472,6 +474,7 @@ export class WorkspaceMediaPackService {
     const token = this.extractToken(authorization);
     const syncPayload = this.buildSyncPayload(workspace);
     const deckIntent = this.normalizeDeckIntent(dto.deckIntent);
+    const visualStyle = this.normalizeVisualStyle((dto as Record<string, any>).visualStyle);
     const sermon = await this.requestSlides<Record<string, unknown>>('/sermons/from-workspace', token, syncPayload);
     const planning = this.normalizeWorkspacePlanning(workspace.metadata as Record<string, any>);
     const resolvedDeckSize =
@@ -487,11 +490,24 @@ export class WorkspaceMediaPackService {
           deckSize: resolvedDeckSize,
           deckIntent,
           backgroundProvider: dto.backgroundProvider || 'local',
-          backgroundPreset: dto.backgroundPreset,
+          backgroundPreset: resolveDeckBackgroundPreset(
+            visualStyle as any,
+            deckIntent as any,
+            dto.backgroundPreset || null,
+          ),
+          visualStyle,
         });
 
     const deckId = String((deckResult as any)?.id || (deckResult as any)?.deckId || '');
+    const resolvedVisualStyle = String(
+      (deckResult as any)?.composition?.visualStyle ||
+      (deckResult as any)?.manifest?.visualStyle ||
+      visualStyle ||
+      'auto',
+    );
     const metadata = (workspace.metadata || {}) as Record<string, any>;
+    const previousMediaPack = (metadata.mediaPack || {}) as Record<string, any>;
+    const previousExportPack = (metadata.exportPack || {}) as Record<string, any>;
     const latestDeckByIntent = {
       ...(metadata.latestDeckByIntent || {}),
       [deckIntent]: deckId || null,
@@ -537,13 +553,24 @@ export class WorkspaceMediaPackService {
       warnings.push('Social summary decks should stay short. Trim to 3-5 slides.');
     }
 
+    const exportPrepared = exportArtifacts.length > 0
+      ? true
+      : Boolean(previousExportPack.exportPrepared || previousExportPack.status === 'ready');
+    const mergedArtifacts = exportArtifacts.length > 0
+      ? exportArtifacts
+      : Array.isArray(previousExportPack.artifacts)
+        ? previousExportPack.artifacts
+        : [];
+    const nextStatus = exportPrepared ? 'ready' : (previousMediaPack.status || 'draft');
+
     const manifest: MediaPackManifest = {
-      status: exportArtifacts.length ? 'ready' : 'draft',
+      status: nextStatus,
       generatedAt: new Date().toISOString(),
       sourceOutlineId: selectedOutline?.id || null,
       sourceManuscriptId: selectedManuscript?.id || null,
       sourceStudyReportId: selectedStudyReport?.id || null,
       deckIntent,
+      visualStyle: resolvedVisualStyle,
       deckModeLabel: this.deckModeLabel(deckIntent),
       activeSermonDeckId,
       activeSocialDeckId,
@@ -552,9 +579,9 @@ export class WorkspaceMediaPackService {
       slideCount,
       deckId: deckId || null,
       sermonId: String((sermon as any)?.id || (sermon as any)?.sermonId || ''),
-      exportPrepared: exportArtifacts.length > 0,
+      exportPrepared,
       warnings,
-      artifacts: exportArtifacts,
+      artifacts: mergedArtifacts,
     };
 
     await this.persistManifest(workspace, manifest);
@@ -565,5 +592,20 @@ export class WorkspaceMediaPackService {
       manifest,
       exports: exportArtifacts,
     };
+  }
+
+  private normalizeVisualStyle(value: unknown) {
+    const text = String(value || '').trim();
+    const allowed = new Set([
+      'auto',
+      'reverent_worship',
+      'warm_pastoral',
+      'evangelistic_invitation',
+      'hopeful_prophecy',
+      'bible_study_clean',
+      'youth_modern',
+      'spanish_church_warm',
+    ]);
+    return allowed.has(text as any) ? text : 'auto';
   }
 }

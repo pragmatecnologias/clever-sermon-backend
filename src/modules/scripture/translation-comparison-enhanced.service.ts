@@ -2,13 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { ScriptureService } from './scripture.service';
 import { LlmService } from '../llm/llm.service';
 import { ScripturePrompts } from './scripture-prompts';
-import { buildFallbackTranslationComparison } from './scripture-fallbacks';
+import { cleanVerseText, extractVerseNumber } from './scripture-helpers';
+import { GeneratedStudyOutputValidator } from './generated-study-output.validator';
 
 export interface EnhancedTranslationComparison {
   reference: string;
   translations: TranslationText[];
   keyDifferences: KeyDifference[];
   analysis: ComparisonAnalysis;
+  status?: 'ready' | 'not_generated' | 'unavailable';
+  message?: string;
+  warnings?: string[];
+  source?: 'llm-generated' | 'computed' | 'scripture' | 'egw' | 'mixed' | 'unavailable';
 }
 
 export interface TranslationText {
@@ -38,7 +43,8 @@ export interface ComparisonAnalysis {
 export class TranslationComparisonEnhancedService {
   constructor(
     private scriptureService: ScriptureService,
-    private llmService: LlmService
+    private llmService: LlmService,
+    private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
   ) {}
 
   private tryJsonParse(text: string): any {
@@ -144,8 +150,7 @@ export class TranslationComparisonEnhancedService {
 
     try {
       if (translationCodes.length < 2) {
-        const fallbackTranslations = await this.buildFallbackTranslations(reference, translationCodes.slice(0, 2));
-        return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
+        return this.buildUnavailableComparison(reference, language, ['Translation comparison requires at least two translations.']);
       }
 
       // Fetch passage text from multiple translations
@@ -153,14 +158,12 @@ export class TranslationComparisonEnhancedService {
         try {
           const result = await this.scriptureService.getPassage(reference, code);
           if (result && result.verses && result.verses.length > 0) {
-            const text = result.verses.map((v: any) => v.text).join(' ');
+            const text = result.verses.map((v: any) => cleanVerseText(v.text)).join(' ');
             const verses = result.verses.map((v: any, index: number) => {
               const ref = String(v?.reference || '');
-              const verseMatch = ref.match(/:(\d+)\b/);
-
               return {
-                number: verseMatch?.[1] || String(index + 1),
-                text: String(v?.text || '').trim(),
+                number: String(extractVerseNumber(ref) || index + 1),
+                text: cleanVerseText(String(v?.text || '')),
                 reference: ref || undefined,
               };
             });
@@ -179,27 +182,29 @@ export class TranslationComparisonEnhancedService {
       }
 
       if (translations.length < 2) {
-        const fallbackTranslations = translations.length > 0
-          ? translations
-          : await this.buildFallbackTranslations(reference, translationCodes.slice(0, 3));
-        return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
+        return this.buildUnavailableComparison(reference, language, ['Translation comparison could not be generated. Please retry.']);
       }
 
       // Use LLM to analyze differences
       const analysis = await this.analyzeDifferences(reference, translations, language, userId);
 
-      return {
+      const comparison: EnhancedTranslationComparison = {
         reference,
         translations,
         keyDifferences: analysis.keyDifferences,
-        analysis: analysis.analysis
+        analysis: analysis.analysis,
+        status: 'ready',
+        warnings: [],
+        source: 'llm-generated',
       };
+      const validation = this.generatedStudyOutputValidator.validate('translation-comparison', comparison, { reference, language });
+      if (!validation.valid) {
+        return this.buildUnavailableComparison(reference, language, validation.errors);
+      }
+      return comparison;
     } catch (error) {
       console.error('Error generating translation comparison:', error);
-      const fallbackTranslations = translations.length > 0
-        ? translations
-        : await this.buildFallbackTranslations(reference, translationCodes.slice(0, 3));
-      return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
+      return this.buildUnavailableComparison(reference, language, ['Translation comparison could not be generated. Please retry.']);
     }
   }
 
@@ -212,17 +217,16 @@ export class TranslationComparisonEnhancedService {
         if (result && result.verses && result.verses.length > 0) {
           const verses = result.verses.map((v: any, index: number) => {
             const ref = String(v?.reference || '');
-            const verseMatch = ref.match(/:(\d+)\b/);
             return {
-              number: verseMatch?.[1] || String(index + 1),
-              text: String(v?.text || '').trim(),
+              number: String(extractVerseNumber(ref) || index + 1),
+              text: cleanVerseText(String(v?.text || '')),
               reference: ref || undefined,
             };
           });
           translated.push({
             code,
             name: this.getTranslationName(code),
-            text: result.verses.map((v: any) => String(v?.text || '').trim()).join(' '),
+            text: result.verses.map((v: any) => cleanVerseText(String(v?.text || ''))).join(' '),
             verses,
             type: this.getTranslationType(code),
           });
@@ -350,10 +354,7 @@ export class TranslationComparisonEnhancedService {
         result.keyDifferences.length < 1 ||
         result.analysis.overallAssessment.length < 60
       ) {
-        const fallbackTranslations = translations.length > 0
-          ? translations
-          : await this.buildFallbackTranslations(reference, this.getTranslationsForLanguage(language).slice(0, 3));
-        return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
+        return this.buildUnavailableComparison(reference, language, ['Translation comparison analysis failed validation. Please retry.']);
       }
 
       if (!result.analysis.overallAssessment) {
@@ -369,11 +370,26 @@ export class TranslationComparisonEnhancedService {
       return result;
     } catch (error) {
       console.error('Error analyzing translation differences:', error);
-      const fallbackTranslations = translations.length > 0
-        ? translations
-        : await this.buildFallbackTranslations(reference, this.getTranslationsForLanguage(language).slice(0, 3));
-      return buildFallbackTranslationComparison(reference, fallbackTranslations, language) as EnhancedTranslationComparison;
+      return this.buildUnavailableComparison(reference, language, ['Translation comparison analysis could not be generated. Please retry.']);
     }
+  }
+
+  private buildUnavailableComparison(reference: string, language: string, warnings: string[]): EnhancedTranslationComparison {
+    return {
+      reference,
+      translations: [],
+      keyDifferences: [],
+      analysis: {
+        verbDifferences: [],
+        theologicalTermDifferences: [],
+        literalVsDynamic: [],
+        overallAssessment: '',
+      },
+      status: 'unavailable',
+      message: 'Translation comparison could not be generated. Please retry.',
+      warnings,
+      source: 'unavailable',
+    };
   }
 
   private async ensureSpanishResult(

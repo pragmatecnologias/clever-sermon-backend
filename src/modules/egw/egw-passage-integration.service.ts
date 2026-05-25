@@ -288,12 +288,18 @@ export class EGWPassageIntegrationService {
       .andWhere('ref.language = :language', { language });
 
     if (verseStart !== undefined) {
-      // Find references that overlap with the requested verse range
-      const end = verseEnd || verseStart;
-      query.andWhere(
-        '(ref.verseStart <= :end AND (ref.verseEnd >= :start OR ref.verseEnd IS NULL))',
-        { start: verseStart, end }
-      );
+      const end = verseEnd ?? verseStart;
+      if (end !== verseStart) {
+        query.andWhere(
+          'ref.verseStart = :start AND COALESCE(ref.verseEnd, ref.verseStart) = :end',
+          { start: verseStart, end },
+        );
+      } else {
+        query.andWhere(
+          'ref.verseStart = :start AND (ref.verseEnd = :start OR ref.verseEnd IS NULL)',
+          { start: verseStart },
+        );
+      }
     }
 
     return query

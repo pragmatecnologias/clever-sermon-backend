@@ -10,4 +10,16 @@
 | #11689 | 7:57 AM | 🔵 | Backend needs restart for DTO fix to take effect | ~209 |
 | #11683 | 7:50 AM | 🔵 | Scripture cache PATCH in complete-rev14-workspace.mjs is not persisting fields | ~343 |
 | #11681 | 7:47 AM | 🔵 | Root cause: deliverPrepared tracks mediaPack but regression check waits for exportPack | ~346 |
+
+### May 24, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #13139 | 8:15 PM | 🔵 | Workspace page does not consume study report cachedStudySections | ~259 |
+
+### May 25, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #13253 | 8:13 AM | 🔵 | Workspace service uses passage summary from scripture cache for study reports | ~331 |
 </claude-mem-context>

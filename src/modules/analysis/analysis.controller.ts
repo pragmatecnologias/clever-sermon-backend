@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Param, UseGuards, Request, Header } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TheologicalCenterService } from './theological-center.service';
 import { TensionMappingService } from './tension-mapping.service';
@@ -74,11 +74,15 @@ export class AnalysisController {
   }
 
   @Post('historical-context/:workspaceId')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
   async enhanceHistoricalContext(@Param('workspaceId') workspaceId: string, @Request() req: any) {
     return this.historicalContextEnhancerService.analyze(workspaceId, req.user.userId);
   }
 
   @Get('historical-context/:workspaceId')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  @Header('Pragma', 'no-cache')
   async getHistoricalContext(@Param('workspaceId') workspaceId: string) {
     return this.historicalContextEnhancerService.get(workspaceId);
   }

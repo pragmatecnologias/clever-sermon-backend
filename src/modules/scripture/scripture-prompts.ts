@@ -62,53 +62,150 @@ Rules:
 - Return JSON only.`;
   },
 
-  perVerseContext(input: { languageInstruction: string; reference: string; passageText: string }): string {
-    return `${input.languageInstruction} Devuelve solo JSON válido. Eres un erudito bíblico que da contexto histórico, cultural y geográfico.
+  perVerseContext(input: {
+    languageInstruction: string;
+    reference: string;
+    passageText: string;
+    genreHint: string;
+    themeHint: string;
+    contextHint: string;
+    motifHint: string;
+    targetLanguage: string;
+  }): string {
+    return `${input.languageInstruction} Return valid JSON only. You are generating pastor-facing historical, cultural, and geographical context.
 
 Reference: ${input.reference}
+Requested language: ${input.targetLanguage}
+Genre hint: ${input.genreHint}
+Theme hint: ${input.themeHint}
+Context hint: ${input.contextHint}
+Motif hint: ${input.motifHint}
 
 Passage Text:
 ${input.passageText}
 
-Formato JSON:
+Return this exact JSON shape. Every section must have real prose; do not leave sections empty or return placeholders:
 {
-  "historical": [
+  "status": "ready",
+  "reference": "${input.reference}",
+  "language": "${input.targetLanguage}",
+  "genre": "Genre label for pastors",
+  "sections": [
     {
-      "note": "Historical fact or background",
-      "period": "Time period (e.g., 'United Monarchy Period', 'c. 1025 BC')",
-      "source": "Biblical reference or historical source (optional)"
+      "title": "Historical Context",
+      "content": "..."
+    },
+    {
+      "title": "Cultural Context",
+      "content": "..."
+    },
+    {
+      "title": "Geographical / Literary Setting",
+      "content": "..."
+    },
+    {
+      "title": "Significance for Preaching",
+      "content": "..."
+    },
+    {
+      "title": "Pastoral Application",
+      "content": "..."
     }
   ],
-  "cultural": [
-    {
-      "note": "Cultural practice, custom, or belief",
-      "category": "custom|law|practice|belief|social",
-      "source": "Biblical reference (optional)"
-    }
-  ],
-  "geographical": [
-    {
-      "place": "Place name",
-      "description": "Description of the place",
-      "significance": "Biblical or historical significance",
-      "modernLocation": "Modern location (optional)"
-    }
-  ],
-  "timeline": [
-    {
-      "event": "Event name",
-      "date": "Approximate date",
-      "significance": "Why this event matters"
-    }
-  ]
+  "warnings": [],
+  "source": "llm-generated"
 }
 
-Reglas:
-- 2-3 notas históricas.
-- 2-3 notas culturales.
-- 1-2 notas geográficas.
-- 1-2 eventos cronológicos.
-- Sin markdown ni texto fuera del JSON.`;
+Rules:
+- Do not include fallback, social, custom, template, placeholder, debug, TODO, undefined, or null language.
+- Do not use generic filler.
+- Do not say "The passage belongs to the literary setting of..."
+- Do not say "immediate narrative or doctrinal flow".
+- Do not say "Exact geography is unavailable".
+- Do not say "Helps move from background to sermon".
+- Do not invent specific historical facts.
+- Identify genre before writing.
+- For Psalms, use poetic, wisdom, and worship framing, not narrative framing.
+- If geography is not central, explain literary and canonical setting naturally.
+- Do not quote partial verses.
+- Keep the verse tied to its chapter and book context.
+- Every section must contain 2-3 complete sentences and must be useful for preaching.
+- Do not return an empty sections array.
+- Write for preaching use, not academic display.
+- Return JSON only.`;
+  },
+
+  perVerseContextRepair(input: {
+    languageInstruction: string;
+    reference: string;
+    passageText: string;
+    validationErrors: string[];
+    previousResponse: string;
+    genreHint: string;
+    themeHint: string;
+    contextHint: string;
+    motifHint: string;
+    targetLanguage: string;
+  }): string {
+    return `${input.languageInstruction} Return valid JSON only. You are correcting a pastor-facing historical-context response.
+
+Reference: ${input.reference}
+Requested language: ${input.targetLanguage}
+Genre hint: ${input.genreHint}
+Theme hint: ${input.themeHint}
+Context hint: ${input.contextHint}
+Motif hint: ${input.motifHint}
+
+Passage Text:
+${input.passageText}
+
+Previous Response:
+${input.previousResponse}
+
+Validation Errors:
+${input.validationErrors.map((error) => `- ${error}`).join('\n')}
+
+Return the corrected JSON in this exact shape. Every section must have real prose; do not leave sections empty or return placeholders:
+{
+  "status": "ready",
+  "reference": "${input.reference}",
+  "language": "${input.targetLanguage}",
+  "genre": "Genre label for pastors",
+  "sections": [
+    {
+      "title": "Historical Context",
+      "content": "..."
+    },
+    {
+      "title": "Cultural Context",
+      "content": "..."
+    },
+    {
+      "title": "Geographical / Literary Setting",
+      "content": "..."
+    },
+    {
+      "title": "Significance for Preaching",
+      "content": "..."
+    },
+    {
+      "title": "Pastoral Application",
+      "content": "..."
+    }
+  ],
+  "warnings": [],
+  "source": "llm-generated"
+}
+
+Rules:
+- Do not use fallback, social, custom, template, placeholder, debug, TODO, undefined, or null language.
+- Do not include generic filler lines.
+- Do not repeat the validation errors.
+- Do not quote partial verses.
+- Keep it passage-aware and pastor-focused.
+- Every section must contain 2-3 complete sentences and must be useful for preaching.
+- Do not return an empty sections array.
+- Return JSON only.`;
   },
 
   interpretiveChallengesData(input: { languageInstruction: string; passage: string; passageText: string }): string {
@@ -188,7 +285,12 @@ Guidelines:
 - Identify the literary genre accurately
 - Break down the passage into 3-6 structural elements
 - Note transitions, climaxes, and literary devices
-- ALWAYS create a chiastic structure with at least 3 elements (A-B-A' minimum), even if the passage doesn't have an obvious chiasm - identify thematic or conceptual parallels
+- ALWAYS create a chiastic structure with at least 3 elements (A-B-A' minimum) unless the passage is too short or too simple for a meaningful chiasm; if so, use semantic parallels instead of forcing a chiasm
+- For poetry and Psalms, prefer semantic or poetic units over generic introduction/body/conclusion labels
+- For short poetic passages, use verse-level semantic movement such as guidance / delight / weakness / support
+- For multi-verse passages, use semantic units and natural verse ranges, not long verse quotations or ellipses
+- Include the final verse or final unit in the visible structure
+- For prophetic/apocalyptic passages, prefer units like proclamation, call, announcement, warning, and identity/response
 - For poetry, identify parallelism patterns when present
 - Parallelism is optional - only include if clearly present
 - Return ONLY valid JSON, no markdown or extra text`;
@@ -516,21 +618,33 @@ Passage Reference: ${input.reference}
 Passage Text:
 ${input.passageText}
 
-Identify 3-4 major theological themes in this passage and trace them across Scripture.
+Identify 3-7 passage-specific canonical themes in this passage and trace them across Scripture.
 
 JSON format:
 {
   "themes": [
     {
+      "id": "...",
+      "name": "...",
+      "priority": "primary | secondary | supporting",
+      "summary": "...",
+      "passageAnchor": "...",
+      "tags": ["...", "..."],
+      "preachingUse": "...",
+      "confidence": 0.0,
       "theme": "...",
       "description": "...",
       "explanation": "...",
       "canonicalMovement": "...",
+      "canonicalCategory": "...",
       "category": "...",
-      "verses": [
+      "development": [
         {
           "reference": "...",
           "snippet": "...",
+          "contribution": "...",
+          "relation": "foundation | echo | development | contrast | fulfillment | application | parallel",
+          "canonicalStage": "...",
           "explanation": "...",
           "stage": "...",
           "testament": "...",
@@ -542,8 +656,12 @@ JSON format:
 }
 
 Rules:
-- Use 4-6 verses per theme.
-- Include the current passage in one verse list entry with "YOU ARE HERE".
+- Use multiple passage-specific themes, not one generic salvation theme.
+- Theme names must arise from the selected passage itself.
+- Include a clear passageAnchor and preachingUse for every theme.
+- Include 2-6 development steps per theme when textual basis exists.
+- For multi-verse passages, cover the passage's major motifs and final unit.
+- Do not flatten narrative, poetry, law, or apocalyptic passages into one generic gospel theme.
 - Keep themes theologically meaningful and canonically progressive.
 - No markdown or extra text.`;
   },
@@ -562,13 +680,19 @@ ${input.passageText}
 
 Analyze this passage and provide:
 
-1. **Summary** (2-3 sentences): What happens in this passage? What is the basic content?
+1. **Summary** (2-3 sentences): What happens in this passage? What is the basic content? If the passage has multiple verses, summarize the whole unit rather than copying the opening verse.
 
-2. **Passage Movement** (if narrative, 3-5 steps): Break down the flow of the passage step by step. If it's not narrative (e.g., poetry, epistle), skip this section.
+2. **Passage Movement** (if narrative, 3-7 steps): Break down the flow of the passage step by step. If it is poetry or wisdom literature, describe the textual movement in semantic, non-quoting phrases instead of repeating verse text. If the passage has multiple verses, cover the major units of the full passage and include the final unit.
 
-3. **Interpretive Center** (1-2 sentences): What is the theological heart of this passage? What is the main claim or truth being communicated?
+3. **Interpretive Center** (1-2 sentences): What is the theological heart of this passage? State it as a synthesized claim rather than a verse quotation.
 
 4. **Main Tension** (1-2 sentences): What is the primary theological or interpretive tension in this passage? What question or difficulty does it raise?
+
+Rules:
+- Do not repeat the verse text as the summary or movement.
+- Do not begin the summary with a copied verse prefix.
+- For poetry, wisdom, psalms, and short sayings, focus on semantic movement and parallel ideas rather than verse-by-verse exposition.
+- Keep movement items concise and pastor-facing.
 
 Format your response as JSON:
 {
@@ -595,13 +719,19 @@ ${input.passageText}
 
 After analyzing this passage through multiple interpretive lenses (structure, context, themes, challenges), provide a unified theological synthesis:
 
-1. **Central Claim** (1-2 sentences): What is the core theological truth this passage communicates? State it as a clear, declarative claim.
+1. **Central Claim** (1-2 sentences): What is the core theological truth this passage communicates? State it as a clear, declarative claim. Do not begin with the verse text or a verse reference. For multi-verse passages, include the passage’s full movement in condensed form.
 
 2. **Canonical Significance** (2-3 sentences): How does this passage fit into the larger biblical storyline? What role does it play in God's unfolding revelation?
 
 3. **Pastoral Takeaway** (2-3 sentences): What does this passage mean for God's people today? How should it shape faith and practice?
 
 4. **Preaching Focus** (1-2 sentences): What is the sermon-ready angle? What should a pastor emphasize when preaching this text?
+
+Rules:
+- Do not call every passage a gospel summary.
+- Keep the central claim text-bound and synthesized.
+- For multi-verse passages, synthesize the passage’s major movements rather than reducing it to a single isolated line.
+- For poetry and wisdom passages, summarize the passage’s theological movement rather than quoting it.
 
 Format your response as JSON:
 {

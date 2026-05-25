@@ -7,7 +7,14 @@ import { resolve } from 'path';
 import { promises as fs } from 'fs';
 import { BibleTranslation } from '../../entities/bible-translation.entity';
 import { LlmService } from '../llm/llm.service';
-import { convertToApiBiblePassageId, formatApiBibleResponse } from './scripture-helpers';
+import {
+  cleanVerseText,
+  convertToApiBiblePassageId,
+  extractVerseNumber,
+  formatApiBibleResponse,
+  parseScriptureReference,
+  validateVerseIntegrity,
+} from './scripture-helpers';
 import { ScriptureCacheService } from './scripture-cache.service';
 import { ScripturePrompts } from './scripture-prompts';
 
@@ -298,7 +305,10 @@ export class ScriptureService {
           // Check cache first
           const cached = await this.cacheService.getPassage(translation.apiId, passageId);
           if (cached && Array.isArray(cached?.verses) && cached.verses.length > 0) {
-            return cached;
+            const cachedIntegrity = validateVerseIntegrity(normalizedReference, cached.verses);
+            if (cachedIntegrity.valid) {
+              return this.normalizePassageResponse(cached);
+            }
           }
           
           const response = await axios.get(
@@ -315,13 +325,18 @@ export class ScriptureService {
 
           // Format response to match expected structure
           const formatted = formatApiBibleResponse(response.data, lookupReference || reference, requestedTranslation);
+          const integrity = validateVerseIntegrity(normalizedReference, formatted.verses);
           
           // Cache only non-empty results to avoid stale empty payloads being reused.
-          if (Array.isArray(formatted?.verses) && formatted.verses.length > 0) {
-            await this.cacheService.setPassage(translation.apiId, passageId, formatted);
+          if (integrity.valid && Array.isArray(formatted?.verses) && formatted.verses.length > 0) {
+            const normalized = this.normalizePassageResponse(formatted);
+            await this.cacheService.setPassage(translation.apiId, passageId, normalized);
+            return normalized;
           }
-          
-          return formatted;
+
+          console.warn(
+            `[Scripture] API.Bible passage failed integrity for ${normalizedReference}: ${integrity.errors.join('; ')}`,
+          );
         }
       } catch (error) {
         console.error('[Scripture] API.Bible error:', error.response?.data || error.message);
@@ -400,6 +415,28 @@ export class ScriptureService {
   async getPassageWithContext(reference: string, translationCode: string, contextRange?: number) {
     const expanded = this.expandReference(reference, contextRange);
     return this.getPassage(expanded, translationCode);
+  }
+
+  async getHistoricalContextDossier(reference: string) {
+    const normalizedReference = this.normalizeReferenceForLookup((reference || '').trim());
+    const match = normalizedReference.match(/^(.*?)\s+\d+/);
+    const rawBook = match ? match[1].trim() : normalizedReference;
+    const bookKey = this.normalizeBookKey(rawBook);
+    const [historicalContext, culturalContext, geographyContext, bookMetadata] = await Promise.all([
+      this.loadHistoricalContext(),
+      this.loadCulturalContext(),
+      this.loadGeography(),
+      this.loadBookMetadata(),
+    ]);
+
+    return {
+      reference: normalizedReference,
+      bookKey,
+      bookMetadata: bookMetadata[bookKey] || null,
+      historicalContext: historicalContext[bookKey] || null,
+      culturalContext: culturalContext[bookKey] || null,
+      geographyContext: geographyContext[bookKey] || null,
+    };
   }
 
   async getCrossReferences(verseReference: string): Promise<string[]> {
@@ -697,7 +734,13 @@ export class ScriptureService {
     for (const ref of references) {
       const bibleGateway = await this.fetchBibleGatewayPassage(ref, translationCode);
       if (Array.isArray(bibleGateway?.verses) && bibleGateway.verses.length > 0) {
-        return bibleGateway;
+        const integrity = validateVerseIntegrity(ref, bibleGateway.verses);
+        if (integrity.valid) {
+          return this.normalizePassageResponse(bibleGateway);
+        }
+        console.warn(
+          `[Scripture] BibleGateway passage failed integrity for ${ref}: ${integrity.errors.join('; ')}`,
+        );
       }
 
       for (const code of this.getFallbackTranslationCodes(translationCode)) {
@@ -716,11 +759,18 @@ export class ScriptureService {
           }));
 
           if (verses.length > 0) {
-            return {
+            const candidate = {
               reference: data.reference || ref,
               translation: data.translation_id || translationCode,
               verses,
             };
+            const integrity = validateVerseIntegrity(ref, verses);
+            if (integrity.valid) {
+              return this.normalizePassageResponse(candidate);
+            }
+            console.warn(
+              `[Scripture] bible-api.com passage failed integrity for ${ref} (${code}): ${integrity.errors.join('; ')}`,
+            );
           }
         } catch {
           // Try the next translation/reference combination.
@@ -774,13 +824,13 @@ export class ScriptureService {
 
   private parseBibleGatewayVerse(verseHtml: string, reference: string): { reference: string; text: string } | null {
     const verseNumber = verseHtml.match(/<sup class="versenum">\s*(\d+)/i)?.[1] || '';
-    const cleanedText = this.decodeHtmlEntities(
+    const cleanedText = cleanVerseText(this.decodeHtmlEntities(
       verseHtml
         .replace(/<sup class="versenum">[\s\S]*?<\/sup>/i, '')
         .replace(/<[^>]+>/g, ' ')
         .replace(/\s+/g, ' ')
         .trim(),
-    );
+    ));
 
     if (!cleanedText) {
       return null;
@@ -1480,7 +1530,22 @@ export class ScriptureService {
 
   private getPassageText(passage: any): string {
     if (!Array.isArray(passage?.verses)) return '';
-    return passage.verses.map((verse: any) => String(verse?.text || '')).join(' ').trim();
+    return passage.verses.map((verse: any) => cleanVerseText(String(verse?.text || ''))).join(' ').trim();
+  }
+
+  private normalizePassageResponse(passage: any): any {
+    if (!passage || !Array.isArray(passage.verses)) {
+      return passage;
+    }
+
+    return {
+      ...passage,
+      verses: passage.verses.map((verse: any) => ({
+        ...verse,
+        reference: String(verse?.reference || '').trim(),
+        text: cleanVerseText(String(verse?.text || '')),
+      })),
+    };
   }
 
   private normalizeVerseReference(reference: string): string {

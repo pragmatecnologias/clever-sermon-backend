@@ -38,6 +38,25 @@ export const WorkspaceGenerationRegistry: Record<WorkspaceGenerationCapability, 
     description: 'Structured exegetical study report',
     validate: (parsed) => {
       if (!isRecord(parsed)) return { ok: false, issues: ['study report is not an object'] };
+      if (parsed.status === 'unavailable') {
+        const message = typeof parsed.message === 'string' && parsed.message.trim() ? parsed.message.trim() : '';
+        const hasEmptyPayload =
+          !parsed.passageOverview &&
+          !parsed.literaryContext &&
+          !parsed.exegeticalSummary &&
+          !parsed.historicalContext &&
+          !parsed.canonicalContext &&
+          !parsed.mainTheologicalClaim &&
+          !parsed.preachingFocus &&
+          Array.isArray(parsed.exegeticalFlow) && parsed.exegeticalFlow.length === 0 &&
+          Array.isArray(parsed.structureOfPassage) && parsed.structureOfPassage.length === 0 &&
+          Array.isArray(parsed.keyTerms) && parsed.keyTerms.length === 0 &&
+          Array.isArray(parsed.theologicalThemes) && parsed.theologicalThemes.length === 0 &&
+          Array.isArray(parsed.interpretiveChallenges) && parsed.interpretiveChallenges.length === 0;
+        return hasEmptyPayload && Boolean(message)
+          ? { ok: true, issues: [] }
+          : { ok: false, issues: ['study report unavailable payload is not clean'] };
+      }
       const issues = ['passageOverview', 'literaryContext', 'exegeticalFlow', 'exegeticalSummary', 'structureOfPassage', 'keyTerms', 'historicalContext', 'canonicalContext', 'crossReferences', 'interpretiveChallenges', 'theologicalThemes', 'mainTheologicalClaim', 'pastoralImplications', 'preachingFocus']
         .filter((key) => parsed[key] === undefined || parsed[key] === null)
         .map((key) => `${key} missing`);

@@ -2,12 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { EGWService } from '../egw/egw.service';
 import { LlmService } from '../llm/llm.service';
 import { ScripturePrompts } from './scripture-prompts';
-import { buildFallbackVerseCommentary } from './scripture-fallbacks';
+import { GeneratedStudyOutputValidator } from './generated-study-output.validator';
 
 export interface VerseCommentary {
   verseReference: string;
   notes: CommentaryNote[];
   dataSource: 'egw' | 'llm-generated' | 'unavailable';
+  status?: 'ready' | 'not_generated' | 'unavailable';
+  message?: string;
+  warnings?: string[];
 }
 
 export interface CommentaryNote {
@@ -20,7 +23,8 @@ export interface CommentaryNote {
 export class VerseCommentaryService {
   constructor(
     private egwService: EGWService,
-    private llmService: LlmService
+    private llmService: LlmService,
+    private generatedStudyOutputValidator: GeneratedStudyOutputValidator,
   ) {}
 
   async getCommentary(verseReference: string, userId?: string, force?: boolean, language?: string): Promise<VerseCommentary> {
@@ -55,29 +59,45 @@ export class VerseCommentaryService {
       }
 
       if (notes.length === 0) {
-        const fallback = buildFallbackVerseCommentary(verseReference, '', requestedLanguage);
-        notes.push(...fallback.notes);
+        return {
+          verseReference,
+          notes: [],
+          dataSource: 'unavailable',
+          status: 'unavailable',
+          message: 'Verse commentary could not be generated. Please retry.',
+          warnings: ['No commentary notes were generated.'],
+        };
       }
 
-      if (notes.length < 4) {
-        const fallback = buildFallbackVerseCommentary(verseReference, '', requestedLanguage);
-        for (const item of fallback.notes) {
-          if (notes.length >= 4) break;
-          if (!notes.some((existing) => existing.type === item.type)) {
-            notes.push(item);
-          }
-        }
+      const validation = this.generatedStudyOutputValidator.validate('verse-commentary', { verseReference, notes, dataSource: 'llm-generated' }, { reference: verseReference, language: requestedLanguage });
+      if (!validation.valid) {
+        return {
+          verseReference,
+          notes: [],
+          dataSource: 'unavailable',
+          status: 'unavailable',
+          message: 'Verse commentary could not be generated. Please retry.',
+          warnings: validation.errors,
+        };
       }
 
       return {
         verseReference,
         notes,
-        dataSource: egwQuotes.length > 0 ? 'egw' : (notes.length > 0 ? 'llm-generated' : 'unavailable')
+        dataSource: egwQuotes.length > 0 ? 'egw' : (notes.length > 0 ? 'llm-generated' : 'unavailable'),
+        status: 'ready',
+        warnings: [],
       };
     } catch (error) {
       console.error('Error generating verse commentary:', error);
-      const fallback = buildFallbackVerseCommentary(verseReference, '', language);
-      return fallback;
+      return {
+        verseReference,
+        notes: [],
+        dataSource: 'unavailable',
+        status: 'unavailable',
+        message: 'Verse commentary could not be generated. Please retry.',
+        warnings: ['Verse commentary generation failed.'],
+      };
     }
   }
 

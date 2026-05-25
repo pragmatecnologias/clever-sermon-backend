@@ -25,6 +25,7 @@ import { SDADoctrinalGuardrailsService } from './sda-doctrinal-guardrails.servic
 import { TranslationComparisonEnhancedService } from './translation-comparison-enhanced.service';
 import { PassageSummaryService } from './passage-summary.service';
 import { StudySynthesisService } from './study-synthesis.service';
+import { GeneratedStudyOutputValidator } from './generated-study-output.validator';
 import { BibleTranslation } from '../../entities/bible-translation.entity';
 import { LlmModule } from '../llm/llm.module';
 import { EGWModule } from '../egw/egw.module';
@@ -60,6 +61,7 @@ import { EGWModule } from '../egw/egw.module';
     TranslationComparisonEnhancedService,
     PassageSummaryService,
     StudySynthesisService,
+    GeneratedStudyOutputValidator,
   ],
   controllers: [ScriptureController],
   exports: [
@@ -71,6 +73,7 @@ import { EGWModule } from '../egw/egw.module';
     StructuralAnalysisDataService,
     InterpretiveChallengesDataService,
     TranslationComparisonEnhancedService,
+    GeneratedStudyOutputValidator,
   ],
 })
 export class ScriptureModule {}

@@ -18,6 +18,10 @@ export class ComposeMediaPackDto {
   backgroundPreset?: string;
 
   @IsOptional()
+  @IsString()
+  visualStyle?: 'auto' | 'reverent_worship' | 'warm_pastoral' | 'evangelistic_invitation' | 'hopeful_prophecy' | 'bible_study_clean' | 'youth_modern' | 'spanish_church_warm';
+
+  @IsOptional()
   @IsArray()
   @IsIn(['pptx', 'pdf'], { each: true })
   exportTypes?: Array<'pptx' | 'pdf'>;
