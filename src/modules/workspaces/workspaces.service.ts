@@ -166,21 +166,18 @@ export class WorkspacesService {
   private extractMalformedManuscriptPayload = WorkspaceHelpers.extractMalformedManuscriptPayload;
 
   private getPrimaryStudyReport(workspace: SermonWorkspace) {
-    const reports = Array.isArray(workspace?.studyReports) ? workspace.studyReports.filter(Boolean) : [];
+    const reports = this.getRankedStudyReports(workspace);
     if (!reports.length) return null;
     const passage = this.asString(workspace?.mainPassage || '').trim().toLowerCase();
-    const sortByRecent = (left: any, right: any) => {
-      const leftTime = new Date(this.asString(right?.updatedAt || right?.createdAt || '')).getTime();
-      const rightTime = new Date(this.asString(left?.updatedAt || left?.createdAt || '')).getTime();
-      return leftTime - rightTime;
-    };
     const matchingPassage = reports.filter((report: any) => {
       const sections = report?.sections || {};
-      const validation = this.generatedStudyOutputValidator.validate('study-report', sections, {
-        reference: workspace?.mainPassage || '',
-        language: workspace?.language || 'en',
-      });
-      if (!validation.valid || sections?.status === 'unavailable') {
+      const validation = this.generatedStudyOutputValidator?.validate
+        ? this.generatedStudyOutputValidator.validate('study-report', sections, {
+            reference: workspace?.mainPassage || '',
+            language: workspace?.language || 'en',
+          })
+        : { valid: true, errors: [] as string[] };
+      if (this.generatedStudyOutputValidator?.validate && (!validation.valid || sections?.status === 'unavailable')) {
         return false;
       }
       const haystack = [
@@ -196,7 +193,61 @@ export class WorkspacesService {
       return passage ? haystack.includes(passage) : false;
     });
     const pool = matchingPassage.length ? matchingPassage : reports;
-    return [...pool].sort(sortByRecent)[0] || null;
+    return pool[0] || null;
+  }
+
+  private getStudyReportSelectionScore(report: any): number {
+    const sections = report?.sections || {};
+    let score = 0;
+    const textFields = [
+      'passageOverview',
+      'literaryContext',
+      'historicalContext',
+      'canonicalContext',
+      'exegeticalSummary',
+      'mainTheologicalClaim',
+      'preachingFocus',
+    ];
+    for (const field of textFields) {
+      if (this.asString(sections?.[field])) score += 4;
+    }
+
+    const arrayFields = [
+      'exegeticalFlow',
+      'structureOfPassage',
+      'keyTerms',
+      'theologicalThemes',
+      'interpretiveChallenges',
+    ];
+    for (const field of arrayFields) {
+      if (Array.isArray(sections?.[field]) && sections[field].length > 0) {
+        score += Math.min(6, sections[field].length);
+      }
+    }
+
+    const mediaCards = Array.isArray(sections?.studyAssets?.categoryAssets?.mediaSuggestionCards)
+      ? sections.studyAssets.categoryAssets.mediaSuggestionCards.length
+      : 0;
+    const mediaPrompts = Array.isArray(sections?.studyAssets?.categoryAssets?.mediaSuggestions)
+      ? sections.studyAssets.categoryAssets.mediaSuggestions.length
+      : 0;
+    score += mediaCards > 0 ? 20 + Math.min(10, mediaCards) : 0;
+    score += mediaPrompts > 0 ? 10 + Math.min(10, mediaPrompts) : 0;
+
+    return score;
+  }
+
+  private compareStudyReports(left: any, right: any): number {
+    const scoreDelta = this.getStudyReportSelectionScore(right) - this.getStudyReportSelectionScore(left);
+    if (scoreDelta !== 0) return scoreDelta;
+    const rightTime = new Date(this.asString(right?.updatedAt || right?.createdAt || '')).getTime();
+    const leftTime = new Date(this.asString(left?.updatedAt || left?.createdAt || '')).getTime();
+    return rightTime - leftTime;
+  }
+
+  private getRankedStudyReports(workspace: SermonWorkspace) {
+    const reports = Array.isArray(workspace?.studyReports) ? workspace.studyReports.filter(Boolean) : [];
+    return [...reports].sort((left, right) => this.compareStudyReports(left, right));
   }
 
   private buildSocraticCoachPrompt(
@@ -1490,12 +1541,13 @@ Rules:
       }));
     });
 
-    const studyReportSource = (workspace?.studyReports?.[0]?.sections?.studyAssets?.categoryAssets?.mediaSuggestionCards || []).length
+    const primaryStudyReport = this.getPrimaryStudyReport(workspace) || workspace.studyReports?.[0] || null;
+    const studyReportSource = (primaryStudyReport?.sections?.studyAssets?.categoryAssets?.mediaSuggestionCards || []).length
       ? [{
-          id: `study-report-${workspace?.studyReports?.[0]?.id || 'latest'}`,
+          id: `study-report-${primaryStudyReport?.id || 'latest'}`,
           sourceType: 'generated' as const,
           label: 'Study report',
-          reference: workspace?.studyReports?.[0]?.createdAt || '',
+          reference: primaryStudyReport?.createdAt || '',
           verified: true,
         }]
       : [];
@@ -1593,7 +1645,7 @@ Rules:
 
   private async getWorkspaceFeatureReadiness(workspace: SermonWorkspace): Promise<WorkspaceFeatureReadinessMap> {
     const mainPassage = this.asString(workspace?.mainPassage || '').trim();
-    const studyReport = workspace?.studyReports?.[0] || null;
+    const studyReport = this.getPrimaryStudyReport(workspace) || workspace?.studyReports?.[0] || null;
     const selectedOutline = this.getActiveOutline(workspace);
     const selectedManuscript = this.getActiveManuscript(workspace);
     const latestCitation = Array.isArray(workspace?.citations) ? workspace.citations[0] || null : null;
@@ -1983,15 +2035,16 @@ Rules:
         }]
       : [];
 
-    const studyReportClaim = this.asString((workspace?.studyReports?.[0]?.sections as any)?.mainTheologicalClaim || '');
+    const studyReport = this.getPrimaryStudyReport(workspace) || workspace?.studyReports?.[0] || null;
+    const studyReportClaim = this.asString((studyReport?.sections as any)?.mainTheologicalClaim || '');
     const studyReportClaims = studyReportClaim
       ? [{
-          id: `study-report-claim-${workspace?.studyReports?.[0]?.id || 'latest'}`,
+          id: `study-report-claim-${studyReport?.id || 'latest'}`,
           claimText: studyReportClaim,
           claimType: 'study-report',
           supportLevel: 'needs_review' as WorkspaceClaimSupportLevel,
           sourceType: 'generated' as const,
-          sourceIds: workspace?.studyReports?.[0]?.id ? [workspace.studyReports[0].id] : [],
+          sourceIds: studyReport?.id ? [studyReport.id] : [],
           location: 'study-report',
           verified: false,
         }]
@@ -2349,7 +2402,7 @@ Rules:
     const scriptureCache = workspace?.scriptureCache || {};
     const metadata = (workspace?.metadata || {}) as Record<string, any>;
     const planning = this.normalizeWorkspacePlanning(metadata);
-    const latestStudyReport = Array.isArray(workspace?.studyReports) ? workspace.studyReports[0] : null;
+    const latestStudyReport = this.getPrimaryStudyReport(workspace) || (Array.isArray(workspace?.studyReports) ? workspace.studyReports[0] : null);
     const selectedOutline = Array.isArray(workspace?.outlines)
       ? workspace.outlines.find((outline: any) => outline?.isSelected) || workspace.outlines[0] || null
       : null;
@@ -5486,6 +5539,7 @@ Rules:
     const synthesis = studyInputs?.cachedStudySections?.studySynthesis || {};
     const wordStudy = studyInputs?.cachedStudySections?.wordStudy || {};
     const referenceData = studyInputs?.referenceData || {};
+    const passageText = this.asString(studyInputs?.passage?.text || '');
     const preachingFocus = this.asString(
       studyInputs?.workspace?.sermonGoals ||
       studyInputs?.workspace?.theme ||
@@ -5493,6 +5547,49 @@ Rules:
       synthesis?.summary ||
       '',
     );
+
+    const passageClauses = passageText
+      ? passageText
+          .replace(/\s+/g, ' ')
+          .split(/(?<=[.!?;:])\s+|,\s+(?=[A-Z0-9“"'\(\[])/)
+          .map((item: any) => this.asString(item))
+          .filter(Boolean)
+      : [];
+    const passageSentenceFlow = passageText ? this.asStudyListArray(passageText, 8) : [];
+    const tokenizePassage = (text: string, limit = 6): string[] => {
+      const stopwords = new Set([
+        'the', 'and', 'for', 'that', 'with', 'this', 'from', 'into', 'your', 'our', 'his', 'her', 'their',
+        'shall', 'will', 'not', 'have', 'has', 'had', 'you', 'him', 'them', 'they', 'are', 'was', 'were',
+        'be', 'to', 'of', 'in', 'on', 'a', 'an', 'is', 'it', 'by', 'as', 'he', 'she', 'we', 'who', 'which',
+        'what', 'when', 'where', 'how', 'why', 'so', 'there', 'here', 'then', 'than', 'but', 'or', 'if',
+      ]);
+      const counts = new Map<string, number>();
+      (this.asString(text).toLowerCase().match(/[a-z']+/g) || []).forEach((word) => {
+        if (word.length < 4 || stopwords.has(word)) return;
+        counts.set(word, (counts.get(word) || 0) + 1);
+      });
+      return Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([word]) => word)
+        .slice(0, limit);
+    };
+    const derivedPassageTerms = tokenizePassage([passageText, summary?.summary, synthesis?.summary].filter(Boolean).join(' '), 6);
+    const derivedKeyTerms = derivedPassageTerms.map((term) => ({
+      term: term.charAt(0).toUpperCase() + term.slice(1),
+      language: language === 'es' ? 'Spanish' : 'English',
+      transliteration: '',
+      definition: 'Passage-level keyword derived from the text when word study is unavailable.',
+      nuance: 'Used to keep the study report grounded in the passage even when lexical data is sparse.',
+    }));
+    const deriveThemesFromTerms = (terms: string[]) => {
+      const themes = Array.from(new Set(
+        terms
+          .slice(0, 4)
+          .map((term) => term.charAt(0).toUpperCase() + term.slice(1))
+          .filter(Boolean),
+      ));
+      return themes.length >= 2 ? themes : ['Passage focus', 'Faith response'];
+    };
 
     const verseContextSections = Array.isArray(verseContext?.sections) ? verseContext.sections : [];
     const verseContextHistoricalNotes = verseContextSections
@@ -5532,7 +5629,20 @@ Rules:
             preachingGuidance: this.asString(challenges?.sdaPerspective?.reasoning || ''),
           },
         ]
-      : [];
+      : [{
+          question: this.asString(
+            passageText
+              ? `How does ${this.asString(studyInputs?.workspace?.mainPassage || studyInputs?.passage?.reference || 'this passage')} shape the reader’s response?`
+              : 'What is the main interpretive question in this passage?',
+          ),
+          interpretationOptions: [
+            this.asString(summary?.interpretiveCenter || synthesis?.summary || referenceData?.bookMetadata?.summary || ''),
+            this.asString(referenceData?.historicalContext?.summary || referenceData?.culturalContext?.summary || ''),
+          ].filter(Boolean).slice(0, 4),
+          preachingGuidance: this.asString(
+            `Keep the report anchored in the passage text and the study data available for ${this.asString(studyInputs?.workspace?.mainPassage || studyInputs?.passage?.reference || '')}.`,
+          ),
+        }];
 
     const canonicalThemes = Array.isArray(canonical?.themes)
       ? canonical.themes.map((item: any) => this.asString(item?.theme)).filter(Boolean).slice(0, 8)
@@ -5549,7 +5659,7 @@ Rules:
             nuance: this.asString(item?.preachingUse || item?.canonicalMovement || ''),
           }))
           .filter((item: any) => item.term)
-      : [];
+      : derivedKeyTerms;
 
     const keyTerms = Array.isArray(wordStudy?.insights)
       ? wordStudy.insights.slice(0, 6).map((item: any) => ({
@@ -5584,24 +5694,39 @@ Rules:
     };
 
     return {
-      passageOverview: this.asString(summary?.summary || synthesis?.summary || ''),
+      passageOverview: this.asString(summary?.summary || synthesis?.summary || referenceData?.bookMetadata?.summary || passageClauses[0] || passageText),
       literaryContext: this.asString(
         referenceData?.bookMetadata?.literaryType ||
           referenceData?.bookMetadata?.genre ||
           verseContext?.genre ||
           verseContext?.literaryGenre ||
           verseContextLiteraryNotes[0] ||
+          summary?.summary ||
+          synthesis?.summary ||
+          referenceData?.bookMetadata?.summary ||
+          referenceData?.historicalContext?.summary ||
+          passageClauses[0] ||
+          passageText ||
           '',
       ),
-      exegeticalFlow: this.asStudyListArray(summary?.movement || synthesis?.movement || [], 8),
-      exegeticalSummary: this.asString(synthesis?.summary || summary?.interpretiveCenter || ''),
+      exegeticalFlow: this.asStudyListArray(
+        summary?.movement ||
+          synthesis?.movement ||
+          (passageSentenceFlow.length ? passageSentenceFlow : passageClauses.length ? passageClauses : passageText),
+        8,
+      ),
+      exegeticalSummary: this.asString(synthesis?.summary || summary?.interpretiveCenter || referenceData?.bookMetadata?.summary || passageClauses[0] || ''),
       structureOfPassage: Array.isArray(structural?.structure)
         ? structural.structure.map((item: any) => ({
             movement: this.asString(item?.description || item?.type),
             verses: this.asString(item?.verses),
             summary: this.asString(item?.description || item?.type),
           }))
-        : [],
+        : passageClauses.slice(0, 4).map((clause: string) => ({
+            movement: this.asString(clause),
+            verses: this.asString(studyInputs?.workspace?.mainPassage || studyInputs?.passage?.reference || ''),
+            summary: this.asString(clause),
+          })),
       keyTerms,
       historicalContext: [
         this.asString(referenceData?.historicalContext?.summary || referenceData?.historicalContext?.description || ''),
@@ -5619,12 +5744,19 @@ Rules:
                 .filter(Boolean)
                 .slice(0, 2)
                 .join(' | ')
-            : ''),
+            : deriveThemesFromTerms(derivedPassageTerms).join(' | ')),
       ),
       crossReferences,
       interpretiveChallenges,
-      theologicalThemes: canonicalThemes,
-      mainTheologicalClaim: this.asString(synthesis?.mainClaim || summary?.interpretiveCenter || ''),
+      theologicalThemes: canonicalThemes.length >= 2 ? canonicalThemes : deriveThemesFromTerms(derivedPassageTerms),
+      mainTheologicalClaim: this.asString(
+        synthesis?.mainClaim ||
+          summary?.interpretiveCenter ||
+          referenceData?.bookMetadata?.summary ||
+          (derivedPassageTerms.length
+            ? `${deriveThemesFromTerms(derivedPassageTerms).join(' and ')} shape the passage's message.`
+            : ''),
+      ),
       pastoralImplications: distributedImplications,
       preachingFocus,
     };
@@ -5686,6 +5818,24 @@ Rules:
       missingLists,
       isSparse: missingText.length >= 2 || missingLists.length >= 2,
     };
+  }
+
+  private hasMeaningfulStudyReportContent(sections: Record<string, any>): boolean {
+    const merged = sections || {};
+    return [
+      'passageOverview',
+      'literaryContext',
+      'historicalContext',
+      'canonicalContext',
+      'exegeticalSummary',
+      'mainTheologicalClaim',
+      'preachingFocus',
+    ].some((field) => this.asString(merged?.[field])) ||
+      (Array.isArray(merged?.exegeticalFlow) && merged.exegeticalFlow.length > 0) ||
+      (Array.isArray(merged?.structureOfPassage) && merged.structureOfPassage.length > 0) ||
+      (Array.isArray(merged?.keyTerms) && merged.keyTerms.length > 0) ||
+      (Array.isArray(merged?.theologicalThemes) && merged.theologicalThemes.length > 0) ||
+      (Array.isArray(merged?.interpretiveChallenges) && merged.interpretiveChallenges.length > 0);
   }
 
   private hydrateSparseStudyReportSections(
@@ -5830,6 +5980,213 @@ Rules:
         if (cards.length >= limit) break;
       }
     }
+
+    return cards.slice(0, limit);
+  }
+
+  private buildMediaSuggestionFallbackCards(
+    workspace: SermonWorkspace,
+    reportSections: Record<string, any>,
+    studyInputs: any,
+    existingPrompts: string[] = [],
+    limit = 24,
+  ): Array<{ type: string; intent: string; useCase?: string; prompt: string }> {
+    const isSpanish = workspace.language === 'es';
+    const reference = this.asString(workspace.mainPassage || studyInputs?.passage?.reference || 'the passage');
+    const theme = this.asString(workspace.theme || reportSections?.mainTheologicalClaim || reportSections?.passageOverview || reference);
+    const overview = this.asString(reportSections?.passageOverview || reportSections?.exegeticalSummary || theme);
+    const structure = Array.isArray(reportSections?.structureOfPassage) ? reportSections.structureOfPassage : [];
+    const movements = structure
+      .map((item: any, index: number) => ({
+        movement: this.asString(item?.movement || `Movement ${index + 1}`),
+        summary: this.asString(item?.summary || item?.description || ''),
+        verses: this.asString(item?.verses || ''),
+      }))
+      .filter((item) => item.movement || item.summary || item.verses)
+      .slice(0, 4);
+    const existing = new Set(existingPrompts.map((item) => this.asString(item).toLowerCase().trim()).filter(Boolean));
+    const cards: Array<{ type: string; intent: string; useCase?: string; prompt: string }> = [];
+    const push = (card: { type: string; intent: string; useCase?: string; prompt: string }) => {
+      const prompt = this.asString(card.prompt);
+      if (!prompt) return;
+      const key = prompt.toLowerCase().trim();
+      if (existing.has(key)) return;
+      existing.add(key);
+      cards.push(card);
+    };
+
+    const noTextClause = isSpanish
+      ? 'sin texto, sin rótulos, sin logotipos, sin marcas de agua'
+      : 'no text, no labels, no logos, no watermarks';
+    const noCaptionClause = isSpanish
+      ? 'sin subtítulos ni carteles'
+      : 'no captions, no posters, no signage';
+
+    const imageTheme = isSpanish
+      ? 'Imagen cálida y cinematográfica de iglesia con luz suave'
+      : 'Warm cinematic church imagery with soft light';
+    const imageFocus = isSpanish
+      ? 'Imagen evocando el mensaje pastoral y la atmósfera de adoración'
+      : 'Visual that carries the sermon mood and worship atmosphere';
+    const audioMood = isSpanish
+      ? 'reverente, esperanzador, pastoral'
+      : 'reverent, hopeful, pastoral';
+
+    push({
+      type: isSpanish ? 'Imagen · Portada' : 'Image · Hero',
+      intent: isSpanish ? 'Portada principal' : 'Title slide',
+      useCase: isSpanish
+        ? 'Úsala como imagen de apertura o cierre.'
+        : 'Use as the opening or closing hero image.',
+      prompt: `${imageTheme}, ${imageFocus} for ${reference} and ${theme}, ${noTextClause}, ${noCaptionClause}.`,
+    });
+
+    movements.forEach((movement, index) => {
+      const moveLabel = movement.movement || `Movement ${index + 1}`;
+      const moveSummary = movement.summary || overview;
+      push({
+        type: isSpanish ? `Imagen · Punto ${index + 1}` : `Image · Point ${index + 1}`,
+        intent: isSpanish ? `Punto ${index + 1}` : `Point ${index + 1}`,
+        useCase: isSpanish
+          ? 'Úsala como imagen de apoyo para este movimiento.'
+          : 'Use as support imagery for this sermon movement.',
+        prompt: isSpanish
+          ? `Visual pastoral para "${moveLabel}" y "${moveSummary}" en ${reference}, ${noTextClause}, ${noCaptionClause}.`
+          : `Pastoral visual for "${moveLabel}" and "${moveSummary}" in ${reference}, ${noTextClause}, ${noCaptionClause}.`,
+      });
+    });
+
+    push({
+      type: isSpanish ? 'Imagen · Aplicación' : 'Image · Application',
+      intent: isSpanish ? 'Aplicación' : 'Application',
+      useCase: isSpanish
+        ? 'Úsala cuando invitas a responder al sermón.'
+        : 'Use when inviting the congregation to respond.',
+      prompt: isSpanish
+        ? `Imagen de respuesta espiritual para ${theme} y ${overview}, ${noTextClause}, ${noCaptionClause}.`
+        : `Image of spiritual response for ${theme} and ${overview}, ${noTextClause}, ${noCaptionClause}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Imagen · Cierre' : 'Image · Closing',
+      intent: isSpanish ? 'Cierre' : 'Closing',
+      useCase: isSpanish
+        ? 'Úsala al final para dejar una impresión tranquila y esperanzadora.'
+        : 'Use at the end for a calm, hopeful closing impression.',
+      prompt: isSpanish
+        ? `Imagen de cierre con luz suave y ambiente de adoración para ${reference}, ${noTextClause}, ${noCaptionClause}.`
+        : `Closing image with soft light and worship atmosphere for ${reference}, ${noTextClause}, ${noCaptionClause}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Video · Intro Loop' : 'Video · Intro Loop',
+      intent: isSpanish ? 'Bucle de apertura' : 'Intro loop',
+      useCase: isSpanish
+        ? 'Bucle visual breve para la apertura del sermón.'
+        : 'Short looping visual for sermon openers.',
+      prompt: isSpanish
+        ? `Bucle cinematográfico de iglesia y luz suave para ${reference}, ${noTextClause}.`
+        : `Cinematic church-and-light loop for ${reference}, ${noTextClause}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Video · Transición' : 'Video · Transition',
+      intent: isSpanish ? 'Transición' : 'Transition',
+      useCase: isSpanish
+        ? 'Úsalo entre movimientos del sermón.'
+        : 'Use between sermon movements.',
+      prompt: isSpanish
+        ? `Transición visual suave para cambiar de sección en ${reference}, ${noTextClause}.`
+        : `Soft transition visual for moving between sections in ${reference}, ${noTextClause}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Voz · Reflexión Inicial' : 'Voice · Opening Reflection',
+      intent: isSpanish ? 'Reflexión inicial' : 'Opening reflection',
+      useCase: isSpanish
+        ? 'Guía una reflexión breve al inicio.'
+        : 'Guide a short opening reflection.',
+      prompt: isSpanish
+        ? `Guion de voz pastoral breve para abrir ${reference} y preparar a la congregación para ${theme}.`
+        : `Short pastoral voiceover script to open ${reference} and prepare the congregation for ${theme}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Voz · Llamado Final' : 'Voice · Closing Appeal',
+      intent: isSpanish ? 'Llamado final' : 'Closing appeal',
+      useCase: isSpanish
+        ? 'Úsalo como llamado pastoral al final.'
+        : 'Use as the pastoral closing appeal.',
+      prompt: isSpanish
+        ? `Guion de voz pastoral final para invitar respuesta a ${theme} en ${reference}.`
+        : `Closing pastoral voiceover prompt inviting response to ${theme} in ${reference}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Música · Tema Principal' : 'Music · Theme Song',
+      intent: isSpanish ? 'Tema musical' : 'Theme song',
+      useCase: isSpanish
+        ? 'Tema de entrada o identidad sonora del sermón.'
+        : 'Opening or identity theme for the sermon.',
+      prompt: isSpanish
+        ? `Canción de adoración contemporánea para ${reference}, tono ${audioMood}, piano, pads, batería suave, sin letras visibles.`
+        : `Contemporary worship theme song for ${reference}, ${audioMood}, piano, ambient pads, soft drums, no visible text.`,
+    });
+
+    push({
+      type: isSpanish ? 'Música · Base Instrumental' : 'Music · Instrumental Bed',
+      intent: isSpanish ? 'Base instrumental' : 'Instrumental bed',
+      useCase: isSpanish
+        ? 'Subrayado musical suave para transición o reflexión.'
+        : 'Soft underscore for transitions or reflection.',
+      prompt: isSpanish
+        ? `Base instrumental reverente para acompañar ${overview}, con piano suave y ambiente cálido.`
+        : `Reverent instrumental bed for ${overview} with soft piano and warm ambience.`,
+    });
+
+    push({
+      type: isSpanish ? 'Social · Instagram Post' : 'Social · Instagram Post',
+      intent: isSpanish ? 'Publicación Instagram' : 'Instagram post',
+      useCase: isSpanish
+        ? 'Publicación cuadrada de promoción con enfoque en el tema.'
+        : 'Square promo post focused on the sermon theme.',
+      prompt: isSpanish
+        ? `Arte de Instagram para ${reference} y ${theme}, composición limpia, ${noTextClause}.`
+        : `Instagram promo graphic for ${reference} and ${theme}, clean composition, ${noTextClause}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Social · Instagram Story' : 'Social · Instagram Story',
+      intent: isSpanish ? 'Historia Instagram' : 'Instagram story',
+      useCase: isSpanish
+        ? 'Historia vertical para anunciar el sermón.'
+        : 'Vertical story to announce the sermon.',
+      prompt: isSpanish
+        ? `Historia vertical para ${reference} con luz cálida, espacio para titular y ${noTextClause}.`
+        : `Vertical story for ${reference} with warm light, space for headline, and ${noTextClause}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Social · Facebook Post' : 'Social · Facebook Post',
+      intent: isSpanish ? 'Publicación Facebook' : 'Facebook post',
+      useCase: isSpanish
+        ? 'Publicación para la página de la iglesia.'
+        : 'Post for the church page.',
+      prompt: isSpanish
+        ? `Publicación visual para Facebook sobre ${theme} en ${reference}, tono pastoral, ${noTextClause}.`
+        : `Visual Facebook post about ${theme} in ${reference}, pastoral tone, ${noTextClause}.`,
+    });
+
+    push({
+      type: isSpanish ? 'Social · WhatsApp Status' : 'Social · WhatsApp Status',
+      intent: isSpanish ? 'Estado WhatsApp' : 'WhatsApp status',
+      useCase: isSpanish
+        ? 'Estado corto para invitar a la iglesia.'
+        : 'Short status for inviting the congregation.',
+      prompt: isSpanish
+        ? `Estado de WhatsApp para ${reference}, breve, esperanzador, ${noTextClause}.`
+        : `WhatsApp status asset for ${reference}, brief, hopeful, ${noTextClause}.`,
+    });
 
     return cards.slice(0, limit);
   }
@@ -6025,7 +6382,7 @@ Rules:
     workspace.theologicalLens = normalizeTheologicalLens(workspace.theologicalLens);
 
     let touched = false;
-    const primaryStudyReport = workspace.studyReports?.[0] || null;
+    const primaryStudyReport = this.getPrimaryStudyReport(workspace) || workspace.studyReports?.[0] || null;
     const normalizedStudySections = primaryStudyReport?.sections
       ? this.normalizeStudyReportSections(primaryStudyReport.sections)
       : null;
@@ -6356,7 +6713,7 @@ Rules:
 
     const outlines = [];
 
-    const studyReport = workspace.studyReports?.[0];
+    const studyReport = this.getPrimaryStudyReport(workspace) || workspace.studyReports?.[0];
     const studyContext = this.buildOutlineStudyContext(studyReport, workspace);
     const reportText = studyReport?.sections ? JSON.stringify(studyContext, null, 2) : '';
     const pointsPrompt = promptOverride || this.buildOutlinePointsPrompt(workspace, outlineCount, reportText);
@@ -6959,7 +7316,7 @@ Rules:
       questions.push(await this.questionRepository.save(question));
     }
 
-    const latestReport = workspace.studyReports?.[0] || null;
+    const latestReport = this.getPrimaryStudyReport(workspace) || workspace.studyReports?.[0] || null;
     if (latestReport) {
       const latestSections = latestReport.sections || {};
       const latestStudyAssets = latestSections.studyAssets || {};
@@ -7202,15 +7559,21 @@ Rules:
       }
     }
 
-    if (completeness.isSparse) {
-      normalizedSections = this.buildStudyReportFallbackSections(workspace);
-    }
     const studyReportValidation = this.generatedStudyOutputValidator.validate('study-report', normalizedSections, {
       reference: workspace.mainPassage,
       language: workspace.language,
     });
+    if (completeness.isSparse) {
+      console.warn('[study-report] sparse result retained; preserving partial report content instead of blank fallback.');
+    }
     if (!studyReportValidation.valid) {
-      normalizedSections = this.buildStudyReportFallbackSections(workspace);
+      const preservedContent = this.hasMeaningfulStudyReportContent(normalizedSections);
+      console.warn(
+        `[study-report] validation failed; ${preservedContent ? 'preserving partial content' : 'falling back to empty unavailable state'} (${studyReportValidation.errors.join('; ')})`,
+      );
+      if (!preservedContent) {
+        normalizedSections = this.buildStudyReportFallbackSections(workspace);
+      }
     }
     this.validateGenerationResult('study-report', normalizedSections);
 
@@ -7264,7 +7627,7 @@ Rules:
     audienceNeed: string;
   }> {
     const workspace = await this.findOne(workspaceId, userId);
-    const studyReport = workspace.studyReports?.[0]?.sections || {};
+    const studyReport = (this.getPrimaryStudyReport(workspace) || workspace.studyReports?.[0] || null)?.sections || {};
     const languageLabel = workspace.language === 'es' ? 'Spanish' : 'English';
     const theologicalLens = normalizeTheologicalLens(workspace.theologicalLens);
     const doctrinalContext = SDAAlignmentService.getLensContext(theologicalLens as any);
@@ -7396,7 +7759,7 @@ Rules:
       ? mainPassage.verses.map((verse: any) => `${verse.reference} ${verse.text}`).join('\n')
       : JSON.stringify(mainPassage || {});
     const studyInputs = await this.buildStudyReportInputContext(workspace, passageText);
-    const latestReport = workspace.studyReports?.[0] || null;
+    const latestReport = this.getPrimaryStudyReport(workspace) || workspace.studyReports?.[0] || null;
     const latestSections = latestReport?.sections || {};
     const normalizedSections = this.normalizeStudyReportSections(
       Object.keys(latestSections).length ? latestSections : this.buildStudyReportBaseSections(studyInputs),
@@ -7456,6 +7819,18 @@ Rules:
           }))
           .filter((item) => item.prompt)
           .slice(0, 24);
+      }
+    }
+    if (mediaSuggestionCards.length < 12) {
+      const fallbackCards = this.buildMediaSuggestionFallbackCards(
+        workspace,
+        normalizedSections,
+        studyInputs,
+        mediaSuggestionCards.map((item) => item.prompt),
+        24,
+      );
+      for (const card of fallbackCards) {
+        mediaSuggestionCards.push(card);
       }
     }
     if (workspace.language === 'es') {
@@ -7794,7 +8169,25 @@ Rules:
         reference: scriptureReference || this.asString(context.mainPassage || ''),
         language: context.language || 'en',
       });
-      return validation.valid ? value : null;
+      if (validation.valid) {
+        return value;
+      }
+
+      const preserved = this.isRecord(value) ? { ...value } : value;
+      const serialized = typeof preserved === 'string' ? preserved : JSON.stringify(preserved || {});
+      if (!this.asString(serialized).trim()) {
+        return null;
+      }
+
+      if (this.isRecord(preserved)) {
+        return {
+          ...preserved,
+          status: 'unavailable',
+          message: 'Saved study content is incomplete and should be regenerated.',
+        };
+      }
+
+      return preserved;
     };
 
     normalizedCache.passageSummary = normalizeStudyCacheEntry('passage-summary', normalizedCache.passageSummary);
@@ -7927,17 +8320,62 @@ Rules:
     workspace.discussionQuestions = discussionQuestions || [];
     workspace.citations = citations || [];
     workspace.dnaAnalyses = dnaAnalyses as SermonDnaAnalysis[] || [];
-    workspace.studyReports = (studyReports || []).map((report: SermonStudyReport) => {
-      const validation = this.generatedStudyOutputValidator.validate('study-report', report?.sections || {}, {
+    workspace.studyReports = this.getRankedStudyReports({
+      ...workspace,
+      studyReports: studyReports || [],
+    } as SermonWorkspace).map((report: SermonStudyReport) => {
+      const normalizedSections = this.normalizeStudyReportSections(report?.sections || {});
+      const upgradedAssets =
+        normalizedSections && (!report?.sections?.studyAssets || !report.sections.studyAssets.categoryAssets)
+          ? this.normalizeStudyAssets(report.sections, normalizedSections.structureOfPassage || [], workspace)
+          : report?.sections?.studyAssets || null;
+      const mergedSections = {
+        ...(report?.sections || {}),
+        ...(normalizedSections || {}),
+        studyAssets: upgradedAssets,
+      };
+      const validation = this.generatedStudyOutputValidator.validate('study-report', mergedSections, {
         reference: workspace.mainPassage,
         language: workspace.language,
       });
       if (validation.valid) {
-        return report;
+        return {
+          ...report,
+          sections: mergedSections,
+        };
       }
+
+      const mergedSectionsRecord = mergedSections as Record<string, any>;
+      const hasMeaningfulContent =
+        [
+          'passageOverview',
+          'literaryContext',
+          'historicalContext',
+          'canonicalContext',
+          'exegeticalSummary',
+          'mainTheologicalClaim',
+          'preachingFocus',
+        ].some((field) => this.asString(mergedSectionsRecord?.[field])) ||
+        (Array.isArray(mergedSectionsRecord?.exegeticalFlow) && mergedSectionsRecord.exegeticalFlow.length > 0) ||
+        (Array.isArray(mergedSectionsRecord?.structureOfPassage) && mergedSectionsRecord.structureOfPassage.length > 0) ||
+        (Array.isArray(mergedSectionsRecord?.keyTerms) && mergedSectionsRecord.keyTerms.length > 0) ||
+        (Array.isArray(mergedSectionsRecord?.theologicalThemes) && mergedSectionsRecord.theologicalThemes.length > 0) ||
+        (Array.isArray(mergedSectionsRecord?.interpretiveChallenges) && mergedSectionsRecord.interpretiveChallenges.length > 0);
+
+      if (!hasMeaningfulContent) {
+        return {
+          ...report,
+          sections: this.buildStudyReportFallbackSections(workspace),
+        };
+      }
+
       return {
         ...report,
-        sections: this.buildStudyReportFallbackSections(workspace),
+        sections: {
+          ...mergedSections,
+          status: 'unavailable',
+          message: 'Saved study report could not be fully validated after reload. Existing content is preserved.',
+        },
       };
     });
     workspace.scriptureCache = await this.normalizeScriptureCachePayload(workspace.scriptureCache as Record<string, any> | null, {

@@ -11,7 +11,7 @@ export class ComposeMediaPackDto {
 
   @IsOptional()
   @IsString()
-  backgroundProvider?: 'local' | 'openai';
+  backgroundProvider?: 'local' | 'openai' | 'falai';
 
   @IsOptional()
   @IsString()
@@ -20,6 +20,14 @@ export class ComposeMediaPackDto {
   @IsOptional()
   @IsString()
   visualStyle?: 'auto' | 'reverent_worship' | 'warm_pastoral' | 'evangelistic_invitation' | 'hopeful_prophecy' | 'bible_study_clean' | 'youth_modern' | 'spanish_church_warm';
+
+  @IsOptional()
+  @IsString()
+  layoutPreference?: 'balanced' | 'text_forward' | 'image_rich' | 'scripture_forward' | 'minimal';
+
+  @IsOptional()
+  @IsString()
+  imageGenerationTarget?: 'background' | 'content' | 'both';
 
   @IsOptional()
   @IsArray()

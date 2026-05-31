@@ -146,7 +146,7 @@ export class MediaProxyController {
     @Headers('authorization') authorization?: string,
   ) {
     const proxied = await this.workspaceMediaPackService.proxyToSlides(
-      this.extractToken(authorization),
+      this.extractToken(authorization, query?.token),
       'post',
       `/decks/${deckId}/exports`,
       query || {},
@@ -163,7 +163,7 @@ export class MediaProxyController {
     @Headers('authorization') authorization?: string,
   ) {
     const proxied = await this.workspaceMediaPackService.proxyToSlides(
-      this.extractToken(authorization),
+      this.extractToken(authorization, query?.token),
       'get',
       `/exports/${id}/download`,
       query || {},
@@ -175,8 +175,9 @@ export class MediaProxyController {
   async proxyRemaining(@Req() req: Request, @Res() res: Response, @Headers('authorization') authorization?: string) {
     const url = new URL(req.originalUrl, 'http://localhost');
     const path = url.pathname.replace(/^\/api\/v1\/media/, '') || '/';
+    const queryToken = url.searchParams.get('token');
     const proxied = await this.workspaceMediaPackService.proxyToSlides(
-      this.extractToken(authorization),
+      this.extractToken(authorization, queryToken),
       req.method,
       path,
       Object.fromEntries(url.searchParams.entries()),
@@ -206,10 +207,14 @@ export class MediaProxyController {
     return res.send(Buffer.from(proxied.data));
   }
 
-  private extractToken(authorization?: string) {
+  private extractToken(authorization?: string, queryToken?: unknown) {
     const raw = String(authorization || '').trim();
-    if (!raw) return null;
-    return raw.toLowerCase().startsWith('bearer ') ? raw.slice(7).trim() : raw;
+    if (raw) {
+      return raw.toLowerCase().startsWith('bearer ') ? raw.slice(7).trim() : raw;
+    }
+    const query = String(queryToken || '').trim();
+    if (!query) return null;
+    return query;
   }
 
   private sendProxiedResponse(res: Response, proxied: { status: number; headers?: Record<string, unknown>; data: Buffer }) {

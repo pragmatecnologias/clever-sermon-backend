@@ -52,6 +52,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest();
     const path: string = request?.path || '';
+    const queryToken = String(request?.query?.token || '').trim();
 
     if (request?.method === 'GET' && path.startsWith('/api/v1/scripture/')) {
       const tail = path.replace('/api/v1/scripture/', '');
@@ -59,6 +60,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       if (isSingleSegment && !this.scriptureProtectedRoutes.has(tail)) {
         return true;
       }
+    }
+
+    if (request?.method === 'GET' && path.startsWith('/api/v1/media/') && path.includes('/download') && queryToken) {
+      return true;
     }
 
     return super.canActivate(context);

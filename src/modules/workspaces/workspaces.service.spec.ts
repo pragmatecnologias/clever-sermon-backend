@@ -276,6 +276,107 @@ describe('WorkspacesService manuscript parsing', () => {
     expect(merged.mainTheologicalClaim).toBe('Base claim');
   });
 
+  it('keeps partially generated study report content instead of collapsing to unavailable fallback', async () => {
+    const workspace = {
+      id: 'workspace-study-report-1',
+      mainPassage: 'Luke 15:11-24',
+      language: 'en',
+      title: 'Luke 15 study',
+      seriesTitle: 'Grace restores',
+      theme: 'Restoring mercy',
+      audienceProfile: 'mixed congregation',
+      sermonGoals: 'Call people home',
+      style: 'expository',
+      storyArc: 'From departure to restoration',
+      theologicalLens: 'adventist',
+      additionalPassages: [],
+      metadata: {},
+      scriptureCache: {},
+    } as any;
+
+    const studyInputs = {
+      workspace: {
+        mainPassage: 'Luke 15:11-24',
+        language: 'en',
+      },
+      cachedStudySections: {
+        passageSummary: {
+          summary: 'The parable follows the son through departure, ruin, repentance, and return.',
+          movement: [
+            'The son leaves home and moves toward ruin.',
+            'The turning point comes in repentance and honest return.',
+          ],
+          interpretiveCenter: 'God’s restoring grace receives the repentant.',
+        },
+        structuralAnalysis: {
+          literaryGenre: 'Parable',
+          structure: [
+            { description: 'Departure from the father’s house', verses: '11-12' },
+          ],
+        },
+        interpretiveChallenges: {
+          challenge: 'Does the parable center on the lost son, the welcoming father, or the resentful brother?',
+          views: [{ summary: 'The story moves from distance to return.' }],
+          sdaPerspective: { reasoning: 'Christ-centered and Scripture-based' },
+        },
+        canonicalThemes: {
+          themes: [
+            { theme: 'Restoring mercy', summary: 'The father receives the repentant son with restoring compassion.', canonicalMovement: 'Scripture presents God as merciful and restorative.' },
+          ],
+        },
+        studySynthesis: {
+          summary: 'The father’s grace receives the repentant and brings him home.',
+          mainClaim: 'God restores repentant sinners as sons and daughters.',
+        },
+        wordStudy: null,
+      },
+      referenceData: {
+        bookMetadata: {
+          literaryType: 'Parable',
+          summary: 'Jesus teaches in Luke 15 to answer criticism of his welcome to sinners.',
+        },
+        historicalContext: {
+          summary: 'Jesus is responding to criticism of his welcome to sinners.',
+        },
+        culturalContext: {
+          summary: 'Honor-shame and family restoration shape the story.',
+        },
+      },
+      egwSection: null,
+    } as any;
+
+    const llmService = {
+      generateCompletion: jest.fn().mockResolvedValue('{}'),
+    } as any;
+    (service as any).llmService = llmService;
+    (service as any).scriptureService = {
+      getPassage: jest.fn().mockResolvedValue({
+        verses: [
+          { reference: 'Luke 15:11', text: 'The younger son leaves home.' },
+          { reference: 'Luke 15:12', text: 'The father divides the inheritance.' },
+        ],
+      }),
+    };
+    (service as any).studyReportRepository = {
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => ({ id: 'study-report-1', ...value })),
+    };
+    (service as any).generatedStudyOutputValidator = {
+      validate: jest.fn(() => ({ valid: false, errors: ['sparse report'], severity: 'medium' })),
+    };
+    (service as any).syncStudyAssetRecords = jest.fn(async () => undefined);
+    jest.spyOn(service as any, 'findOne').mockResolvedValue(workspace);
+    jest.spyOn(service as any, 'buildStudyReportInputContext').mockResolvedValue(studyInputs);
+
+    const report = await service.generateStudyReport(workspace.id, 'user-1');
+
+    expect(report.sections.status).not.toBe('unavailable');
+    expect(report.sections.passageOverview).toContain('parable follows the son');
+    expect(report.sections.exegeticalFlow.length).toBeGreaterThan(0);
+    expect(report.sections.keyTerms.length).toBeGreaterThan(0);
+    expect(llmService.generateCompletion).toHaveBeenCalled();
+  });
+
   it('fills historical context and key terms from cached study data when word study is absent', () => {
     const studyInputs = {
       workspace: {
@@ -337,6 +438,286 @@ describe('WorkspacesService manuscript parsing', () => {
     expect(base.historicalContext).toContain('Jesus is responding to criticism');
     expect(base.keyTerms.length).toBeGreaterThanOrEqual(2);
     expect(base.keyTerms[0].term).toBeTruthy();
+  });
+
+  it('preserves media suggestions and media suggestion cards in study assets normalization', () => {
+    const normalized = (service as any).normalizeStudyAssets(
+      {
+        categoryAssets: {
+          mediaSuggestions: ['Main sermon visual prompt'],
+          mediaSuggestionCards: [
+            {
+              type: 'Image · Hero',
+              intent: 'Main sermon visual',
+              useCase: 'Title slide',
+              prompt: 'Main sermon visual prompt',
+            },
+          ],
+        },
+      },
+      [
+        {
+          movement: 'Opening movement',
+          verses: 'John 3:16',
+          summary: 'God loves the world.',
+        },
+      ],
+      { references: [] } as any,
+    );
+
+    expect(normalized.categoryAssets.mediaSuggestions).toEqual(['Main sermon visual prompt']);
+    expect(normalized.categoryAssets.mediaSuggestionCards).toHaveLength(1);
+    expect(normalized.categoryAssets.mediaSuggestionCards[0].prompt).toContain('Main sermon visual prompt');
+  });
+
+  it('persists media suggestions into the latest study report sections', async () => {
+    const workspace = {
+      id: 'workspace-media-1',
+      userId: 'user-1',
+      mainPassage: 'Psalm 37:23-24',
+      language: 'en',
+      metadata: {},
+      studyReports: [
+        {
+          id: 'study-report-media-1',
+          workspaceId: 'workspace-media-1',
+          sections: {
+            passageOverview: 'God orders the righteous path and upholds the stumble.',
+            literaryContext: 'Psalm 37 is wisdom poetry.',
+            historicalContext: 'The psalm contrasts the righteous and the wicked.',
+            canonicalContext: 'God sustains his people across Scripture.',
+            exegeticalSummary: 'The Lord orders the steps and holds the righteous hand.',
+            mainTheologicalClaim: 'God sustains the righteous when they stumble.',
+            exegeticalFlow: ['God orders the path', 'God upholds the stumble'],
+            structureOfPassage: [
+              { movement: 'Divine guidance', verses: 'Psalm 37:23', summary: 'The Lord orders the steps.' },
+              { movement: 'Divine sustaining', verses: 'Psalm 37:24', summary: 'The Lord upholds his people.' },
+            ],
+            keyTerms: [
+              { term: 'ordered', definition: 'Directed by God', nuance: 'The Lord establishes the path.' },
+              { term: 'upholdeth', definition: 'Sustains', nuance: 'The Lord prevents final ruin.' },
+            ],
+            theologicalThemes: ['guidance', 'sustaining'],
+            interpretiveChallenges: [
+              { question: 'What does it mean to stumble?', interpretationOptions: ['Failure', 'Weakness'], preachingGuidance: 'Do not make the text promise perfection.' },
+            ],
+            pastoralImplications: {
+              personalLife: ['Trust the Lord for today’s step.'],
+              churchLife: ['Encourage the stumbling.'],
+              mission: ['Point others to God’s sustaining hand.'],
+            },
+            studyAssets: {
+              movementAssets: [],
+              categoryAssets: {
+                applications: [],
+                discussionQuestions: [],
+                illustrationIdeas: [],
+                mediaSuggestions: [],
+                mediaSuggestionCards: [],
+                egwSupport: [],
+                references: [],
+              },
+            },
+          },
+        },
+      ],
+    } as any;
+
+    (service as any).workspaceRepository = {
+      findOne: jest.fn().mockResolvedValue(workspace),
+      update: jest.fn(async () => undefined),
+    };
+
+    (service as any).scriptureService = {
+      getPassage: jest.fn().mockResolvedValue({
+        reference: 'Psalm 37:23-24',
+        translation: 'KJV',
+        verses: [
+          { reference: 'Psalm 37:23', text: 'The steps of a good man are ordered by the LORD: and he delighteth in his way.' },
+          { reference: 'Psalm 37:24', text: 'Though he fall, he shall not be utterly cast down: for the LORD upholdeth him with his hand.' },
+        ],
+      }),
+    };
+    (service as any).studyReportRepository = {
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => ({ id: 'study-report-media-1', ...value })),
+    };
+    (service as any).llmService = {
+      generateCompletion: jest.fn().mockResolvedValue(
+        JSON.stringify({
+          mediaSuggestions: [
+            {
+              type: 'Image · Hero',
+              intent: 'Title slide',
+              useCase: 'Psalm 37 opening',
+              prompt: 'Warm church interior with light and no text',
+            },
+          ],
+        }),
+      ),
+    };
+    jest.spyOn(service as any, 'findOne').mockResolvedValue(workspace);
+    jest.spyOn(service as any, 'buildStudyReportInputContext').mockResolvedValue({
+      workspace: {
+        mainPassage: 'Psalm 37:23-24',
+        language: 'en',
+      },
+      passage: {
+        reference: 'Psalm 37:23-24',
+        text: 'Psalm 37:23-24 The steps of a good man are ordered by the LORD...',
+      },
+      cachedStudySections: {},
+      referenceData: {},
+      egwSection: null,
+    });
+
+    const report = await service.generateMediaSuggestions('workspace-media-1', 'user-1');
+
+    expect(report.sections.studyAssets.categoryAssets.mediaSuggestionCards.length).toBeGreaterThanOrEqual(12);
+    expect(report.sections.studyAssets.categoryAssets.mediaSuggestionCards[0].prompt).toContain('Warm church interior');
+    expect(report.sections.mediaSuggestions[0]).toContain('Warm church interior with light and no text');
+    expect((service as any).workspaceRepository.update).toHaveBeenCalled();
+  });
+
+  it('falls back to a full media suggestion set when the LLM returns no usable cards', async () => {
+    const workspace = {
+      id: 'workspace-media-2',
+      userId: 'user-1',
+      mainPassage: 'Luke 15:11-24',
+      language: 'en',
+      metadata: {},
+      studyReports: [
+        {
+          id: 'study-report-media-2',
+          workspaceId: 'workspace-media-2',
+          sections: {
+            passageOverview: 'The father restores the returning son.',
+            literaryContext: 'A parable about mercy and restoration.',
+            historicalContext: 'Jesus is teaching through a household story.',
+            canonicalContext: 'God welcomes the repentant.',
+            exegeticalSummary: 'The son returns and is received.',
+            mainTheologicalClaim: 'Grace restores the returning sinner.',
+            exegeticalFlow: ['The son leaves', 'The son returns', 'The father restores'],
+            structureOfPassage: [
+              { movement: 'Departure', verses: 'Luke 15:11-16', summary: 'The son leaves home.' },
+              { movement: 'Return', verses: 'Luke 15:17-20', summary: 'The son comes to himself.' },
+              { movement: 'Restoration', verses: 'Luke 15:21-24', summary: 'The father receives him.' },
+            ],
+            keyTerms: [],
+            theologicalThemes: ['repentance', 'restoration'],
+            interpretiveChallenges: [],
+            pastoralImplications: {
+              personalLife: ['Come home honestly.'],
+              churchLife: ['Welcome the returning.'],
+              mission: ['Show grace in public.'],
+            },
+            studyAssets: {
+              movementAssets: [],
+              categoryAssets: {
+                applications: [],
+                discussionQuestions: [],
+                illustrationIdeas: [],
+                mediaSuggestions: [],
+                mediaSuggestionCards: [],
+                egwSupport: [],
+                references: [],
+              },
+            },
+          },
+        },
+      ],
+    } as any;
+
+    (service as any).workspaceRepository = {
+      findOne: jest.fn().mockResolvedValue(workspace),
+      update: jest.fn(async () => undefined),
+    };
+    (service as any).scriptureService = {
+      getPassage: jest.fn().mockResolvedValue({
+        reference: 'Luke 15:11-24',
+        translation: 'KJV',
+        verses: [
+          { reference: 'Luke 15:11', text: 'And he said, A certain man had two sons:' },
+          { reference: 'Luke 15:24', text: 'For this my son was dead, and is alive again; he was lost, and is found.' },
+        ],
+      }),
+    };
+    (service as any).studyReportRepository = {
+      create: jest.fn((value) => value),
+      save: jest.fn(async (value) => ({ id: 'study-report-media-2', ...value })),
+    };
+    (service as any).llmService = {
+      generateCompletion: jest.fn().mockResolvedValue(JSON.stringify({ mediaSuggestions: [] })),
+    };
+    jest.spyOn(service as any, 'findOne').mockResolvedValue(workspace);
+    jest.spyOn(service as any, 'buildStudyReportInputContext').mockResolvedValue({
+      workspace: {
+        mainPassage: 'Luke 15:11-24',
+        language: 'en',
+        theme: 'Restoration',
+      },
+      passage: {
+        reference: 'Luke 15:11-24',
+        text: 'Luke 15:11-24 The son returns and the father restores him.',
+      },
+      cachedStudySections: {},
+      referenceData: {},
+      egwSection: null,
+    });
+
+    const report = await service.generateMediaSuggestions('workspace-media-2', 'user-1');
+
+    expect(report.sections.studyAssets.categoryAssets.mediaSuggestionCards.length).toBeGreaterThanOrEqual(12);
+    expect(report.sections.studyAssets.categoryAssets.mediaSuggestionCards.some((item: any) => item.type.includes('Hero'))).toBe(true);
+    expect(report.sections.studyAssets.categoryAssets.mediaSuggestionCards.some((item: any) => item.type.includes('Music'))).toBe(true);
+    expect(report.sections.studyAssets.categoryAssets.mediaSuggestionCards.some((item: any) => item.type.includes('Social'))).toBe(true);
+  });
+
+  it('derives a usable study report from passage text when cached study sections are sparse', () => {
+    const studyInputs = {
+      workspace: {
+        mainPassage: 'John 3:16',
+        language: 'en',
+        sermonGoals: 'Present God’s love clearly',
+        theme: 'God’s love and salvation',
+      },
+      passage: {
+        reference: 'John 3:16',
+        text: 'John 3:16 For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.',
+      },
+      cachedStudySections: {
+        passageSummary: null,
+        verseContext: null,
+        structuralAnalysis: null,
+        interpretiveChallenges: null,
+        canonicalThemes: null,
+        studySynthesis: null,
+        wordStudy: null,
+      },
+      referenceData: {
+        bookMetadata: {
+          literaryType: 'Gospel discourse',
+          summary: 'Jesus explains the love of God and the necessity of belief.',
+        },
+        historicalContext: {
+          summary: 'Jesus speaks to Nicodemus about new birth and faith.',
+        },
+        culturalContext: {
+          summary: 'The conversation explores divine love and human response.',
+        },
+      },
+    } as any;
+
+    const base = (service as any).buildStudyReportBaseSections(studyInputs, 'en');
+
+    expect(base.passageOverview).toContain('Jesus explains the love of God');
+    expect(base.literaryContext).toContain('Gospel discourse');
+    expect(base.exegeticalFlow.length).toBeGreaterThanOrEqual(1);
+    expect(base.structureOfPassage.length).toBeGreaterThanOrEqual(1);
+    expect(base.keyTerms.length).toBeGreaterThanOrEqual(2);
+    expect(base.theologicalThemes.length).toBeGreaterThanOrEqual(2);
+    expect(base.interpretiveChallenges.length).toBe(1);
+    expect(base.mainTheologicalClaim).toBeTruthy();
   });
 
   it('derives study report context from section-based verse context data', () => {
@@ -465,6 +846,18 @@ describe('WorkspacesService manuscript parsing', () => {
   });
 
   it('builds workspace state with history and compare summaries', async () => {
+    (service as any).sermoClaimReviewService = {
+      enrichClaims: jest.fn((ledger: unknown) => ledger),
+      buildReviewSummary: jest.fn(() => ({
+        overallScore: 100,
+        balanced: true,
+        issues: [],
+        strengths: [],
+        recommendations: [],
+      })),
+    };
+    (service as any).generatedStudyOutputValidator = new GeneratedStudyOutputValidator();
+
     const workspace = {
       title: 'Hope in Christ',
       mainPassage: 'John 3:16',
@@ -606,6 +999,9 @@ describe('WorkspacesService scripture cache normalization', () => {
       null as any,
       null as any,
     );
+    (service as any).generatedStudyOutputValidator = {
+      validate: jest.fn(() => ({ valid: false, severity: 'high', errors: ['stub'], normalized: null })),
+    };
   });
 
   it('refreshes truncated scripture cache before saving', async () => {
@@ -641,7 +1037,7 @@ describe('WorkspacesService scripture cache normalization', () => {
           },
         ],
       },
-    });
+    } as any);
 
     scriptureService.getPassage.mockResolvedValue({
       reference: 'Psalm 37:23-24',
@@ -696,5 +1092,258 @@ describe('WorkspacesService scripture cache normalization', () => {
     expect(cache.scriptureResult.verses[0].text).toContain('and he delighteth in his way');
     expect(cache.scriptureResult.verses[1].text).toContain('upholdeth him with his hand');
     expect(workspaceRepository.save).toHaveBeenCalled();
+  });
+
+  it('preserves partially valid cached study sections instead of erasing them on read', async () => {
+    workspaceRepository.findOne.mockResolvedValueOnce({
+      id: 'workspace-3',
+      userId: 'user-1',
+      mainPassage: 'Luke 15:11-24',
+      language: 'en',
+      scriptureCache: {
+        scriptureLastLookup: 'Luke 15:11-24:KJV',
+        scriptureQuery: 'Luke 15:11-24',
+        scriptureTranslation: 'KJV',
+        passageSummary: {
+          summary: 'The son leaves home and later returns in repentance.',
+          movement: ['Departure', 'Return'],
+        },
+      },
+    });
+
+    scriptureService.getPassage.mockResolvedValue({
+      reference: 'Luke 15:11-24',
+      translation: 'KJV',
+      verses: [
+        { reference: 'Luke 15:11', text: 'And he said, A certain man had two sons:' },
+        { reference: 'Luke 15:24', text: 'For this my son was dead, and is alive again; he was lost, and is found.' },
+      ],
+    });
+
+    const cache = await service.getScriptureCache('workspace-3', 'user-1');
+
+    expect(cache.passageSummary).toBeTruthy();
+    expect(cache.passageSummary.summary).toContain('returns in repentance');
+    expect(cache.passageSummary.status).toBe('unavailable');
+    expect(workspaceRepository.save).toHaveBeenCalled();
+  });
+});
+
+describe('WorkspacesService study report hydration', () => {
+  let service: WorkspacesService;
+  let workspaceRepository: any;
+  let outlineRepository: any;
+  let manuscriptRepository: any;
+  let applicationRepository: any;
+  let illustrationRepository: any;
+  let questionRepository: any;
+  let citationRepository: any;
+  let studyReportRepository: any;
+  let scriptureService: any;
+
+  beforeEach(() => {
+    const emptyRepo = () => ({
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(),
+      save: jest.fn(async (value) => value),
+      update: jest.fn(),
+      delete: jest.fn(),
+    });
+
+    workspaceRepository = {
+      ...emptyRepo(),
+      findOne: jest.fn(),
+      manager: {
+        getRepository: jest.fn(() => ({ find: jest.fn().mockResolvedValue([]) })),
+      },
+    };
+    outlineRepository = emptyRepo();
+    manuscriptRepository = emptyRepo();
+    applicationRepository = emptyRepo();
+    illustrationRepository = emptyRepo();
+    questionRepository = emptyRepo();
+    citationRepository = emptyRepo();
+    studyReportRepository = {
+      find: jest.fn().mockResolvedValue([]),
+      save: jest.fn(async (value) => value),
+    };
+    scriptureService = {
+      getPassage: jest.fn(),
+      getBookMetadata: jest.fn(),
+      getHistoricalContext: jest.fn(),
+      getCulturalContext: jest.fn(),
+      getTimeline: jest.fn(),
+      getCrossReferences: jest.fn(),
+      getCrossReferenceDetails: jest.fn(),
+    };
+
+    service = new WorkspacesService(
+      workspaceRepository as any,
+      outlineRepository as any,
+      manuscriptRepository as any,
+      applicationRepository as any,
+      illustrationRepository as any,
+      questionRepository as any,
+      citationRepository as any,
+      studyReportRepository as any,
+      {
+        getConfiguredProvider: () => 'local',
+        getProviderHealth: () => ({ status: 'ready', message: 'Local LLM ready' }),
+        getConfiguredProviderLabel: () => 'Local LLM',
+      } as any,
+      scriptureService as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      null as any,
+      new GeneratedStudyOutputValidator() as any,
+      null as any,
+      null as any,
+      null as any,
+    );
+  });
+
+  it('preserves saved study report sections on reload even when validation is incomplete', async () => {
+    workspaceRepository.findOne.mockResolvedValue({
+      id: 'workspace-study-1',
+      userId: 'user-1',
+      mainPassage: 'Luke 15:11-24',
+      language: 'en',
+      metadata: {},
+    });
+
+    studyReportRepository.find.mockResolvedValue([
+      {
+        id: 'study-1',
+        workspaceId: 'workspace-study-1',
+        sections: {
+          passageOverview: 'The parable moves from departure to restoration.',
+          literaryContext: 'Luke sets the parable inside a teaching and controversy setting.',
+          historicalContext: 'Jesus answers criticism of his welcome to sinners.',
+          canonicalContext: 'Grace restores the lost across Scripture.',
+          exegeticalSummary: 'The father receives the son before the son can repay.',
+          mainTheologicalClaim: 'God restores repentant sinners as sons and daughters.',
+          exegeticalFlow: ['Departure and famine', 'Return and restoration'],
+          structureOfPassage: [{ movement: 'Return', verses: '20-24', summary: 'The father restores the son.' }],
+          keyTerms: [{ term: 'repentance', definition: 'Turning back', nuance: 'The son comes to himself.' }],
+          theologicalThemes: ['restoration'],
+          interpretiveChallenges: [{ question: 'Who is central?', interpretationOptions: ['The son', 'The father'], preachingGuidance: 'Keep the father central.' }],
+          pastoralImplications: {
+            personalLife: ['Come home honestly.'],
+            churchLife: ['Welcome the returning.'],
+            mission: ['Proclaim grace to the lost.'],
+          },
+          studyAssets: {
+            movementAssets: [],
+            categoryAssets: {
+              applications: [],
+              discussionQuestions: [],
+              illustrationIdeas: [],
+              mediaSuggestions: [],
+              egwSupport: [],
+              references: [],
+            },
+          },
+        },
+      },
+    ]);
+
+    const result = await service.findOne('workspace-study-1', 'user-1');
+    const sections = result.studyReports?.[0]?.sections || {};
+
+    expect(sections.passageOverview).toContain('departure to restoration');
+    expect(sections.exegeticalFlow).toEqual(expect.arrayContaining(['Departure and famine', 'Return and restoration']));
+    expect(sections.status).toBe('unavailable');
+    expect(sections.message).toContain('preserved');
+  });
+
+  it('keeps the richest study report first so media suggestions survive reload selection', async () => {
+    workspaceRepository.findOne.mockResolvedValue({
+      id: 'workspace-study-2',
+      userId: 'user-1',
+      mainPassage: 'Psalm 37:23-24',
+      language: 'en',
+      metadata: {},
+    });
+
+    studyReportRepository.find.mockResolvedValue([
+      {
+        id: 'study-thin',
+        workspaceId: 'workspace-study-2',
+        createdAt: new Date('2026-05-26T10:00:00.000Z'),
+        sections: {
+          passageOverview: 'A thin report with only a few fields.',
+          studyAssets: {
+            movementAssets: [],
+            categoryAssets: {
+              applications: [],
+              discussionQuestions: [],
+              illustrationIdeas: [],
+              mediaSuggestions: [],
+              mediaSuggestionCards: [],
+              egwSupport: [],
+              references: [],
+            },
+          },
+        },
+      },
+      {
+        id: 'study-rich',
+        workspaceId: 'workspace-study-2',
+        createdAt: new Date('2026-05-25T10:00:00.000Z'),
+        sections: {
+          passageOverview: 'God orders the righteous path and upholds the stumble.',
+          literaryContext: 'Psalm 37 is wisdom poetry.',
+          historicalContext: 'The psalm contrasts the righteous and the wicked.',
+          canonicalContext: 'God sustains his people across Scripture.',
+          exegeticalSummary: 'The Lord orders the steps and holds the righteous hand.',
+          mainTheologicalClaim: 'God sustains the righteous when they stumble.',
+          exegeticalFlow: ['God orders the path', 'God upholds the stumble'],
+          structureOfPassage: [
+            { movement: 'Divine guidance', verses: 'Psalm 37:23', summary: 'The Lord orders the steps.' },
+            { movement: 'Divine sustaining', verses: 'Psalm 37:24', summary: 'The Lord upholds his people.' },
+          ],
+          keyTerms: [
+            { term: 'ordered', definition: 'Directed by God', nuance: 'The Lord establishes the path.' },
+            { term: 'upholdeth', definition: 'Sustains', nuance: 'The Lord prevents final ruin.' },
+          ],
+          theologicalThemes: ['guidance', 'sustaining'],
+          interpretiveChallenges: [
+            { question: 'What does it mean to stumble?', interpretationOptions: ['Failure', 'Weakness'], preachingGuidance: 'Do not make the text promise perfection.' },
+          ],
+          pastoralImplications: {
+            personalLife: ['Trust the Lord for today’s step.'],
+            churchLife: ['Encourage the stumbling.'],
+            mission: ['Point others to God’s sustaining hand.'],
+          },
+          studyAssets: {
+            movementAssets: [],
+            categoryAssets: {
+              applications: [],
+              discussionQuestions: [],
+              illustrationIdeas: [],
+              mediaSuggestions: ['Warm church interior with light and no text'],
+              mediaSuggestionCards: [
+                {
+                  type: 'Image · Hero',
+                  intent: 'Title slide',
+                  useCase: 'Psalm 37 opening',
+                  prompt: 'Warm church interior with light and no text',
+                },
+              ],
+              egwSupport: [],
+              references: [],
+            },
+          },
+        },
+      },
+    ]);
+
+    const result = await service.findOne('workspace-study-2', 'user-1');
+    const sections = result.studyReports?.[0]?.sections || {};
+
+    expect(sections.studyAssets.categoryAssets.mediaSuggestionCards).toHaveLength(1);
+    expect(sections.studyAssets.categoryAssets.mediaSuggestionCards[0].prompt).toContain('Warm church interior');
   });
 });

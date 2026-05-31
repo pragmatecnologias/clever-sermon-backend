@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { Repository } from 'typeorm';
@@ -23,6 +23,8 @@ type MediaPackManifest = {
   sourceStudyReportId: string | null;
   deckIntent?: string;
   visualStyle?: string;
+  layoutPreference?: string;
+  imageGenerationTarget?: string;
   deckModeLabel?: string;
   activeSermonDeckId?: string | null;
   activeSocialDeckId?: string | null;
@@ -38,6 +40,7 @@ type MediaPackManifest = {
 
 @Injectable()
 export class WorkspaceMediaPackService {
+  private readonly logger = new Logger(WorkspaceMediaPackService.name);
   private readonly slidesClient: AxiosInstance;
   private cachedSlidesServiceToken: string | null = null;
 
@@ -102,6 +105,9 @@ export class WorkspaceMediaPackService {
 
   private async requestSlides<T>(path: string, token: string | null, body?: unknown, serviceToken?: string | null) {
     const request = async (authToken: string | null) => {
+      this.logger.log(
+        `slides request path=${path} method=${body === undefined ? 'GET' : 'POST'} token=${authToken ? 'present' : 'absent'} bodyKeys=${body && typeof body === 'object' ? Object.keys(body as Record<string, unknown>).join(',') : 'none'}`,
+      );
       const response = await this.slidesClient.request<T>({
         url: path,
         method: body === undefined ? 'get' : 'post',
@@ -115,9 +121,13 @@ export class WorkspaceMediaPackService {
       return await request(token);
     } catch (error) {
       const status = (error as any)?.response?.status;
+      this.logger.warn(
+        `slides request failed path=${path} status=${status || 'n/a'} message=${(error as any)?.message || 'unknown'}`,
+      );
       if (status === 401) {
         const fallbackToken = serviceToken || (await this.getSlidesServiceToken());
         if (fallbackToken && token !== fallbackToken) {
+          this.logger.log(`slides request retrying with service token path=${path}`);
           return request(fallbackToken);
         }
       }
@@ -224,6 +234,9 @@ export class WorkspaceMediaPackService {
     body?: unknown,
   ) {
     const request = async (token: string | null) => {
+      this.logger.log(
+        `proxyToSlides path=${path} method=${method} token=${token ? 'present' : 'absent'} queryKeys=${Object.keys(query || {}).join(',')}`,
+      );
       const response = await this.slidesClient.request({
         url: path,
         method: method.toLowerCase() as 'get' | 'post' | 'patch' | 'put' | 'delete',
@@ -247,9 +260,13 @@ export class WorkspaceMediaPackService {
       return await request(authorization);
     } catch (error) {
       const status = (error as any)?.response?.status;
+      this.logger.warn(
+        `proxyToSlides failed path=${path} status=${status || 'n/a'} message=${(error as any)?.message || 'unknown'}`,
+      );
       if (status === 401) {
         const fallbackToken = await this.getSlidesServiceToken();
         if (fallbackToken && fallbackToken !== authorization) {
+          this.logger.log(`proxyToSlides retrying with service token path=${path}`);
           return request(fallbackToken);
         }
       }
@@ -310,7 +327,35 @@ export class WorkspaceMediaPackService {
   }
 
   private getSelectedStudyReport(workspace: SermonWorkspace) {
-    return workspace.studyReports?.[0] || null;
+    const reports = Array.isArray(workspace?.studyReports) ? workspace.studyReports.filter(Boolean) : [];
+    if (!reports.length) return null;
+    return [...reports]
+      .sort((left, right) => {
+        const leftSections = left?.sections || {};
+        const rightSections = right?.sections || {};
+        const leftScore = [
+          rightSections?.studyAssets?.categoryAssets?.mediaSuggestionCards,
+          rightSections?.studyAssets?.categoryAssets?.mediaSuggestions,
+        ].reduce((sum, value) => sum + (Array.isArray(value) && value.length > 0 ? 1 : 0), 0)
+          + [
+            rightSections?.passageOverview,
+            rightSections?.exegeticalSummary,
+            rightSections?.mainTheologicalClaim,
+          ].filter((value) => String(value || '').trim()).length;
+        const rightScore = [
+          leftSections?.studyAssets?.categoryAssets?.mediaSuggestionCards,
+          leftSections?.studyAssets?.categoryAssets?.mediaSuggestions,
+        ].reduce((sum, value) => sum + (Array.isArray(value) && value.length > 0 ? 1 : 0), 0)
+          + [
+            leftSections?.passageOverview,
+            leftSections?.exegeticalSummary,
+            leftSections?.mainTheologicalClaim,
+          ].filter((value) => String(value || '').trim()).length;
+        if (leftScore !== rightScore) return leftScore - rightScore;
+        const leftTime = new Date(String(right?.createdAt || '')).getTime();
+        const rightTime = new Date(String(left?.createdAt || '')).getTime();
+        return leftTime - rightTime;
+      })[0] || null;
   }
 
   private normalizeWorkspacePlanning(metadata?: Record<string, any>) {
@@ -496,6 +541,8 @@ export class WorkspaceMediaPackService {
             dto.backgroundPreset || null,
           ),
           visualStyle,
+          layoutPreference: (dto as Record<string, any>).layoutPreference || 'balanced',
+          imageGenerationTarget: (dto as Record<string, any>).imageGenerationTarget || 'both',
         });
 
     const deckId = String((deckResult as any)?.id || (deckResult as any)?.deckId || '');
@@ -571,6 +618,8 @@ export class WorkspaceMediaPackService {
       sourceStudyReportId: selectedStudyReport?.id || null,
       deckIntent,
       visualStyle: resolvedVisualStyle,
+      layoutPreference: String((dto as Record<string, any>).layoutPreference || 'balanced'),
+      imageGenerationTarget: String((dto as Record<string, any>).imageGenerationTarget || 'both'),
       deckModeLabel: this.deckModeLabel(deckIntent),
       activeSermonDeckId,
       activeSocialDeckId,
